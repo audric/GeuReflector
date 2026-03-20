@@ -45,6 +45,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <cassert>
 #include <cstring>
 #include <mutex>
+#include <thread>
 
 
 /****************************************************************************
@@ -249,11 +250,6 @@ bool CppDnsLookupWorker::doLookup(void)
 
 void CppDnsLookupWorker::abortLookup(void)
 {
-  if (m_result.valid())
-  {
-    m_result.get();
-  }
-
   int fd = m_notifier_watch.fd();
   if (fd >= 0)
   {
@@ -261,7 +257,20 @@ void CppDnsLookupWorker::abortLookup(void)
     close(fd);
   }
 
-  m_ctx.reset();
+  if (m_result.valid())
+  {
+      // Move the future and context to a detached thread so the event loop
+      // is not blocked waiting for a potentially long getaddrinfo() call.
+    auto result = std::move(m_result);
+    auto ctx = std::move(m_ctx);
+    std::thread([result = std::move(result), ctx = std::move(ctx)]() mutable {
+      result.get();
+    }).detach();
+  }
+  else
+  {
+    m_ctx.reset();
+  }
 } /* CppDnsLookupWorker::abortLookup */
 
 
