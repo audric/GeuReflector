@@ -134,6 +134,24 @@ REMOTE_PREFIX=2       # peer owns TGs 2, 20, 200, 2000, ...
 
 Repeat for each peer (`[TRUNK_3]`, `[TRUNK_4]`, …).
 
+### Network requirements
+
+**Trunk links** require **mutual reachability**: each reflector connects outbound
+to every peer, so all reflectors in the mesh need a static IP (or stable DNS
+name) and the trunk port (default 5302) open for inbound TCP connections.
+
+**Satellite links** are **one-way**: the satellite connects outbound to the
+parent. Only the parent needs a static IP and its satellite port (default 5303)
+open. The satellite itself does not need a static IP or any open ports — it can
+run behind NAT, just like a regular SvxLink client node.
+
+| Port | Protocol | Direction | Required on |
+|------|----------|-----------|-------------|
+| 5300 | TCP+UDP | Inbound | All reflectors (client connections) |
+| 5302 | TCP | Inbound | All trunk mesh reflectors (peer connections) |
+| 5303 | TCP | Inbound | Parent reflectors accepting satellites |
+| — | TCP | Outbound | Satellites (no inbound ports needed) |
+
 ### Full-mesh example — three reflectors
 
 **Reflector A** — owns prefix "1":
