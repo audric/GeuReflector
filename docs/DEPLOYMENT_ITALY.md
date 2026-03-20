@@ -289,6 +289,36 @@ licensed operators active at any given time.
 
 ---
 
+## Satellite reflectors (optional)
+
+Larger regions may want to run additional reflector instances as satellites
+(e.g. one per province) to distribute the client load without adding more trunk
+mesh connections. A satellite connects to its regional reflector and relays all
+traffic — remote reflectors see satellite clients as if they were connected
+directly to the regional reflector.
+
+**Regional reflector** (e.g. Lazio) — add a `[SATELLITE]` section:
+```ini
+[SATELLITE]
+LISTEN_PORT=5303
+SECRET=lazio_satellite_secret
+```
+
+**Satellite** (e.g. Roma province):
+```ini
+[GLOBAL]
+SATELLITE_OF=svxref-lazio.example.it
+SATELLITE_PORT=5303
+SATELLITE_SECRET=lazio_satellite_secret
+SATELLITE_ID=sat-roma
+```
+
+The satellite does not set `LOCAL_PREFIX`, `REMOTE_PREFIX`, or any `[TRUNK_xx]`
+sections. It only needs `LISTEN_PORT=5300` for its local SvxLink clients. Also
+open port `5303` inbound on the regional reflector firewall.
+
+---
+
 ## Per-region config checklist
 
 1. Set `LOCAL_PREFIX` to the 2-digit code from the table above.
@@ -296,4 +326,5 @@ licensed operators active at any given time.
 3. Use the same `SECRET` value as the matching section on the peer — mismatched
    secrets will prevent the trunk from connecting.
 4. Open TCP port `5302` inbound in the firewall (trunk) and `5300` inbound (clients).
-5. Ensure `HOST` resolves to the peer's public IP from the server's network.
+5. If accepting satellites, also open TCP port `5303` inbound.
+6. Ensure `HOST` resolves to the peer's public IP from the server's network.

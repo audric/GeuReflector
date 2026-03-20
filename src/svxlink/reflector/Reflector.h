@@ -65,6 +65,8 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "ProtoVer.h"
 #include "ReflectorClient.h"
 #include "TrunkLink.h"
+#include "SatelliteLink.h"
+#include "SatelliteClient.h"
 
 
 /****************************************************************************
@@ -238,6 +240,18 @@ class Reflector : public sigc::trackable
     Json::Value& clientStatus(const std::string& callsign);
 
     bool isClusterTG(uint32_t tg) const { return m_cluster_tgs.count(tg) > 0; }
+    bool isSatelliteMode(void) const { return m_is_satellite; }
+
+    // Callbacks for SatelliteLink to forward satellite events to trunk peers
+    void forwardSatelliteAudioToTrunks(uint32_t tg,
+                                        const std::string& callsign);
+    void forwardSatelliteStopToTrunks(uint32_t tg);
+    void forwardSatelliteRawAudioToTrunks(uint32_t tg,
+                                           const std::vector<uint8_t>& audio);
+    void forwardSatelliteFlushToTrunks(uint32_t tg);
+    void forwardAudioToSatellitesExcept(SatelliteLink* except, uint32_t tg,
+                                         const std::vector<uint8_t>& audio);
+    void forwardFlushToSatellitesExcept(SatelliteLink* except, uint32_t tg);
 
   protected:
 
@@ -286,6 +300,13 @@ class Reflector : public sigc::trackable
     std::vector<TrunkLink*>     m_trunk_links;
     std::set<uint32_t>          m_cluster_tgs;
 
+    // Satellite support
+    bool                        m_is_satellite = false;
+    SatelliteClient*            m_satellite_client = nullptr;
+    FramedTcpServer*            m_sat_srv = nullptr;
+    std::string                 m_satellite_secret;
+    std::map<Async::FramedTcpConnection*, SatelliteLink*> m_satellite_con_map;
+
     Reflector(const Reflector&);
     Reflector& operator=(const Reflector&);
     void clientConnected(Async::FramedTcpConnection *con);
@@ -309,6 +330,10 @@ class Reflector : public sigc::trackable
     void onTrunkTalkerUpdated(uint32_t tg, std::string old_cs,
                               std::string new_cs);
     void initTrunkLinks(void);
+    void initSatelliteServer(void);
+    void satelliteConnected(Async::FramedTcpConnection* con);
+    void satelliteDisconnected(Async::FramedTcpConnection* con,
+        Async::FramedTcpConnection::DisconnectReason reason);
     bool loadCertificateFiles(void);
     bool loadServerCertificateFiles(void);
     bool generateKeyFile(Async::SslKeypair& pkey, const std::string& keyfile);

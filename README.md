@@ -47,8 +47,13 @@ automatically.
 - **Independent talker arbitration** — each reflector arbitrates its own clients;
   the trunk adds a tie-breaking layer (random priority nonce) for simultaneous
   claims
-- **HTTP `/status` endpoint** — existing JSON status now includes a `trunks`
-  object with per-link state and active talkers
+- **Cluster TGs** — BrandMeister-style nationwide talk groups that are broadcast
+  to all trunk peers regardless of prefix ownership
+- **Satellite reflectors** — lightweight relay instances that connect to a parent
+  reflector instead of joining the full mesh, reducing configuration overhead for
+  large deployments
+- **HTTP `/status` and `/config` endpoints** — JSON status with trunk state,
+  active talkers, satellite connections, and static configuration
 - SvxLink client nodes are **unmodified** — they connect to their local
   reflector as normal and are unaware of the trunk
 
@@ -181,6 +186,50 @@ REMOTE_PREFIX=2
 
 Both sides of each trunk must point at each other and share the same `SECRET`.
 
+### Satellite reflectors
+
+A satellite is a lightweight reflector that connects to a parent reflector
+instead of joining the trunk mesh. Clients connect to the satellite normally;
+it relays everything to the parent. The parent is unchanged — it still
+participates in the trunk mesh as before.
+
+```
+          ┌──── Full mesh (unchanged) ────┐
+          │                               │
+    ┌─────┴─────┐                   ┌─────┴─────┐
+    │ Refl. 01  │◄── trunk ──────►│ Refl. 02  │
+    └─────┬─────┘                   └───────────┘
+     ┌────┼────┐
+     ▼    ▼    ▼
+   Sat A Sat B Sat C     ← satellites of Reflector 01
+```
+
+**Parent side** — add a `[SATELLITE]` section to accept inbound satellites:
+
+```ini
+[SATELLITE]
+LISTEN_PORT=5303
+SECRET=regional_satellite_secret
+```
+
+**Satellite side** — set `SATELLITE_OF` in `[GLOBAL]` instead of
+`LOCAL_PREFIX` and `[TRUNK_x]` sections:
+
+```ini
+[GLOBAL]
+SATELLITE_OF=reflector-01.example.com
+SATELLITE_PORT=5303
+SATELLITE_SECRET=regional_satellite_secret
+SATELLITE_ID=my-satellite
+```
+
+A satellite does not set `LOCAL_PREFIX`, `REMOTE_PREFIX`, or any `[TRUNK_x]`
+sections. It inherits its parent's identity. Remote reflectors in the mesh see
+satellite clients as if they were connected directly to the parent.
+
+Port `5303` is the default satellite port (separate from client port `5300` and
+trunk port `5302`).
+
 ---
 
 ## HTTP Status
@@ -207,12 +256,20 @@ Returns nodes, trunk connection state, and active talkers:
         "25": "SM0ABC"
       }
     }
+  },
+  "satellites": {
+    "my-satellite": {
+      "id": "my-satellite",
+      "authenticated": true,
+      "active_tgs": [1, 100]
+    }
   }
 }
 ```
 
 `active_talkers` lists TGs with an active remote talker at query time (both
-prefix-based and cluster TGs).
+prefix-based and cluster TGs). `satellites` appears only when satellites are
+connected.
 
 ### `GET /config` — static configuration
 
@@ -220,6 +277,7 @@ Returns the reflector's own configuration, useful for dashboards:
 
 ```json
 {
+  "mode": "reflector",
   "local_prefix": ["1"],
   "cluster_tgs": [222, 2221, 91],
   "listen_port": "5300",
@@ -230,6 +288,24 @@ Returns the reflector's own configuration, useful for dashboards:
       "port": 5302,
       "remote_prefix": ["2"]
     }
+  },
+  "satellite_server": {
+    "listen_port": "5303",
+    "connected_count": 2
+  }
+}
+```
+
+When running in satellite mode:
+
+```json
+{
+  "mode": "satellite",
+  "listen_port": "5300",
+  "satellite": {
+    "parent_host": "reflector-01.example.com",
+    "parent_port": "5303",
+    "id": "my-satellite"
   }
 }
 ```
@@ -294,6 +370,8 @@ restart.
   deployment example for Italy (20 regions, full mesh)
 - [`docs/DEPLOYMENT_ITALY_IT.md`](docs/DEPLOYMENT_ITALY_IT.md) — same document
   in Italian
+- [`docs/DESIGN_SATELLITE_AND_CLUSTER.md`](docs/DESIGN_SATELLITE_AND_CLUSTER.md) — design
+  rationale for satellite reflectors and cluster TGs
 
 ---
 

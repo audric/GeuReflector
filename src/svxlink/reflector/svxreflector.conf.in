@@ -100,3 +100,19 @@ CERT_CA_HOOK=@SVX_SHARE_INSTALL_DIR@/ca-hook.py
 #SECRET=change_this_shared_secret
 #REMOTE_PREFIX=2
 
+# --- Satellite reflectors ---
+# A satellite is a lightweight reflector that connects to a parent
+# reflector instead of joining the trunk mesh. Clients connect to the
+# satellite normally; it relays everything to the parent.
+#
+# Parent side: accept inbound satellite connections
+#[SATELLITE]
+#LISTEN_PORT=5303
+#SECRET=change_this_satellite_secret
+#
+# Satellite side: set these in [GLOBAL] instead of LOCAL_PREFIX/TRUNK_x
+#SATELLITE_OF=reflector-01.example.com
+#SATELLITE_PORT=5303
+#SATELLITE_SECRET=change_this_satellite_secret
+#SATELLITE_ID=my-satellite
+

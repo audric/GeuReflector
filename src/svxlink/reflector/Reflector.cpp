@@ -287,6 +287,15 @@ Reflector::~Reflector(void)
     delete link;
   }
   m_trunk_links.clear();
+  for (auto& kv : m_satellite_con_map)
+  {
+    delete kv.second;
+  }
+  m_satellite_con_map.clear();
+  delete m_sat_srv;
+  m_sat_srv = nullptr;
+  delete m_satellite_client;
+  m_satellite_client = nullptr;
   m_client_con_map.clear();
   ReflectorClient::cleanup();
   delete TGHandler::instance();
@@ -417,7 +426,25 @@ bool Reflector::initialize(Async::Config &cfg)
     }
   }
 
+  // Satellite mode: connect to parent instead of joining the trunk mesh
+  std::string satellite_of;
+  if (cfg.getValue("GLOBAL", "SATELLITE_OF", satellite_of) &&
+      !satellite_of.empty())
+  {
+    m_is_satellite = true;
+    m_satellite_client = new SatelliteClient(this, cfg);
+    if (!m_satellite_client->initialize())
+    {
+      std::cerr << "*** ERROR: Failed to initialize satellite connection"
+                << std::endl;
+      return false;
+    }
+    // Satellites don't participate in the trunk mesh
+    return true;
+  }
+
   initTrunkLinks();
+  initSatelliteServer();
 
   return true;
 } /* Reflector::initialize */
@@ -1265,9 +1292,20 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
                 ReflectorClient::mkAndFilter(
                   ReflectorClient::ExceptFilter(client),
                   ReflectorClient::TgFilter(tg)));
-            for (auto* link : m_trunk_links)
+            if (m_is_satellite && m_satellite_client != nullptr)
             {
-              link->onLocalAudio(tg, msg.audioData());
+              m_satellite_client->onLocalAudio(tg, msg.audioData());
+            }
+            else
+            {
+              for (auto* link : m_trunk_links)
+              {
+                link->onLocalAudio(tg, msg.audioData());
+              }
+              for (auto& kv : m_satellite_con_map)
+              {
+                kv.second->onParentAudio(tg, msg.audioData());
+              }
             }
           }
         }
@@ -1316,9 +1354,20 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
       if ((tg > 0) && (client == talker))
       {
         TGHandler::instance()->setTalkerForTG(tg, 0);
-        for (auto* link : m_trunk_links)
+        if (m_is_satellite && m_satellite_client != nullptr)
         {
-          link->onLocalFlush(tg);
+          m_satellite_client->onLocalFlush(tg);
+        }
+        else
+        {
+          for (auto* link : m_trunk_links)
+          {
+            link->onLocalFlush(tg);
+          }
+          for (auto& kv : m_satellite_con_map)
+          {
+            kv.second->onParentFlush(tg);
+          }
         }
       }
         // To be 100% correct the reflector should wait for all connected
@@ -1416,19 +1465,43 @@ void Reflector::onTalkerUpdated(uint32_t tg, ReflectorClient* old_talker,
     }
   }
 
-  // Notify trunk peers about local talker changes.
-  // TrunkLink::handleMsgTrunkTalkerStart may set m_yielded_tgs for a TG when
-  // deferring to the peer; in that case onTalkerUpdated fires with
-  // new_talker==nullptr, which we must not re-broadcast as a stop to peers.
-  for (auto* link : m_trunk_links)
+  // In satellite mode, forward to parent instead of trunk peers
+  if (m_is_satellite && m_satellite_client != nullptr)
   {
     if (new_talker != nullptr)
     {
-      link->onLocalTalkerStart(tg, new_talker->callsign());
+      m_satellite_client->onLocalTalkerStart(tg, new_talker->callsign());
     }
     else
     {
-      link->onLocalTalkerStop(tg);
+      m_satellite_client->onLocalTalkerStop(tg);
+    }
+  }
+  else
+  {
+    // Notify trunk peers about local talker changes.
+    for (auto* link : m_trunk_links)
+    {
+      if (new_talker != nullptr)
+      {
+        link->onLocalTalkerStart(tg, new_talker->callsign());
+      }
+      else
+      {
+        link->onLocalTalkerStop(tg);
+      }
+    }
+    // Notify connected satellites
+    for (auto& kv : m_satellite_con_map)
+    {
+      if (new_talker != nullptr)
+      {
+        kv.second->onParentTalkerStart(tg, new_talker->callsign());
+      }
+      else
+      {
+        kv.second->onParentTalkerStop(tg);
+      }
     }
   }
 } /* Reflector::onTalkerUpdated */
@@ -1505,6 +1578,35 @@ void Reflector::httpRequestReceived(Async::HttpServerConnection *con,
       cfg_json["http_port"] = http_port;
     }
 
+    // Satellite config
+    if (m_is_satellite)
+    {
+      cfg_json["mode"] = "satellite";
+      std::string sat_of, sat_port_str, sat_id;
+      m_cfg->getValue("GLOBAL", "SATELLITE_OF", sat_of);
+      m_cfg->getValue("GLOBAL", "SATELLITE_PORT", sat_port_str);
+      m_cfg->getValue("GLOBAL", "SATELLITE_ID", sat_id);
+      Json::Value sat_cfg(Json::objectValue);
+      sat_cfg["parent_host"] = sat_of;
+      if (!sat_port_str.empty()) sat_cfg["parent_port"] = sat_port_str;
+      if (!sat_id.empty()) sat_cfg["id"] = sat_id;
+      cfg_json["satellite"] = sat_cfg;
+    }
+    else
+    {
+      cfg_json["mode"] = "reflector";
+      // Satellite server config (if accepting satellites)
+      std::string sat_listen_port;
+      if (m_cfg->getValue("SATELLITE", "LISTEN_PORT", sat_listen_port))
+      {
+        Json::Value sat_srv(Json::objectValue);
+        sat_srv["listen_port"] = sat_listen_port;
+        sat_srv["connected_count"] =
+            static_cast<Json::UInt>(m_satellite_con_map.size());
+        cfg_json["satellite_server"] = sat_srv;
+      }
+    }
+
     std::ostringstream os;
     Json::StreamWriterBuilder builder;
     builder["commentStyle"] = "None";
@@ -1543,6 +1645,20 @@ void Reflector::httpRequestReceived(Async::HttpServerConnection *con,
     cluster_arr.append(tg);
   }
   m_status["cluster_tgs"] = cluster_arr;
+
+  if (!m_satellite_con_map.empty())
+  {
+    Json::Value sats(Json::objectValue);
+    for (auto& kv : m_satellite_con_map)
+    {
+      auto* sat = kv.second;
+      if (!sat->satelliteId().empty())
+      {
+        sats[sat->satelliteId()] = sat->statusJson();
+      }
+    }
+    m_status["satellites"] = sats;
+  }
 
   std::ostringstream os;
   Json::StreamWriterBuilder builder;
@@ -1916,6 +2032,116 @@ void Reflector::initTrunkLinks(void)
 } /* Reflector::initTrunkLinks */
 
 
+void Reflector::initSatelliteServer(void)
+{
+  std::string sat_port;
+  std::string sat_secret;
+  if (!m_cfg->getValue("SATELLITE", "LISTEN_PORT", sat_port) ||
+      !m_cfg->getValue("SATELLITE", "SECRET", sat_secret) ||
+      sat_secret.empty())
+  {
+    return;  // No [SATELLITE] section — not accepting satellites
+  }
+
+  m_satellite_secret = sat_secret;
+  m_sat_srv = new TcpServer<FramedTcpConnection>(sat_port);
+  m_sat_srv->setConnectionThrottling(10, 0.1, 1000);
+  m_sat_srv->clientConnected.connect(
+      sigc::mem_fun(*this, &Reflector::satelliteConnected));
+  m_sat_srv->clientDisconnected.connect(
+      sigc::mem_fun(*this, &Reflector::satelliteDisconnected));
+
+  std::cout << "Satellite server listening on port " << sat_port << std::endl;
+} /* Reflector::initSatelliteServer */
+
+
+void Reflector::satelliteConnected(Async::FramedTcpConnection* con)
+{
+  std::cout << "SAT: Inbound connection from "
+            << con->remoteHost() << ":" << con->remotePort() << std::endl;
+  auto* link = new SatelliteLink(this, con, m_satellite_secret);
+  m_satellite_con_map[con] = link;
+} /* Reflector::satelliteConnected */
+
+
+void Reflector::satelliteDisconnected(Async::FramedTcpConnection* con,
+    Async::FramedTcpConnection::DisconnectReason reason)
+{
+  auto it = m_satellite_con_map.find(con);
+  if (it != m_satellite_con_map.end())
+  {
+    std::cout << "SAT: Satellite '" << it->second->satelliteId()
+              << "' disconnected" << std::endl;
+    delete it->second;
+    m_satellite_con_map.erase(it);
+  }
+} /* Reflector::satelliteDisconnected */
+
+
+void Reflector::forwardSatelliteAudioToTrunks(uint32_t tg,
+                                               const std::string& callsign)
+{
+  for (auto* link : m_trunk_links)
+  {
+    link->onLocalTalkerStart(tg, callsign);
+  }
+} /* Reflector::forwardSatelliteAudioToTrunks */
+
+
+void Reflector::forwardSatelliteStopToTrunks(uint32_t tg)
+{
+  for (auto* link : m_trunk_links)
+  {
+    link->onLocalTalkerStop(tg);
+  }
+} /* Reflector::forwardSatelliteStopToTrunks */
+
+
+void Reflector::forwardSatelliteRawAudioToTrunks(uint32_t tg,
+    const std::vector<uint8_t>& audio)
+{
+  for (auto* link : m_trunk_links)
+  {
+    link->onLocalAudio(tg, audio);
+  }
+} /* Reflector::forwardSatelliteRawAudioToTrunks */
+
+
+void Reflector::forwardSatelliteFlushToTrunks(uint32_t tg)
+{
+  for (auto* link : m_trunk_links)
+  {
+    link->onLocalFlush(tg);
+  }
+} /* Reflector::forwardSatelliteFlushToTrunks */
+
+
+void Reflector::forwardAudioToSatellitesExcept(SatelliteLink* except,
+    uint32_t tg, const std::vector<uint8_t>& audio)
+{
+  for (auto& kv : m_satellite_con_map)
+  {
+    if (kv.second != except)
+    {
+      kv.second->onParentAudio(tg, audio);
+    }
+  }
+} /* Reflector::forwardAudioToSatellitesExcept */
+
+
+void Reflector::forwardFlushToSatellitesExcept(SatelliteLink* except,
+    uint32_t tg)
+{
+  for (auto& kv : m_satellite_con_map)
+  {
+    if (kv.second != except)
+    {
+      kv.second->onParentFlush(tg);
+    }
+  }
+} /* Reflector::forwardFlushToSatellitesExcept */
+
+
 void Reflector::onTrunkTalkerUpdated(uint32_t tg,
                                      std::string old_cs, std::string new_cs)
 {
@@ -1939,6 +2165,19 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
         ReflectorClient::mkAndFilter(
           ge_v2_client_filter,
           ReflectorClient::TgFilter(tg)));
+  }
+
+  // Forward trunk talker events to connected satellites
+  for (auto& kv : m_satellite_con_map)
+  {
+    if (!new_cs.empty())
+    {
+      kv.second->onParentTalkerStart(tg, new_cs);
+    }
+    else if (!old_cs.empty())
+    {
+      kv.second->onParentTalkerStop(tg);
+    }
   }
 } /* Reflector::onTrunkTalkerUpdated */
 

@@ -531,6 +531,9 @@ void TrunkLink::handleMsgTrunkAudio(std::istream& is)
   // Rebuild a UDP audio message and broadcast to local clients on this TG
   MsgUdpAudio udp_msg(msg.audio());
   m_reflector->broadcastUdpMsg(udp_msg, ReflectorClient::TgFilter(tg));
+
+  // Forward trunk audio to connected satellites
+  m_reflector->forwardAudioToSatellitesExcept(nullptr, tg, msg.audio());
 } /* TrunkLink::handleMsgTrunkAudio */
 
 
@@ -552,6 +555,9 @@ void TrunkLink::handleMsgTrunkFlush(std::istream& is)
 
   m_reflector->broadcastUdpMsg(MsgUdpFlushSamples(),
       ReflectorClient::TgFilter(tg));
+
+  // Forward trunk flush to connected satellites
+  m_reflector->forwardFlushToSatellitesExcept(nullptr, tg);
 } /* TrunkLink::handleMsgTrunkFlush */
 
 

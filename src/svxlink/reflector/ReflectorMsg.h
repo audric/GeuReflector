@@ -1415,7 +1415,10 @@ class MsgTrunkHello : public ReflectorMsgBase<115>
   public:
     static const size_t NONCE_LEN = 20;
 
-    MsgTrunkHello(void) : m_priority(0) {}
+    static const uint8_t ROLE_PEER      = 0;
+    static const uint8_t ROLE_SATELLITE = 1;
+
+    MsgTrunkHello(void) : m_priority(0), m_role(ROLE_PEER) {}
 
     /**
      * @brief   Constructor that generates a nonce and computes HMAC
@@ -1423,13 +1426,15 @@ class MsgTrunkHello : public ReflectorMsgBase<115>
      * @param   local_prefix  Comma-separated TG prefix list
      * @param   priority   Tie-break nonce
      * @param   secret     Shared secret for HMAC authentication
+     * @param   role       ROLE_PEER (default) or ROLE_SATELLITE
      */
     MsgTrunkHello(const std::string& id,
                   const std::string& local_prefix,
                   uint32_t priority,
-                  const std::string& secret)
+                  const std::string& secret,
+                  uint8_t role = ROLE_PEER)
       : m_id(id), m_local_prefix(local_prefix), m_priority(priority),
-        m_nonce(NONCE_LEN)
+        m_role(role), m_nonce(NONCE_LEN)
     {
       int rc = RAND_bytes(&m_nonce.front(), NONCE_LEN);
       if (rc != 1)
@@ -1449,6 +1454,7 @@ class MsgTrunkHello : public ReflectorMsgBase<115>
     const std::string& id(void) const { return m_id; }
     const std::string& localPrefix(void) const { return m_local_prefix; }
     uint32_t priority(void) const { return m_priority; }
+    uint8_t role(void) const { return m_role; }
 
     /**
      * @brief   Verify that the peer knows the shared secret
@@ -1470,12 +1476,14 @@ class MsgTrunkHello : public ReflectorMsgBase<115>
              Async::Digest::sigEqual(m_digest, expected);
     }
 
-    ASYNC_MSG_MEMBERS(m_id, m_local_prefix, m_priority, m_nonce, m_digest)
+    ASYNC_MSG_MEMBERS(m_id, m_local_prefix, m_priority, m_nonce, m_digest,
+                      m_role)
 
   private:
     std::string              m_id;
     std::string              m_local_prefix;
     uint32_t                 m_priority;
+    uint8_t                  m_role;
     std::vector<uint8_t>     m_nonce;
     std::vector<uint8_t>     m_digest;
 

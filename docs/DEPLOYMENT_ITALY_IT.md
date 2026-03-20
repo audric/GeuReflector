@@ -296,6 +296,37 @@ il vero limite pratico è il numero di operatori patentati attivi in un dato mom
 
 ---
 
+## Reflector satellite (opzionale)
+
+Le regioni più grandi possono eseguire istanze aggiuntive come satellite
+(ad esempio una per provincia) per distribuire il carico client senza aggiungere
+ulteriori connessioni trunk. Un satellite si collega al proprio reflector
+regionale e inoltra tutto il traffico — i reflector remoti vedono i client
+satellite come se fossero connessi direttamente al reflector regionale.
+
+**Reflector regionale** (es. Lazio) — aggiungere una sezione `[SATELLITE]`:
+```ini
+[SATELLITE]
+LISTEN_PORT=5303
+SECRET=lazio_satellite_secret
+```
+
+**Satellite** (es. provincia di Roma):
+```ini
+[GLOBAL]
+SATELLITE_OF=svxref-lazio.example.it
+SATELLITE_PORT=5303
+SATELLITE_SECRET=lazio_satellite_secret
+SATELLITE_ID=sat-roma
+```
+
+Il satellite non imposta `LOCAL_PREFIX`, `REMOTE_PREFIX` o alcuna sezione
+`[TRUNK_xx]`. Necessita solo di `LISTEN_PORT=5300` per i propri client SvxLink
+locali. Aprire anche la porta `5303` in ingresso sul firewall del reflector
+regionale.
+
+---
+
 ## Lista di controllo per ogni regione
 
 1. Impostare `LOCAL_PREFIX` al codice a 2 cifre dalla tabella sopra.
@@ -303,4 +334,5 @@ il vero limite pratico è il numero di operatori patentati attivi in un dato mom
 3. Usare lo stesso valore di `SECRET` della sezione corrispondente sul peer — secret
    non corrispondenti impediranno la connessione del trunk.
 4. Aprire la porta TCP `5302` in ingresso nel firewall (trunk) e la porta `5300` (client).
-5. Verificare che `HOST` risolva all'IP pubblico del peer dalla rete del server.
+5. Se si accettano satellite, aprire anche la porta TCP `5303` in ingresso.
+6. Verificare che `HOST` risolva all'IP pubblico del peer dalla rete del server.
