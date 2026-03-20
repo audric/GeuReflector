@@ -200,19 +200,46 @@ returned as arrays to reflect multi-prefix support:
 
 ## Live user/password reload
 
-New users and passwords written to `svxreflector.conf` are picked up **without
-restarting** via the command PTY interface (enabled by default):
+Users and passwords can be updated at runtime **without restarting** via the
+command PTY interface (enabled by default):
 
 ```bash
-# Reload users list
-echo "CFG USERS section_name key value" > /dev/shm/reflector_ctrl
+# Add or update a user (maps callsign to a password group)
+echo "CFG USERS SM0ABC MyGroup" > /dev/shm/reflector_ctrl
 
-# Or reload passwords
-echo "CFG PASSWORDS section_name key value" > /dev/shm/reflector_ctrl
+# Add or update a password (sets the key for a password group)
+echo "CFG PASSWORDS MyGroup s3cretP@ss" > /dev/shm/reflector_ctrl
 ```
 
 The PTY path is set by `COMMAND_PTY` in `[GLOBAL]` (default
 `/dev/shm/reflector_ctrl`).
+
+### Persisting across reboots
+
+PTY `CFG` commands only modify the **in-memory** configuration. They are lost
+when the process restarts. To make changes permanent, **also update the config
+file on disk**:
+
+```bash
+# 1. Apply immediately (in-memory, takes effect now)
+echo "CFG USERS SM0ABC MyGroup" > /dev/shm/reflector_ctrl
+echo "CFG PASSWORDS MyGroup s3cretP@ss" > /dev/shm/reflector_ctrl
+
+# 2. Persist to disk (survives reboot)
+#    Edit the same values into svxreflector.conf:
+cat >> /etc/svxlink/svxreflector.conf <<'EOF'
+
+[USERS]
+SM0ABC=MyGroup
+
+[PASSWORDS]
+MyGroup="s3cretP@ss"
+EOF
+```
+
+Both steps are needed: the PTY gives you instant activation, the config file
+gives you persistence. If you only edit the file, changes take effect at next
+restart.
 
 ---
 
