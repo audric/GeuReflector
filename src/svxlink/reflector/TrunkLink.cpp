@@ -223,12 +223,12 @@ Json::Value TrunkLink::statusJson(void) const
   for (const auto& p : m_remote_prefix) remote_arr.append(p);
   obj["remote_prefix"] = remote_arr;
 
-  // active_talkers: all TGs currently held by trunk that match our remote prefix
+  // active_talkers: TGs held by trunk that match remote prefix or are cluster TGs
   Json::Value talkers(Json::objectValue);
   const auto& trunk_map = TGHandler::instance()->trunkTalkersSnapshot();
   for (auto& kv : trunk_map)
   {
-    if (isSharedTG(kv.first))
+    if (isSharedTG(kv.first) || m_reflector->isClusterTG(kv.first))
     {
       talkers[std::to_string(kv.first)] = kv.second;
     }
@@ -241,7 +241,8 @@ Json::Value TrunkLink::statusJson(void) const
 
 void TrunkLink::onLocalTalkerStart(uint32_t tg, const std::string& callsign)
 {
-  if (!m_con.isConnected() || !m_hello_received || !isSharedTG(tg))
+  if (!m_con.isConnected() || !m_hello_received ||
+      (!isSharedTG(tg) && !m_reflector->isClusterTG(tg)))
   {
     return;
   }
@@ -251,7 +252,8 @@ void TrunkLink::onLocalTalkerStart(uint32_t tg, const std::string& callsign)
 
 void TrunkLink::onLocalTalkerStop(uint32_t tg)
 {
-  if (!m_con.isConnected() || !m_hello_received || !isSharedTG(tg))
+  if (!m_con.isConnected() || !m_hello_received ||
+      (!isSharedTG(tg) && !m_reflector->isClusterTG(tg)))
   {
     return;
   }
@@ -267,7 +269,8 @@ void TrunkLink::onLocalTalkerStop(uint32_t tg)
 
 void TrunkLink::onLocalAudio(uint32_t tg, const std::vector<uint8_t>& audio)
 {
-  if (!m_con.isConnected() || !m_hello_received || !isSharedTG(tg) ||
+  if (!m_con.isConnected() || !m_hello_received ||
+      (!isSharedTG(tg) && !m_reflector->isClusterTG(tg)) ||
       m_yielded_tgs.count(tg))
   {
     return;
@@ -278,7 +281,8 @@ void TrunkLink::onLocalAudio(uint32_t tg, const std::vector<uint8_t>& audio)
 
 void TrunkLink::onLocalFlush(uint32_t tg)
 {
-  if (!m_con.isConnected() || !m_hello_received || !isSharedTG(tg))
+  if (!m_con.isConnected() || !m_hello_received ||
+      (!isSharedTG(tg) && !m_reflector->isClusterTG(tg)))
   {
     return;
   }
@@ -447,7 +451,7 @@ void TrunkLink::handleMsgTrunkTalkerStart(std::istream& is)
   }
 
   uint32_t tg = msg.tg();
-  if (!isSharedTG(tg))
+  if (!isSharedTG(tg) && !m_reflector->isClusterTG(tg))
   {
     return;
   }
@@ -491,7 +495,7 @@ void TrunkLink::handleMsgTrunkTalkerStop(std::istream& is)
   }
 
   uint32_t tg = msg.tg();
-  if (!isSharedTG(tg))
+  if (!isSharedTG(tg) && !m_reflector->isClusterTG(tg))
   {
     return;
   }
@@ -513,7 +517,7 @@ void TrunkLink::handleMsgTrunkAudio(std::istream& is)
   }
 
   uint32_t tg = msg.tg();
-  if (!isSharedTG(tg) || msg.audio().empty())
+  if ((!isSharedTG(tg) && !m_reflector->isClusterTG(tg)) || msg.audio().empty())
   {
     return;
   }
@@ -541,7 +545,7 @@ void TrunkLink::handleMsgTrunkFlush(std::istream& is)
   }
 
   uint32_t tg = msg.tg();
-  if (!isSharedTG(tg))
+  if (!isSharedTG(tg) && !m_reflector->isClusterTG(tg))
   {
     return;
   }

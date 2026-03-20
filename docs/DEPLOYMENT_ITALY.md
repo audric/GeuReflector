@@ -118,6 +118,7 @@ IT_84_91   # MOLISE ↔ SICILIA
 [GLOBAL]
 LISTEN_PORT=5300
 LOCAL_PREFIX=01
+CLUSTER_TGS=222
 HTTP_SRV_PORT=8080
 COMMAND_PTY=/dev/shm/reflector_ctrl
 
@@ -239,6 +240,27 @@ REMOTE_PREFIX=91
 All other regional configs follow the same pattern: set `LOCAL_PREFIX` to the
 region's 2-digit code and add one `[TRUNK_xx]` section for each of the other
 19 regions, using the matching `SECRET` from the convention above.
+
+---
+
+## Cluster TGs
+
+The `CLUSTER_TGS` setting enables nationwide talk groups that are broadcast to
+**all** trunk peers regardless of prefix ownership. In this deployment, TG 222
+(the Italian national call channel in DMR numbering) is configured as a cluster
+TG on every reflector:
+
+```ini
+CLUSTER_TGS=222
+```
+
+When any client on any regional reflector keys up on TG 222, the audio is sent
+to all 19 other reflectors simultaneously. Unlike prefix-based TGs (which route
+to a single owning reflector), cluster TGs have no owner — any reflector can
+originate a transmission. Talker arbitration works the same way (nonce
+tie-break) if two operators key up simultaneously.
+
+All reflectors in the mesh must list the same `CLUSTER_TGS` value.
 
 ---
 

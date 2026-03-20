@@ -102,7 +102,21 @@ LOCAL_PREFIX=1        # owns TGs 1, 10, 100, 1000, ...
 # LOCAL_PREFIX=11,12,13   # multiple prefixes on one instance
 ```
 
-### 2. Add a trunk section per peer
+### 2. Cluster TGs (optional)
+
+Cluster TGs are broadcast to **all** trunk peers regardless of prefix ownership,
+like BrandMeister's nationwide talk groups. Any reflector can originate a
+transmission on a cluster TG and all other reflectors in the mesh will hear it.
+
+```ini
+[GLOBAL]
+CLUSTER_TGS=222,2221,91    # comma-separated list of cluster TG numbers
+```
+
+All reflectors in the mesh should list the same cluster TGs. Cluster TG numbers
+must not overlap with any `LOCAL_PREFIX` or `REMOTE_PREFIX`.
+
+### 3. Add a trunk section per peer
 
 ```ini
 [TRUNK_2]
@@ -171,13 +185,16 @@ Both sides of each trunk must point at each other and share the same `SECRET`.
 
 ## HTTP Status
 
-Enable with `HTTP_SRV_PORT=8080` in `[GLOBAL]`. The `/status` endpoint returns
-JSON that now includes a `trunks` key. `local_prefix` and `remote_prefix` are
-returned as arrays to reflect multi-prefix support:
+Enable with `HTTP_SRV_PORT=8080` in `[GLOBAL]`. Two endpoints are available:
+
+### `GET /status` — live state
+
+Returns nodes, trunk connection state, and active talkers:
 
 ```json
 {
   "nodes": { ... },
+  "cluster_tgs": [222, 2221, 91],
   "trunks": {
     "TRUNK_2": {
       "host": "reflector-b.example.com",
@@ -186,15 +203,36 @@ returned as arrays to reflect multi-prefix support:
       "local_prefix": ["1"],
       "remote_prefix": ["2"],
       "active_talkers": {
-        "25": "SM0ABC",
-        "200": "LA8PV"
+        "222": "IW1GEU",
+        "25": "SM0ABC"
       }
     }
   }
 }
 ```
 
-`active_talkers` lists only TGs with an active remote talker at query time.
+`active_talkers` lists TGs with an active remote talker at query time (both
+prefix-based and cluster TGs).
+
+### `GET /config` — static configuration
+
+Returns the reflector's own configuration, useful for dashboards:
+
+```json
+{
+  "local_prefix": ["1"],
+  "cluster_tgs": [222, 2221, 91],
+  "listen_port": "5300",
+  "http_port": "8080",
+  "trunks": {
+    "TRUNK_2": {
+      "host": "reflector-b.example.com",
+      "port": 5302,
+      "remote_prefix": ["2"]
+    }
+  }
+}
+```
 
 ---
 

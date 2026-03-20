@@ -390,6 +390,33 @@ bool Reflector::initialize(Async::Config &cfg)
 
   m_cfg->valueUpdated.connect(sigc::mem_fun(*this, &Reflector::cfgUpdated));
 
+  // Parse CLUSTER_TGS — comma-separated list of TG numbers broadcast to all peers
+  std::string cluster_tgs_str;
+  if (cfg.getValue("GLOBAL", "CLUSTER_TGS", cluster_tgs_str))
+  {
+    std::istringstream ctss(cluster_tgs_str);
+    std::string token;
+    while (std::getline(ctss, token, ','))
+    {
+      token.erase(0, token.find_first_not_of(" \t"));
+      token.erase(token.find_last_not_of(" \t") + 1);
+      if (!token.empty())
+      {
+        uint32_t tg = static_cast<uint32_t>(std::stoul(token));
+        m_cluster_tgs.insert(tg);
+      }
+    }
+    if (!m_cluster_tgs.empty())
+    {
+      std::cout << "Cluster TGs:";
+      for (uint32_t tg : m_cluster_tgs)
+      {
+        std::cout << " " << tg;
+      }
+      std::cout << std::endl;
+    }
+  }
+
   initTrunkLinks();
 
   return true;
@@ -1425,6 +1452,74 @@ void Reflector::httpRequestReceived(Async::HttpServerConnection *con,
     return;
   }
 
+  if (req.target == "/config")
+  {
+    Json::Value cfg_json(Json::objectValue);
+
+    // Local prefixes
+    std::string local_prefix_str;
+    m_cfg->getValue("GLOBAL", "LOCAL_PREFIX", local_prefix_str);
+    Json::Value lp_arr(Json::arrayValue);
+    {
+      std::istringstream ss(local_prefix_str);
+      std::string token;
+      while (std::getline(ss, token, ','))
+      {
+        token.erase(0, token.find_first_not_of(" \t"));
+        token.erase(token.find_last_not_of(" \t") + 1);
+        if (!token.empty()) lp_arr.append(token);
+      }
+    }
+    cfg_json["local_prefix"] = lp_arr;
+
+    // Cluster TGs
+    Json::Value cluster_arr(Json::arrayValue);
+    for (uint32_t tg : m_cluster_tgs)
+    {
+      cluster_arr.append(tg);
+    }
+    cfg_json["cluster_tgs"] = cluster_arr;
+
+    // Trunk peers (static config)
+    Json::Value peers(Json::objectValue);
+    for (auto* link : m_trunk_links)
+    {
+      Json::Value peer(Json::objectValue);
+      Json::Value link_status = link->statusJson();
+      peer["host"] = link_status["host"];
+      peer["port"] = link_status["port"];
+      peer["remote_prefix"] = link_status["remote_prefix"];
+      peers[link->section()] = peer;
+    }
+    cfg_json["trunks"] = peers;
+
+    // Listen port
+    std::string listen_port("5300");
+    m_cfg->getValue("GLOBAL", "LISTEN_PORT", listen_port);
+    cfg_json["listen_port"] = listen_port;
+
+    // HTTP port
+    std::string http_port;
+    if (m_cfg->getValue("GLOBAL", "HTTP_SRV_PORT", http_port))
+    {
+      cfg_json["http_port"] = http_port;
+    }
+
+    std::ostringstream os;
+    Json::StreamWriterBuilder builder;
+    builder["commentStyle"] = "None";
+    builder["indentation"] = "";
+    Json::StreamWriter* writer = builder.newStreamWriter();
+    writer->write(cfg_json, &os);
+    delete writer;
+
+    res.setContent("application/json", os.str());
+    res.setSendContent(req.method == "GET");
+    res.setCode(200);
+    con->write(res);
+    return;
+  }
+
   if (req.target != "/status")
   {
     res.setCode(404);
@@ -1441,6 +1536,13 @@ void Reflector::httpRequestReceived(Async::HttpServerConnection *con,
     trunks[link->section()] = link->statusJson();
   }
   m_status["trunks"] = trunks;
+
+  Json::Value cluster_arr(Json::arrayValue);
+  for (uint32_t tg : m_cluster_tgs)
+  {
+    cluster_arr.append(tg);
+  }
+  m_status["cluster_tgs"] = cluster_arr;
 
   std::ostringstream os;
   Json::StreamWriterBuilder builder;
@@ -1746,12 +1848,42 @@ void Reflector::cfgUpdated(const std::string& section, const std::string& tag)
 
 void Reflector::initTrunkLinks(void)
 {
+  // Collect local prefixes for cluster TG validation
+  std::string local_prefix_str;
+  m_cfg->getValue("GLOBAL", "LOCAL_PREFIX", local_prefix_str);
+  std::vector<std::string> all_prefixes;
+  {
+    std::istringstream ss(local_prefix_str);
+    std::string token;
+    while (std::getline(ss, token, ','))
+    {
+      token.erase(0, token.find_first_not_of(" \t"));
+      token.erase(token.find_last_not_of(" \t") + 1);
+      if (!token.empty()) all_prefixes.push_back(token);
+    }
+  }
+
   for (const auto& section : m_cfg->listSections())
   {
     if (section.substr(0, 6) != "TRUNK_")
     {
       continue;
     }
+
+    // Collect remote prefixes for validation
+    std::string remote_prefix_str;
+    m_cfg->getValue(section, "REMOTE_PREFIX", remote_prefix_str);
+    {
+      std::istringstream ss(remote_prefix_str);
+      std::string token;
+      while (std::getline(ss, token, ','))
+      {
+        token.erase(0, token.find_first_not_of(" \t"));
+        token.erase(token.find_last_not_of(" \t") + 1);
+        if (!token.empty()) all_prefixes.push_back(token);
+      }
+    }
+
     auto* link = new TrunkLink(this, *m_cfg, section);
     if (link->initialize())
     {
@@ -1762,6 +1894,23 @@ void Reflector::initTrunkLinks(void)
       std::cerr << "*** ERROR: Failed to initialize trunk link '"
                 << section << "'" << std::endl;
       delete link;
+    }
+  }
+
+  // Validate cluster TGs don't overlap with any prefix
+  for (uint32_t tg : m_cluster_tgs)
+  {
+    std::string s = std::to_string(tg);
+    for (const auto& prefix : all_prefixes)
+    {
+      if (s.size() >= prefix.size() &&
+          s.compare(0, prefix.size(), prefix) == 0)
+      {
+        std::cerr << "*** WARNING: Cluster TG " << tg
+                  << " conflicts with prefix " << prefix
+                  << " — this TG will be routed as cluster (broadcast to all)"
+                  << std::endl;
+      }
     }
   }
 } /* Reflector::initTrunkLinks */

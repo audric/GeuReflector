@@ -121,6 +121,7 @@ IT_84_91   # MOLISE ↔ SICILIA
 [GLOBAL]
 LISTEN_PORT=5300
 LOCAL_PREFIX=01
+CLUSTER_TGS=222
 HTTP_SRV_PORT=8080
 COMMAND_PTY=/dev/shm/reflector_ctrl
 
@@ -243,6 +244,30 @@ Tutte le altre configurazioni regionali seguono lo stesso schema: impostare
 `LOCAL_PREFIX` al codice a 2 cifre della propria regione e aggiungere una sezione
 `[TRUNK_xx]` per ciascuna delle altre 19 regioni, usando il `SECRET` corrispondente
 secondo la convenzione sopra indicata.
+
+---
+
+## TG Cluster
+
+L'impostazione `CLUSTER_TGS` abilita i talk group nazionali che vengono
+trasmessi a **tutti** i peer trunk indipendentemente dalla proprietà del
+prefisso. In questo deployment, il TG 222 (il canale di chiamata nazionale
+italiano nella numerazione DMR) è configurato come TG cluster su ogni
+reflector:
+
+```ini
+CLUSTER_TGS=222
+```
+
+Quando un qualsiasi client su un qualsiasi reflector regionale trasmette sul
+TG 222, l'audio viene inviato a tutti gli altri 19 reflector simultaneamente.
+A differenza dei TG basati su prefisso (che instradano verso un singolo
+reflector proprietario), i TG cluster non hanno proprietario — qualsiasi
+reflector può originare una trasmissione. L'arbitraggio del talker funziona
+allo stesso modo (tie-break tramite nonce) se due operatori trasmettono
+contemporaneamente.
+
+Tutti i reflector nella mesh devono avere lo stesso valore di `CLUSTER_TGS`.
 
 ---
 

@@ -36,6 +36,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 #include <sigc++/sigc++.h>
 #include <sys/time.h>
+#include <set>
 #include <vector>
 #include <string>
 #include <json/json.h>
@@ -236,6 +237,8 @@ class Reflector : public sigc::trackable
 
     Json::Value& clientStatus(const std::string& callsign);
 
+    bool isClusterTG(uint32_t tg) const { return m_cluster_tgs.count(tg) > 0; }
+
   protected:
 
   private:
@@ -281,6 +284,7 @@ class Reflector : public sigc::trackable
     Json::Value                 m_status;
 
     std::vector<TrunkLink*>     m_trunk_links;
+    std::set<uint32_t>          m_cluster_tgs;
 
     Reflector(const Reflector&);
     Reflector& operator=(const Reflector&);
