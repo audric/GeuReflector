@@ -1,0 +1,587 @@
+/**
+@file    TrunkLink.cpp
+@brief   Server-to-server trunk link between two SvxReflector instances
+@date    2026-03-20
+
+\verbatim
+SvxReflector - An audio reflector for connecting SvxLink Servers
+Copyright (C) 2003-2026 Tobias Blomberg / SM0SVX
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+\endverbatim
+*/
+
+
+/****************************************************************************
+ *
+ * System Includes
+ *
+ ****************************************************************************/
+
+#include <iostream>
+#include <sstream>
+#include <cassert>
+#include <random>
+#include <cerrno>
+#include <cstring>
+
+
+/****************************************************************************
+ *
+ * Project Includes
+ *
+ ****************************************************************************/
+
+#include <AsyncConfig.h>
+#include <AsyncTcpConnection.h>
+
+
+/****************************************************************************
+ *
+ * Local Includes
+ *
+ ****************************************************************************/
+
+#include "TrunkLink.h"
+#include "ReflectorMsg.h"
+#include "Reflector.h"
+#include "TGHandler.h"
+#include "ReflectorClient.h"
+#include <json/json.h>
+
+
+/****************************************************************************
+ *
+ * Namespaces to use
+ *
+ ****************************************************************************/
+
+using namespace std;
+using namespace Async;
+using namespace sigc;
+
+
+static std::vector<std::string> splitPrefixes(const std::string& s)
+{
+  std::vector<std::string> result;
+  std::istringstream ss(s);
+  std::string token;
+  while (std::getline(ss, token, ','))
+  {
+    token.erase(0, token.find_first_not_of(" \t"));
+    token.erase(token.find_last_not_of(" \t") + 1);
+    if (!token.empty())
+      result.push_back(token);
+  }
+  return result;
+}
+
+static std::string joinPrefixes(const std::vector<std::string>& v)
+{
+  std::string result;
+  for (const auto& p : v)
+  {
+    if (!result.empty()) result += ',';
+    result += p;
+  }
+  return result;
+}
+
+
+/****************************************************************************
+ *
+ * TrunkLink public methods
+ *
+ ****************************************************************************/
+
+TrunkLink::TrunkLink(Reflector* reflector, Async::Config& cfg,
+                     const std::string& section)
+  : m_reflector(reflector), m_cfg(cfg), m_section(section),
+    m_peer_port(5302), m_priority(0), m_peer_priority(0),
+    m_hello_received(false),
+    m_heartbeat_timer(1000, Timer::TYPE_PERIODIC, false),
+    m_hb_tx_cnt(0), m_hb_rx_cnt(0)
+{
+  // Generate a random priority nonce for tie-breaking
+  std::random_device rd;
+  std::mt19937 rng(rd());
+  std::uniform_int_distribution<uint32_t> dist;
+  m_priority = dist(rng);
+
+  m_con.connected.connect(mem_fun(*this, &TrunkLink::onConnected));
+  m_con.disconnected.connect(mem_fun(*this, &TrunkLink::onDisconnected));
+  m_con.frameReceived.connect(mem_fun(*this, &TrunkLink::onFrameReceived));
+  m_con.setMaxFrameSize(ReflectorMsg::MAX_POSTAUTH_FRAME_SIZE);
+
+  m_heartbeat_timer.expired.connect(
+      mem_fun(*this, &TrunkLink::heartbeatTick));
+} /* TrunkLink::TrunkLink */
+
+
+TrunkLink::~TrunkLink(void)
+{
+  // Clear only trunk talkers held by this specific peer
+  for (uint32_t tg : m_peer_active_tgs)
+  {
+    TGHandler::instance()->clearTrunkTalkerForTG(tg);
+  }
+  m_peer_active_tgs.clear();
+} /* TrunkLink::~TrunkLink */
+
+
+bool TrunkLink::initialize(void)
+{
+  // HOST
+  if (!m_cfg.getValue(m_section, "HOST", m_peer_host) || m_peer_host.empty())
+  {
+    cerr << "*** ERROR[" << m_section << "]: Missing HOST" << endl;
+    return false;
+  }
+
+  // PORT (optional, default 5302)
+  m_cfg.getValue(m_section, "PORT", m_peer_port);
+
+  // SECRET
+  if (!m_cfg.getValue(m_section, "SECRET", m_secret) || m_secret.empty())
+  {
+    cerr << "*** ERROR[" << m_section << "]: Missing SECRET" << endl;
+    return false;
+  }
+
+  // LOCAL_PREFIX — comma-separated list of this reflector's owned TG prefixes
+  std::string local_prefix_str;
+  m_cfg.getValue("GLOBAL", "LOCAL_PREFIX", local_prefix_str);
+  m_local_prefix = splitPrefixes(local_prefix_str);
+  if (m_local_prefix.empty())
+  {
+    cerr << "*** ERROR: Missing or empty LOCAL_PREFIX in [GLOBAL]" << endl;
+    return false;
+  }
+
+  // REMOTE_PREFIX — comma-separated list of the peer's owned TG prefixes
+  std::string remote_prefix_str;
+  if (!m_cfg.getValue(m_section, "REMOTE_PREFIX", remote_prefix_str) ||
+      remote_prefix_str.empty())
+  {
+    cerr << "*** ERROR[" << m_section << "]: Missing REMOTE_PREFIX" << endl;
+    return false;
+  }
+  m_remote_prefix = splitPrefixes(remote_prefix_str);
+  if (m_remote_prefix.empty())
+  {
+    cerr << "*** ERROR[" << m_section << "]: Invalid REMOTE_PREFIX" << endl;
+    return false;
+  }
+
+  cout << m_section << ": Trunk to " << m_peer_host << ":" << m_peer_port
+       << " local_prefix=" << joinPrefixes(m_local_prefix)
+       << " remote_prefix=" << joinPrefixes(m_remote_prefix) << endl;
+
+  m_con.addStaticSRVRecord(0, 0, 0, m_peer_port, m_peer_host);
+  m_con.connect();
+
+  return true;
+} /* TrunkLink::initialize */
+
+
+bool TrunkLink::isSharedTG(uint32_t tg) const
+{
+  const std::string s = std::to_string(tg);
+  for (const auto& prefix : m_remote_prefix)
+  {
+    if (s.size() >= prefix.size() &&
+        s.compare(0, prefix.size(), prefix) == 0)
+      return true;
+  }
+  return false;
+} /* TrunkLink::isSharedTG */
+
+
+Json::Value TrunkLink::statusJson(void) const
+{
+  Json::Value obj(Json::objectValue);
+  obj["host"]          = m_peer_host;
+  obj["port"]          = m_peer_port;
+  obj["connected"]     = m_con.isConnected();
+  Json::Value local_arr(Json::arrayValue);
+  for (const auto& p : m_local_prefix)  local_arr.append(p);
+  obj["local_prefix"]  = local_arr;
+
+  Json::Value remote_arr(Json::arrayValue);
+  for (const auto& p : m_remote_prefix) remote_arr.append(p);
+  obj["remote_prefix"] = remote_arr;
+
+  // active_talkers: all TGs currently held by trunk that match our remote prefix
+  Json::Value talkers(Json::objectValue);
+  const auto& trunk_map = TGHandler::instance()->trunkTalkersSnapshot();
+  for (auto& kv : trunk_map)
+  {
+    if (isSharedTG(kv.first))
+    {
+      talkers[std::to_string(kv.first)] = kv.second;
+    }
+  }
+  obj["active_talkers"] = talkers;
+
+  return obj;
+} /* TrunkLink::statusJson */
+
+
+void TrunkLink::onLocalTalkerStart(uint32_t tg, const std::string& callsign)
+{
+  if (!m_con.isConnected() || !m_hello_received || !isSharedTG(tg))
+  {
+    return;
+  }
+  sendMsg(MsgTrunkTalkerStart(tg, callsign));
+} /* TrunkLink::onLocalTalkerStart */
+
+
+void TrunkLink::onLocalTalkerStop(uint32_t tg)
+{
+  if (!m_con.isConnected() || !m_hello_received || !isSharedTG(tg))
+  {
+    return;
+  }
+  // If we cleared our local talker because we were yielding to this peer,
+  // don't send TrunkTalkerStop — the peer already owns the TG.
+  if (m_yielded_tgs.count(tg))
+  {
+    return;
+  }
+  sendMsg(MsgTrunkTalkerStop(tg));
+} /* TrunkLink::onLocalTalkerStop */
+
+
+void TrunkLink::onLocalAudio(uint32_t tg, const std::vector<uint8_t>& audio)
+{
+  if (!m_con.isConnected() || !m_hello_received || !isSharedTG(tg) ||
+      m_yielded_tgs.count(tg))
+  {
+    return;
+  }
+  sendMsg(MsgTrunkAudio(tg, audio));
+} /* TrunkLink::onLocalAudio */
+
+
+void TrunkLink::onLocalFlush(uint32_t tg)
+{
+  if (!m_con.isConnected() || !m_hello_received || !isSharedTG(tg))
+  {
+    return;
+  }
+  sendMsg(MsgTrunkFlush(tg));
+} /* TrunkLink::onLocalFlush */
+
+
+/****************************************************************************
+ *
+ * TrunkLink private methods
+ *
+ ****************************************************************************/
+
+void TrunkLink::onConnected(void)
+{
+  cout << m_section << ": Connected to " << m_con.remoteHost()
+       << ":" << m_con.remotePort() << endl;
+
+  m_hello_received = false;
+  m_yielded_tgs.clear();
+  m_peer_active_tgs.clear();
+  m_hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
+  m_hb_rx_cnt = HEARTBEAT_RX_CNT_RESET;
+
+  // Regenerate priority nonce for each new connection
+  std::random_device rd;
+  std::mt19937 rng(rd());
+  std::uniform_int_distribution<uint32_t> dist;
+  m_priority = dist(rng);
+
+  sendMsg(MsgTrunkHello(m_section, joinPrefixes(m_local_prefix), m_priority,
+                        m_secret));
+
+  m_heartbeat_timer.setEnable(true);
+} /* TrunkLink::onConnected */
+
+
+void TrunkLink::onDisconnected(TcpConnection* con,
+                               TcpConnection::DisconnectReason reason)
+{
+  cout << m_section << ": Disconnected from " << m_con.remoteHost()
+       << ":" << m_con.remotePort() << ": "
+       << TcpConnection::disconnectReasonStr(reason) << endl;
+
+  m_heartbeat_timer.setEnable(false);
+  m_hello_received = false;
+
+  // Release only trunk talkers held by this peer
+  for (uint32_t tg : m_peer_active_tgs)
+  {
+    TGHandler::instance()->clearTrunkTalkerForTG(tg);
+  }
+  m_peer_active_tgs.clear();
+  m_yielded_tgs.clear();
+} /* TrunkLink::onDisconnected */
+
+
+void TrunkLink::onFrameReceived(FramedTcpConnection* con,
+                                std::vector<uint8_t>& data)
+{
+  auto buf = reinterpret_cast<const char*>(data.data());
+  stringstream ss;
+  ss.write(buf, data.size());
+
+  ReflectorMsg header;
+  if (!header.unpack(ss))
+  {
+    cerr << "*** ERROR[" << m_section << "]: Failed to unpack trunk message "
+            "header" << endl;
+    return;
+  }
+
+  // Only allow hello and heartbeat before authentication completes
+  if (!m_hello_received &&
+      header.type() != MsgTrunkHello::TYPE &&
+      header.type() != MsgTrunkHeartbeat::TYPE)
+  {
+    cerr << "*** WARNING[" << m_section
+         << "]: Ignoring trunk message type=" << header.type()
+         << " before hello" << endl;
+    return;
+  }
+
+  m_hb_rx_cnt = HEARTBEAT_RX_CNT_RESET;
+
+  switch (header.type())
+  {
+    case MsgTrunkHeartbeat::TYPE:
+      handleMsgTrunkHeartbeat();
+      break;
+    case MsgTrunkHello::TYPE:
+      handleMsgTrunkHello(ss);
+      break;
+    case MsgTrunkTalkerStart::TYPE:
+      handleMsgTrunkTalkerStart(ss);
+      break;
+    case MsgTrunkTalkerStop::TYPE:
+      handleMsgTrunkTalkerStop(ss);
+      break;
+    case MsgTrunkAudio::TYPE:
+      handleMsgTrunkAudio(ss);
+      break;
+    case MsgTrunkFlush::TYPE:
+      handleMsgTrunkFlush(ss);
+      break;
+    default:
+      cerr << "*** WARNING[" << m_section
+           << "]: Unknown trunk message type=" << header.type() << endl;
+      break;
+  }
+} /* TrunkLink::onFrameReceived */
+
+
+void TrunkLink::handleMsgTrunkHeartbeat(void)
+{
+  // rx counter already reset in onFrameReceived
+} /* TrunkLink::handleMsgTrunkHeartbeat */
+
+
+void TrunkLink::handleMsgTrunkHello(std::istream& is)
+{
+  MsgTrunkHello msg;
+  if (!msg.unpack(is))
+  {
+    cerr << "*** ERROR[" << m_section << "]: Failed to unpack MsgTrunkHello"
+         << endl;
+    return;
+  }
+
+  if (msg.id().empty())
+  {
+    cerr << "*** ERROR[" << m_section
+         << "]: Peer sent empty trunk ID in MsgTrunkHello" << endl;
+    m_con.disconnect();
+    return;
+  }
+
+  // Verify shared secret via HMAC
+  if (!msg.verify(m_secret))
+  {
+    cerr << "*** ERROR[" << m_section
+         << "]: Trunk authentication failed — peer '" << msg.id()
+         << "' sent invalid secret (HMAC mismatch)" << endl;
+    m_con.disconnect();
+    return;
+  }
+
+  m_peer_priority = msg.priority();
+  m_hello_received = true;
+
+  cout << m_section << ": Trunk hello from peer '" << msg.id()
+       << "' local_prefix=" << msg.localPrefix()
+       << " priority=" << m_peer_priority
+       << " (authenticated)" << endl;
+} /* TrunkLink::handleMsgTrunkHello */
+
+
+void TrunkLink::handleMsgTrunkTalkerStart(std::istream& is)
+{
+  MsgTrunkTalkerStart msg;
+  if (!msg.unpack(is))
+  {
+    cerr << "*** ERROR[" << m_section
+         << "]: Failed to unpack MsgTrunkTalkerStart" << endl;
+    return;
+  }
+
+  uint32_t tg = msg.tg();
+  if (!isSharedTG(tg))
+  {
+    return;
+  }
+
+  // Tie-break: if we already have a local talker on this TG, decide who wins.
+  // Lower priority value wins. If equal (shouldn't happen), local wins.
+  ReflectorClient* local_talker = TGHandler::instance()->talkerForTG(tg);
+  if (local_talker != nullptr)
+  {
+    if (m_priority <= m_peer_priority)
+    {
+      // We win — ignore peer's claim
+      cout << m_section << ": TG #" << tg
+           << " conflict — local wins (our priority=" << m_priority
+           << " <= peer=" << m_peer_priority << ")" << endl;
+      return;
+    }
+    // We defer — clear local talker and accept remote
+    cout << m_section << ": TG #" << tg
+         << " conflict — deferring to peer (our priority=" << m_priority
+         << " > peer=" << m_peer_priority << ")" << endl;
+    m_yielded_tgs.insert(tg);
+    TGHandler::instance()->setTalkerForTG(tg, nullptr);
+    // onTalkerUpdated will fire; Reflector must not re-send TrunkTalkerStart
+    // for this TG since it's in m_yielded_tgs (checked in Reflector.cpp)
+  }
+
+  m_peer_active_tgs.insert(tg);
+  TGHandler::instance()->setTrunkTalkerForTG(tg, msg.callsign());
+} /* TrunkLink::handleMsgTrunkTalkerStart */
+
+
+void TrunkLink::handleMsgTrunkTalkerStop(std::istream& is)
+{
+  MsgTrunkTalkerStop msg;
+  if (!msg.unpack(is))
+  {
+    cerr << "*** ERROR[" << m_section
+         << "]: Failed to unpack MsgTrunkTalkerStop" << endl;
+    return;
+  }
+
+  uint32_t tg = msg.tg();
+  if (!isSharedTG(tg))
+  {
+    return;
+  }
+
+  m_yielded_tgs.erase(tg);
+  m_peer_active_tgs.erase(tg);
+  TGHandler::instance()->clearTrunkTalkerForTG(tg);
+} /* TrunkLink::handleMsgTrunkTalkerStop */
+
+
+void TrunkLink::handleMsgTrunkAudio(std::istream& is)
+{
+  MsgTrunkAudio msg;
+  if (!msg.unpack(is))
+  {
+    cerr << "*** ERROR[" << m_section
+         << "]: Failed to unpack MsgTrunkAudio" << endl;
+    return;
+  }
+
+  uint32_t tg = msg.tg();
+  if (!isSharedTG(tg) || msg.audio().empty())
+  {
+    return;
+  }
+
+  // Only forward audio if this peer has claimed the TG via TalkerStart
+  if (m_peer_active_tgs.find(tg) == m_peer_active_tgs.end())
+  {
+    return;
+  }
+
+  // Rebuild a UDP audio message and broadcast to local clients on this TG
+  MsgUdpAudio udp_msg(msg.audio());
+  m_reflector->broadcastUdpMsg(udp_msg, ReflectorClient::TgFilter(tg));
+} /* TrunkLink::handleMsgTrunkAudio */
+
+
+void TrunkLink::handleMsgTrunkFlush(std::istream& is)
+{
+  MsgTrunkFlush msg;
+  if (!msg.unpack(is))
+  {
+    cerr << "*** ERROR[" << m_section
+         << "]: Failed to unpack MsgTrunkFlush" << endl;
+    return;
+  }
+
+  uint32_t tg = msg.tg();
+  if (!isSharedTG(tg))
+  {
+    return;
+  }
+
+  m_reflector->broadcastUdpMsg(MsgUdpFlushSamples(),
+      ReflectorClient::TgFilter(tg));
+} /* TrunkLink::handleMsgTrunkFlush */
+
+
+void TrunkLink::sendMsg(const ReflectorMsg& msg)
+{
+  ostringstream ss;
+  ReflectorMsg header(msg.type());
+  if (!header.pack(ss) || !msg.pack(ss))
+  {
+    cerr << "*** ERROR[" << m_section << "]: Failed to pack trunk message "
+            "type=" << msg.type() << endl;
+    return;
+  }
+  m_hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
+  m_con.write(ss.str().data(), ss.str().size());
+} /* TrunkLink::sendMsg */
+
+
+void TrunkLink::heartbeatTick(Async::Timer* t)
+{
+  if (--m_hb_tx_cnt == 0)
+  {
+    sendMsg(MsgTrunkHeartbeat());
+  }
+
+  if (--m_hb_rx_cnt == 0)
+  {
+    cerr << "*** ERROR[" << m_section
+         << "]: Trunk heartbeat timeout — disconnecting" << endl;
+    m_con.disconnect();
+  }
+} /* TrunkLink::heartbeatTick */
+
+
+/*
+ * This file has not been truncated
+ */

@@ -1,0 +1,34 @@
+# Build output
+build/
+
+# Compiled object files and binaries
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.out
+*.elf
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+_deps/
+
+# Claude
+.claude/
+CLAUDE.md
+
+# Editor and IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

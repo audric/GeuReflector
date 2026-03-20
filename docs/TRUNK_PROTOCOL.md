@@ -1,0 +1,328 @@
+# GeuReflector — Server-to-Server Trunk Protocol
+
+## Overview
+
+GeuReflector extends SvxReflector with a server-to-server trunk protocol that
+allows two or more independent reflector instances to share talk groups (TGs)
+as simultaneous, independent voice channels — analogous to telephone trunk lines.
+
+TGs are routed by **numeric prefix**: each reflector owns all TGs whose decimal
+string representation starts with a configured digit string.  For example, a
+reflector configured with `LOCAL_PREFIX=1` is authoritative for TG 1, 10, 100,
+1000, 12345, 19999999, etc.  This is analogous to E.164 telephone numbering
+(country codes, area codes).
+
+Multiple reflectors can be trunked together in a full mesh.  Each pair of
+reflectors has one `[TRUNK_x]` section per side.  Each TG has exactly one
+authoritative home reflector (the one whose prefix matches); all other
+reflectors are transparent proxies for that TG.
+
+Clients (SvxLink nodes) connect to their local reflector as normal and are
+completely unaware of the trunk.  When a remote talker is active on a TG whose
+prefix belongs to another reflector, local clients receive a standard
+`MsgTalkerStart` with the remote node's callsign, indistinguishable from a
+local talker.
+
+---
+
+## Architecture
+
+```
+ SvxLink nodes           SvxLink nodes           SvxLink nodes
+      │                       │                       │
+      ▼                       ▼                       ▼
+ Reflector 1  ◄──trunk──►  Reflector 2  ◄──trunk──►  Reflector 3
+  prefix "1"                prefix "2"                prefix "3"
+      └──────────────────────────────────────────────►┘
+                          (full mesh)
+```
+
+Each reflector runs one `TrunkLink` instance per configured peer.  The trunk
+is a persistent outbound TCP connection from each reflector to its peer on a
+dedicated port (default 5302, separate from the client port 5300).
+
+---
+
+## TG Ownership and Routing
+
+A TG number belongs to the reflector whose `LOCAL_PREFIX` is a string prefix
+of the TG's decimal representation:
+
+| TG number | Decimal string | Owned by |
+|-----------|---------------|----------|
+| 1         | "1"           | prefix "1" |
+| 10        | "10"          | prefix "1" |
+| 100       | "100"         | prefix "1" |
+| 1234567   | "1234567"     | prefix "1" |
+| 2         | "2"           | prefix "2" |
+| 25        | "25"          | prefix "2" |
+| 30        | "30"          | prefix "3" |
+
+Ownership check: `std::to_string(tg).substr(0, prefix.size()) == prefix`
+
+In a full mesh of N reflectors, each `[TRUNK_x]` section on reflector A points
+at reflector B and carries only TGs whose decimal string starts with B's prefix
+(`REMOTE_PREFIX`).  No multi-hop routing is needed because every pair has a
+direct trunk.
+
+---
+
+## Connection and Handshake
+
+On TCP connect, both sides immediately send `MsgTrunkHello`. No challenge/response
+is used; authentication relies on network-level access control (firewall rules)
+and the shared secret validated at the application level in future versions.
+
+```
+Reflector A (prefix "1")           Reflector B (prefix "2")
+    │──── MsgTrunkHello(id, local_prefix="1", priority) ──►│
+    │◀─── MsgTrunkHello(id, local_prefix="2", priority) ───│
+    │              (both sides ready)                       │
+```
+
+`MsgTrunkHello` carries:
+- `id` — the config section name (e.g. `TRUNK_2`), used for logging
+- `local_prefix` — the sender's authoritative TG prefix (e.g. `"1"`)
+- `priority` — random 32-bit nonce generated at startup, used for tie-breaking
+
+---
+
+## Normal Talker Flow
+
+When a local client starts transmitting on a TG owned by the peer:
+
+```
+Reflector A (owns prefix "1")      Reflector B (owns prefix "2")
+    │  SM0ABC starts on TG 25          │
+    │  setTalkerForTG(25, SM0ABC)      │
+    │──── MsgTrunkTalkerStart(25, "SM0ABC") ──►│
+    │                     setTrunkTalkerForTG(25, "SM0ABC")
+    │                     broadcast MsgTalkerStart(25, "SM0ABC") to B clients
+    │──── MsgTrunkAudio(25, <frame>) ─►│
+    │                     broadcast MsgUdpAudio to B TG25 clients
+    │   (repeats for each audio frame) │
+    │──── MsgTrunkFlush(25) ──────────►│
+    │  setTalkerForTG(25, null)        │
+    │──── MsgTrunkTalkerStop(25) ─────►│
+    │                     clearTrunkTalkerForTG(25)
+    │                     broadcast MsgTalkerStop(25, "SM0ABC") to B clients
+    │                     broadcast MsgUdpFlushSamples to B TG25 clients
+```
+
+The reverse direction (B client talking on a TG owned by A) is symmetric.
+
+---
+
+## Talker Arbitration and Tie-Breaking
+
+Each reflector arbitrates talkers independently for its own clients.  The trunk
+adds a second layer of arbitration for shared TGs.
+
+**Normal case (one side talking at a time):** the first `MsgTrunkTalkerStart`
+to arrive locks the TG on the receiving side.  Local clients on that side cannot
+grab the talker slot while the trunk lock is held — their audio packets are
+silently dropped by the existing `talker != client` check in the reflector's
+UDP handler.
+
+**Simultaneous claim (both sides start at the same instant):** resolved using
+the `priority` nonce exchanged in `MsgTrunkHello`:
+
+- The side with the **lower** priority value wins
+- The losing side calls `setTalkerForTG(tg, nullptr)` to clear its local talker,
+  then calls `setTrunkTalkerForTG(tg, peer_callsign)` to accept the remote claim
+- The losing side suppresses the spurious `MsgTrunkTalkerStop` that would
+  otherwise be sent when the local talker is cleared (tracked via `m_yielded_tgs`)
+
+---
+
+## Local Client Arbitration Guard
+
+In `Reflector::udpDatagramReceived()`, before accepting a new local talker on a
+TG that is shared with any trunk, the reflector checks whether the trunk already
+holds the TG:
+
+```cpp
+if ((talker == 0) && !TGHandler::instance()->hasTrunkTalker(tg))
+{
+    TGHandler::instance()->setTalkerForTG(tg, client);
+    ...
+}
+```
+
+This single guard ensures that remote conversations are protected from
+interruption by local clients.
+
+---
+
+## Keepalive / Heartbeat
+
+Both sides send `MsgTrunkHeartbeat` periodically to keep the TCP connection
+alive and detect peer disconnection:
+
+- TX: sent when no other message has been sent for 10 timer ticks (10 s)
+- RX timeout: connection torn down if no message received for 15 ticks (15 s)
+
+On disconnect, all trunk talker locks are immediately released so local clients
+are not left blocked.  The `TcpPrioClient` infrastructure handles automatic
+reconnection.
+
+---
+
+## Protocol Messages
+
+All messages use the existing SvxReflector TCP framing: a serialized
+`ReflectorMsg` header (containing the type field) followed by the message
+payload, packed using the `ASYNC_MSG_MEMBERS` macro.
+
+| Type | Name                  | Fields                                           |
+|------|-----------------------|--------------------------------------------------|
+| 115  | `MsgTrunkHello`       | `string id`, `string local_prefix`, `uint32 priority` |
+| 116  | `MsgTrunkTalkerStart` | `uint32 tg`, `string callsign`                   |
+| 117  | `MsgTrunkTalkerStop`  | `uint32 tg`                                      |
+| 118  | `MsgTrunkAudio`       | `uint32 tg`, `uint8[] audio`                     |
+| 119  | `MsgTrunkFlush`       | `uint32 tg`                                      |
+| 120  | `MsgTrunkHeartbeat`   | *(no fields)*                                    |
+
+Type numbers 115–120 are chosen to follow the last existing SvxReflector TCP
+message type (114 = `MsgStartUdpEncryption`) without collision.
+
+Audio is transported over TCP (not UDP) — the trunk is a reliable server-to-server
+link, not a lossy radio gateway path, so TCP framing is appropriate and avoids
+the complexity of a separate UDP cipher channel.
+
+---
+
+## TGHandler Changes
+
+Trunk talker state is stored separately from the `ReflectorClient*` talker
+pointer in `TGHandler`, in a parallel `std::map<uint32_t, std::string>` keyed
+by TG number.  This avoids any refactoring of the existing `ReflectorClient`
+type hierarchy.
+
+New methods:
+- `setTrunkTalkerForTG(tg, callsign)` — lock TG, emit `trunkTalkerUpdated` signal
+- `clearTrunkTalkerForTG(tg)` — release lock on one TG
+- `clearAllTrunkTalkers()` — release all locks (used on disconnect)
+- `trunkTalkerForTG(tg)` — returns callsign or `""` if none
+- `hasTrunkTalker(tg)` — returns bool, used in arbitration guard
+- `trunkTalkersSnapshot()` — returns const ref to the map (for HTTP status)
+
+New signal:
+- `trunkTalkerUpdated(tg, old_callsign, new_callsign)` — connected to
+  `Reflector::onTrunkTalkerUpdated()` which broadcasts `MsgTalkerStart`/`Stop`
+  to local clients with the correct remote callsign
+
+---
+
+## HTTP Status
+
+The `/status` JSON endpoint includes a `trunks` object alongside `nodes`:
+
+```json
+{
+  "nodes": { ... },
+  "trunks": {
+    "TRUNK_2": {
+      "host": "reflector-b.example.com",
+      "port": 5302,
+      "connected": true,
+      "local_prefix": "1",
+      "remote_prefix": "2",
+      "active_talkers": {
+        "25": "SM0ABC",
+        "200": "LA8PV"
+      }
+    }
+  }
+}
+```
+
+`active_talkers` contains only TGs with an active remote talker at the moment
+of the request.  It is empty when no trunk conversations are in progress.
+
+---
+
+## Configuration
+
+### Global setting (both reflectors)
+
+Add `LOCAL_PREFIX` to the `[GLOBAL]` section.  This declares which TG prefix
+this reflector is authoritative for:
+
+```ini
+[GLOBAL]
+...
+LOCAL_PREFIX=1   # this reflector owns TGs 1, 10, 100, 1000, ...
+```
+
+### Per-trunk section
+
+Add one `[TRUNK_x]` section per peer.  `REMOTE_PREFIX` declares which TG prefix
+the peer owns:
+
+```ini
+[TRUNK_2]
+HOST=reflector-b.example.com   # peer hostname or IP
+PORT=5302                       # peer trunk port (default 5302)
+SECRET=change_this_secret       # shared secret
+REMOTE_PREFIX=2                 # peer owns TGs 2, 20, 200, 2000, ...
+```
+
+### Full-mesh example (three reflectors)
+
+**Reflector 1** (`LOCAL_PREFIX=1`):
+```ini
+[TRUNK_2]
+HOST=reflector-b.example.com
+SECRET=secret_ab
+REMOTE_PREFIX=2
+
+[TRUNK_3]
+HOST=reflector-c.example.com
+SECRET=secret_ac
+REMOTE_PREFIX=3
+```
+
+**Reflector 2** (`LOCAL_PREFIX=2`):
+```ini
+[TRUNK_1]
+HOST=reflector-a.example.com
+SECRET=secret_ab
+REMOTE_PREFIX=1
+
+[TRUNK_3]
+HOST=reflector-c.example.com
+SECRET=secret_bc
+REMOTE_PREFIX=3
+```
+
+**Reflector 3** (`LOCAL_PREFIX=3`):
+```ini
+[TRUNK_1]
+HOST=reflector-a.example.com
+SECRET=secret_ac
+REMOTE_PREFIX=1
+
+[TRUNK_2]
+HOST=reflector-b.example.com
+SECRET=secret_bc
+REMOTE_PREFIX=2
+```
+
+---
+
+## Files Changed vs Upstream SvxLink
+
+| File | Change |
+|------|--------|
+| `src/svxlink/reflector/ReflectorMsg.h` | Added `MsgTrunkHello`–`MsgTrunkHeartbeat` (types 115–120); `MsgTrunkHello` carries `local_prefix` string instead of TG list |
+| `src/svxlink/reflector/TGHandler.h` | Added trunk talker map, 5 methods + snapshot accessor, `trunkTalkerUpdated` signal |
+| `src/svxlink/reflector/TGHandler.cpp` | Implemented trunk talker methods including `clearAllTrunkTalkers` |
+| `src/svxlink/reflector/Reflector.h` | Added `m_trunk_links`, `initTrunkLinks()`, `onTrunkTalkerUpdated()` |
+| `src/svxlink/reflector/Reflector.cpp` | Wired trunk init, signals, audio relay, arbitration guard, HTTP status |
+| `src/svxlink/reflector/TrunkLink.h` | **New** — `TrunkLink` class declaration |
+| `src/svxlink/reflector/TrunkLink.cpp` | **New** — full trunk link implementation |
+| `src/svxlink/reflector/CMakeLists.txt` | Added `TrunkLink.cpp` to sources |
+| `src/svxlink/reflector/svxreflector.conf.in` | Added prefix-based trunk example config |
+| `src/versions` | Version bumped to `1.3.99.12+trunk1` |
+| `src/svxlink/reflector/svxreflector.cpp` | Updated startup banner |
