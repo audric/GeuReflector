@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /src
 COPY src/ src/
-RUN cmake -S src -B build -DLOCAL_STATE_DIR=/var \
+RUN cmake -S src -B build -DLOCAL_STATE_DIR=/var -DUSE_ALSA=OFF \
     && cmake --build build
 
 

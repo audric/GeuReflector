@@ -242,7 +242,8 @@ Reflector::Reflector(void)
   : m_srv(0), m_udp_sock(0), m_tg_for_v1_clients(1), m_random_qsy_lo(0),
     m_random_qsy_hi(0), m_random_qsy_tg(0), m_http_server(0), m_cmd_pty(0),
     m_keys_dir("private/"), m_pending_csrs_dir("pending_csrs/"),
-    m_csrs_dir("csrs/"), m_certs_dir("certs/"), m_pki_dir("pki/")
+    m_csrs_dir("csrs/"), m_certs_dir("certs/"), m_pki_dir("pki/"),
+    m_sat_cleanup_timer(0, Async::Timer::TYPE_ONESHOT)
 {
   TGHandler::instance()->talkerUpdated.connect(
       mem_fun(*this, &Reflector::onTalkerUpdated));
@@ -268,6 +269,9 @@ Reflector::Reflector(void)
                     << std::endl;
         }
       });
+  m_sat_cleanup_timer.setEnable(false);
+  m_sat_cleanup_timer.expired.connect(
+      sigc::mem_fun(*this, &Reflector::processSatelliteCleanup));
   m_status["nodes"] = Json::Value(Json::objectValue);
 } /* Reflector::Reflector */
 
@@ -1646,18 +1650,31 @@ void Reflector::httpRequestReceived(Async::HttpServerConnection *con,
   }
   m_status["cluster_tgs"] = cluster_arr;
 
-  if (!m_satellite_con_map.empty())
   {
     Json::Value sats(Json::objectValue);
     for (auto& kv : m_satellite_con_map)
     {
       auto* sat = kv.second;
+      // Skip satellites pending cleanup (heartbeat timed out)
+      if (std::find(m_sat_cleanup_pending.begin(),
+                    m_sat_cleanup_pending.end(),
+                    sat) != m_sat_cleanup_pending.end())
+      {
+        continue;
+      }
       if (!sat->satelliteId().empty())
       {
         sats[sat->satelliteId()] = sat->statusJson();
       }
     }
-    m_status["satellites"] = sats;
+    if (sats.empty())
+    {
+      m_status.removeMember("satellites");
+    }
+    else
+    {
+      m_status["satellites"] = sats;
+    }
   }
 
   std::ostringstream os;
@@ -2060,6 +2077,8 @@ void Reflector::satelliteConnected(Async::FramedTcpConnection* con)
   std::cout << "SAT: Inbound connection from "
             << con->remoteHost() << ":" << con->remotePort() << std::endl;
   auto* link = new SatelliteLink(this, con, m_satellite_secret);
+  link->linkFailed.connect(
+      sigc::mem_fun(*this, &Reflector::onSatelliteLinkFailed));
   m_satellite_con_map[con] = link;
 } /* Reflector::satelliteConnected */
 
@@ -2076,6 +2095,42 @@ void Reflector::satelliteDisconnected(Async::FramedTcpConnection* con,
     m_satellite_con_map.erase(it);
   }
 } /* Reflector::satelliteDisconnected */
+
+
+void Reflector::onSatelliteLinkFailed(SatelliteLink* link)
+{
+  m_sat_cleanup_pending.push_back(link);
+  m_sat_cleanup_timer.setEnable(false);
+  m_sat_cleanup_timer.setTimeout(0);
+  m_sat_cleanup_timer.setEnable(true);
+} /* Reflector::onSatelliteLinkFailed */
+
+
+void Reflector::processSatelliteCleanup(Async::Timer* t)
+{
+  std::vector<SatelliteLink*> pending;
+  pending.swap(m_sat_cleanup_pending);
+
+  for (SatelliteLink* link : pending)
+  {
+    Async::FramedTcpConnection* con = nullptr;
+    for (auto& kv : m_satellite_con_map)
+    {
+      if (kv.second == link)
+      {
+        con = kv.first;
+        break;
+      }
+    }
+    if (con == nullptr) continue;
+
+    std::cout << "SAT: Cleaning up timed-out satellite '"
+              << link->satelliteId() << "'" << std::endl;
+    delete link;
+    m_satellite_con_map.erase(con);
+    con->disconnect();
+  }
+} /* Reflector::processSatelliteCleanup */
 
 
 void Reflector::forwardSatelliteAudioToTrunks(uint32_t tg,

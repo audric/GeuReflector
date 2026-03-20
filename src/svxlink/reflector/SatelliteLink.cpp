@@ -280,6 +280,7 @@ void SatelliteLink::heartbeatTick(Async::Timer* t)
   {
     cerr << "*** ERROR[SAT '" << m_satellite_id
          << "']: Heartbeat timeout — disconnecting" << endl;
-    m_con->disconnect();
+    m_heartbeat_timer.setEnable(false);
+    linkFailed(this);
   }
 } /* SatelliteLink::heartbeatTick */

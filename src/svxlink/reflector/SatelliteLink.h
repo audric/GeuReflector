@@ -30,6 +30,13 @@ class SatelliteLink : public sigc::trackable
     const std::string& satelliteId(void) const { return m_satellite_id; }
     Json::Value statusJson(void) const;
 
+    /**
+     * Emitted when the satellite link has failed (heartbeat timeout).
+     * The Reflector must handle cleanup — the SatelliteLink stops its own
+     * timer but does NOT call m_con->disconnect() itself.
+     */
+    sigc::signal<void, SatelliteLink*> linkFailed;
+
     // Events from local clients or trunk peers → send down to satellite
     void onParentTalkerStart(uint32_t tg, const std::string& callsign);
     void onParentTalkerStop(uint32_t tg);

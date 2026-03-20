@@ -306,6 +306,8 @@ class Reflector : public sigc::trackable
     FramedTcpServer*            m_sat_srv = nullptr;
     std::string                 m_satellite_secret;
     std::map<Async::FramedTcpConnection*, SatelliteLink*> m_satellite_con_map;
+    std::vector<SatelliteLink*>  m_sat_cleanup_pending;
+    Async::Timer                 m_sat_cleanup_timer;
 
     Reflector(const Reflector&);
     Reflector& operator=(const Reflector&);
@@ -334,6 +336,8 @@ class Reflector : public sigc::trackable
     void satelliteConnected(Async::FramedTcpConnection* con);
     void satelliteDisconnected(Async::FramedTcpConnection* con,
         Async::FramedTcpConnection::DisconnectReason reason);
+    void onSatelliteLinkFailed(SatelliteLink* link);
+    void processSatelliteCleanup(Async::Timer* t);
     bool loadCertificateFiles(void);
     bool loadServerCertificateFiles(void);
     bool generateKeyFile(Async::SslKeypair& pkey, const std::string& keyfile);
