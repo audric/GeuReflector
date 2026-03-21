@@ -374,7 +374,7 @@ bool Reflector::initialize(Async::Config &cfg)
   if (m_cfg->getValue("GLOBAL", "HTTP_SRV_PORT", http_srv_port))
   {
     m_http_server = new Async::TcpServer<Async::HttpServerConnection>(http_srv_port);
-    m_http_server->setConnectionThrottling(10, 0.1, 1000);
+    m_http_server->setConnectionThrottling(100, 10.0, 1000);
     m_http_server->clientConnected.connect(
         sigc::mem_fun(*this, &Reflector::httpClientConnected));
     m_http_server->clientDisconnected.connect(
