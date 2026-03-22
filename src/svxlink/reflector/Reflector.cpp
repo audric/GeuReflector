@@ -314,7 +314,7 @@ bool Reflector::initialize(Async::Config &cfg)
   std::string listen_port("5300");
   cfg.getValue("GLOBAL", "LISTEN_PORT", listen_port);
   m_srv = new TcpServer<FramedTcpConnection>(listen_port);
-  m_srv->setConnectionThrottling(10, 0.1, 1000);
+  m_srv->setConnectionThrottling(100, 10.0, 1000);
   m_srv->clientConnected.connect(
       mem_fun(*this, &Reflector::clientConnected));
   m_srv->clientDisconnected.connect(
@@ -2062,7 +2062,7 @@ void Reflector::initSatelliteServer(void)
 
   m_satellite_secret = sat_secret;
   m_sat_srv = new TcpServer<FramedTcpConnection>(sat_port);
-  m_sat_srv->setConnectionThrottling(10, 0.1, 1000);
+  m_sat_srv->setConnectionThrottling(100, 10.0, 1000);
   m_sat_srv->clientConnected.connect(
       sigc::mem_fun(*this, &Reflector::satelliteConnected));
   m_sat_srv->clientDisconnected.connect(
