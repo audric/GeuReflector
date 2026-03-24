@@ -80,10 +80,11 @@ Similar to `TrunkLink` but with different semantics:
 | Aspect | TrunkLink (peer-to-peer) | SatelliteLink |
 |--------|-------------------------|---------------|
 | Topology | Symmetric mesh peers | Asymmetric — parent is authority |
-| TG routing | Prefix-based (`isSharedTG`) | **All TGs** — satellite proxies everything |
+| TG routing | Prefix-based (`isSharedTG`) + cluster (`isClusterTG`) | **No filtering** — all TGs forwarded unconditionally |
 | Talker arbitration | Nonce tie-break | Parent always wins |
 | Who initiates | Both sides connect to each other | Satellite connects to parent |
-| Audio path | Only shared-prefix TGs | All TGs active on either side |
+| Audio path | Only prefix-matched + cluster TGs | All TGs active on either side |
+| `CLUSTER_TGS` config needed | Yes, must match on both sides | Not required |
 
 #### Parent-side changes (`Reflector.cpp`)
 
@@ -203,8 +204,16 @@ LOCAL_PREFIX=01
 CLUSTER_TGS=222,2221,2222,91
 ```
 
-All reflectors in the mesh must list the same cluster TG set. A TG number
-cannot be both a cluster TG and match a `LOCAL_PREFIX`/`REMOTE_PREFIX`.
+Each reflector owner chooses which cluster TGs to subscribe to. The cluster TG
+check is applied independently on both the sending and receiving side of each
+trunk link. If a cluster TG is declared on one side but not the other, the
+receiving side silently ignores the traffic — this is normal operation, not a
+misconfiguration. Only reflectors that both subscribe to a given cluster TG will
+exchange audio for it. A TG number cannot be both a cluster TG and match a
+`LOCAL_PREFIX`/`REMOTE_PREFIX`.
+
+**Note:** Satellite links are not affected by `CLUSTER_TGS` — they forward all
+TGs unconditionally regardless of configuration.
 
 ### Implementation
 

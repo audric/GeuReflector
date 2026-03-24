@@ -118,8 +118,17 @@ transmission on a cluster TG and all other reflectors in the mesh will hear it.
 CLUSTER_TGS=222,2221,91    # comma-separated list of cluster TG numbers
 ```
 
-All reflectors in the mesh should list the same cluster TGs. Cluster TG numbers
-must not overlap with any `LOCAL_PREFIX` or `REMOTE_PREFIX`.
+Each reflector owner chooses which cluster TGs to subscribe to. A reflector only
+sends and accepts traffic for cluster TGs listed in its own `CLUSTER_TGS`. If
+reflector A subscribes to TG 222 but reflector B does not, A will send TG 222
+traffic to B, but B will ignore it — this is normal operation, not a
+misconfiguration. Only reflectors that both subscribe to a given cluster TG will
+exchange audio for it.
+
+Cluster TG numbers must not overlap with any `LOCAL_PREFIX` or `REMOTE_PREFIX`.
+
+**Note:** Satellite links are unaffected by cluster TG configuration — they
+forward all TGs unconditionally (see [Satellite reflectors](#satellite-reflectors)).
 
 ### 3. Add a trunk section per peer
 
@@ -241,9 +250,15 @@ SATELLITE_SECRET=regional_satellite_secret
 SATELLITE_ID=my-satellite
 ```
 
-A satellite does not set `LOCAL_PREFIX`, `REMOTE_PREFIX`, or any `[TRUNK_x]`
-sections. It inherits its parent's identity. Remote reflectors in the mesh see
-satellite clients as if they were connected directly to the parent.
+A satellite does not set `LOCAL_PREFIX`, `REMOTE_PREFIX`, `CLUSTER_TGS`, or any
+`[TRUNK_x]` sections. It inherits its parent's identity. Remote reflectors in
+the mesh see satellite clients as if they were connected directly to the parent.
+
+**No TG filtering:** Unlike trunk links (which filter by prefix and cluster TG),
+satellite links forward **all** audio and talker signaling in both directions
+without any TG filtering. The satellite is a transparent relay — every TG active
+on the parent is heard on the satellite and vice versa, regardless of
+`CLUSTER_TGS` or prefix configuration.
 
 Port `5303` is the default satellite port (separate from client port `5300` and
 trunk port `5302`).

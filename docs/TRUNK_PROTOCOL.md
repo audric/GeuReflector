@@ -65,6 +65,46 @@ at reflector B and carries only TGs whose decimal string starts with B's prefix
 (`REMOTE_PREFIX`).  No multi-hop routing is needed because every pair has a
 direct trunk.
 
+### Cluster TGs
+
+Cluster TGs bypass prefix routing entirely.  A TG listed in `CLUSTER_TGS` is
+forwarded to **all** trunk peers regardless of `LOCAL_PREFIX` or `REMOTE_PREFIX`.
+The routing decision in `TrunkLink` is:
+
+```
+if isClusterTG(tg) → forward (regardless of prefix)
+else if isSharedTG(tg) → forward (prefix match)
+else → drop silently
+```
+
+This check is applied **independently on both sides** of each trunk link:
+
+- **Sending side:** `TrunkLink::onLocalTalkerStart`, `onLocalAudio`, and
+  `onLocalFlush` check `isSharedTG(tg) || isClusterTG(tg)` before sending.
+- **Receiving side:** `TrunkLink::handleMsgTrunkTalkerStart`,
+  `handleMsgTrunkAudio`, and `handleMsgTrunkFlush` perform the same check
+  before accepting.
+
+Each reflector owner chooses which cluster TGs to subscribe to.  A reflector
+only sends and accepts traffic for cluster TGs listed in its own `CLUSTER_TGS`.
+If a cluster TG is declared on the sending reflector but not the receiving one,
+the receiving side silently ignores the traffic — this is normal operation, not
+a misconfiguration.  Only reflectors that both subscribe to a given cluster TG
+will exchange audio for it.
+
+### Satellite Links — No TG Filtering
+
+Satellite links (`SatelliteClient` / `SatelliteLink`) do **not** apply any TG
+filtering.  All talker signaling and audio is forwarded unconditionally in both
+directions:
+
+| Aspect | Trunk link | Satellite link |
+|--------|-----------|----------------|
+| Prefix filtering (`isSharedTG`) | Yes | No |
+| Cluster filtering (`isClusterTG`) | Yes | No |
+| What is forwarded | Only prefix-matched + cluster TGs | All TGs |
+| `CLUSTER_TGS` config needed | Yes, on both sides | No |
+
 ---
 
 ## Connection and Handshake
