@@ -60,6 +60,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 class Reflector;
 class ReflectorMsg;
+class MsgTrunkHello;
 class MsgUdpAudio;
 
 
@@ -100,6 +101,20 @@ class TrunkLink : public sigc::trackable
 
     Json::Value statusJson(void) const;
 
+    const std::string& secret(void) const { return m_secret; }
+    const std::vector<std::string>& remotePrefix(void) const
+    {
+      return m_remote_prefix;
+    }
+
+    // Accept an inbound connection from a peer that has already sent a hello
+    void acceptInboundConnection(Async::FramedTcpConnection* con,
+                                  const MsgTrunkHello& hello);
+
+    // Called by Reflector when the inbound connection disconnects
+    void onInboundDisconnected(Async::FramedTcpConnection* con,
+        Async::FramedTcpConnection::DisconnectReason reason);
+
     // Called by Reflector when a local client starts/stops on a shared TG
     void onLocalTalkerStart(uint32_t tg, const std::string& callsign);
     void onLocalTalkerStop(uint32_t tg);
@@ -113,6 +128,8 @@ class TrunkLink : public sigc::trackable
   private:
     static const unsigned HEARTBEAT_TX_CNT_RESET = 10;
     static const unsigned HEARTBEAT_RX_CNT_RESET = 15;
+
+    enum class ConDir { NONE, OUTBOUND, INBOUND };
 
     using FramedTcpClient =
         Async::TcpPrioClient<Async::FramedTcpConnection>;
@@ -128,7 +145,9 @@ class TrunkLink : public sigc::trackable
     uint32_t            m_priority;       // our tie-break nonce (random)
     uint32_t            m_peer_priority;  // peer's nonce, from MsgTrunkHello
     bool                m_hello_received;
-    FramedTcpClient     m_con;
+    FramedTcpClient     m_con;            // outbound client connection
+    Async::FramedTcpConnection* m_inbound_con = nullptr;  // accepted inbound
+    ConDir              m_active_dir = ConDir::NONE;
     Async::Timer        m_heartbeat_timer;
     unsigned            m_hb_tx_cnt;
     unsigned            m_hb_rx_cnt;
@@ -140,6 +159,12 @@ class TrunkLink : public sigc::trackable
 
     TrunkLink(const TrunkLink&);
     TrunkLink& operator=(const TrunkLink&);
+
+    bool isActive(void) const;
+    void pauseOutbound(void);
+    void resumeOutbound(void);
+    void resolveConnectionConflict(void);
+    void cleanupTrunkState(void);
 
     void onConnected(void);
     void onDisconnected(Async::TcpConnection* con,

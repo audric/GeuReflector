@@ -37,9 +37,13 @@ local talker.
                           (full mesh)
 ```
 
-Each reflector runs one `TrunkLink` instance per configured peer.  The trunk
-is a persistent outbound TCP connection from each reflector to its peer on a
-dedicated port (default 5302, separate from the client port 5300).
+Each reflector runs one `TrunkLink` instance per configured peer and a trunk
+TCP server (default port 5302, configurable via `TRUNK_LISTEN_PORT`).  Each
+`TrunkLink` attempts an outbound connection to the peer while simultaneously
+accepting inbound connections from the peer on the trunk server.  Only one
+connection per peer is active at a time — when both directions connect
+simultaneously, a deterministic tie-break selects which connection to keep
+(see [Connection Conflict Resolution](#connection-conflict-resolution)).
 
 ---
 
@@ -128,21 +132,66 @@ directions:
 
 ## Connection and Handshake
 
-On TCP connect, both sides immediately send `MsgTrunkHello`. No challenge/response
-is used; authentication relies on network-level access control (firewall rules)
-and the shared secret validated at the application level in future versions.
+Each reflector both listens for inbound trunk connections on its trunk server
+port (default 5302) and actively connects outbound to each configured peer.
+Whichever direction succeeds first becomes the active connection for that peer.
+
+### Outbound connection
+
+When a `TrunkLink` connects outbound to a peer, it immediately sends
+`MsgTrunkHello`.  The peer's trunk server accepts the connection, verifies the
+HMAC-authenticated shared secret, matches it to the corresponding `TrunkLink`,
+and sends its own `MsgTrunkHello` in response.
 
 ```
 Reflector A (prefix "1")           Reflector B (prefix "2")
-    │──── MsgTrunkHello(id, local_prefix="1", priority) ──►│
-    │◀─── MsgTrunkHello(id, local_prefix="2", priority) ───│
+    │──── TCP connect to B:5302 ──────────────────────────►│
+    │──── MsgTrunkHello(id, prefix="1", priority, HMAC) ──►│
+    │                          B verifies HMAC, matches TrunkLink
+    │◀─── MsgTrunkHello(id, prefix="2", priority, HMAC) ───│
     │              (both sides ready)                       │
 ```
 
-`MsgTrunkHello` carries:
+### Inbound connection
+
+The trunk server (`Reflector::m_trunk_srv`) listens on the configured
+`TRUNK_LISTEN_PORT` (default 5302).  When a peer connects:
+
+1. The connection enters a **pending** state with a 10-second hello timeout
+2. The server waits for a `MsgTrunkHello` frame
+3. The shared secret is verified via HMAC against each configured `TrunkLink`
+4. On match, the connection is handed off to the corresponding `TrunkLink`
+5. The `TrunkLink` pauses its own outbound connection attempts and uses the
+   inbound connection
+
+**Security hardening:**
+- Pre-authentication frame size is limited to 4 KB (vs 32 KB post-auth)
+- Maximum 5 pending (unauthenticated) connections at a time
+- 10-second timeout for hello message; connections that don't authenticate are
+  dropped
+- Peer identifiers are sanitized before logging (control characters stripped,
+  length capped at 64)
+
+### Connection Conflict Resolution
+
+Because both sides connect outbound simultaneously, it is possible for both an
+inbound and outbound connection to be active at the same time for the same peer.
+When this is detected, a deterministic tie-break resolves the conflict:
+
+- The side with the **lower** priority nonce keeps its **outbound** connection
+- The side with the higher priority nonce keeps the **inbound** connection
+- Both sides independently reach the same conclusion, so exactly one TCP
+  connection survives
+
+This ensures convergence regardless of timing.
+
+### `MsgTrunkHello` fields
+
 - `id` — the config section name (e.g. `TRUNK_2`), used for logging
 - `local_prefix` — the sender's authoritative TG prefix (e.g. `"1"`)
-- `priority` — random 32-bit nonce generated at startup, used for tie-breaking
+- `priority` — random 32-bit nonce, regenerated per connection, used for
+  tie-breaking (both talker arbitration and connection conflict resolution)
+- `nonce` + `digest` — HMAC authentication of the shared secret
 
 ---
 
@@ -306,12 +355,14 @@ of the request.  It is empty when no trunk conversations are in progress.
 ### Global setting (both reflectors)
 
 Add `LOCAL_PREFIX` to the `[GLOBAL]` section.  This declares which TG prefix
-this reflector is authoritative for:
+this reflector is authoritative for.  `TRUNK_LISTEN_PORT` sets the TCP port
+the trunk server listens on (default 5302):
 
 ```ini
 [GLOBAL]
 ...
-LOCAL_PREFIX=1   # this reflector owns TGs 1, 10, 100, 1000, ...
+LOCAL_PREFIX=1            # this reflector owns TGs 1, 10, 100, 1000, ...
+TRUNK_LISTEN_PORT=5302    # trunk server port (default 5302, optional)
 ```
 
 ### Per-trunk section
@@ -377,8 +428,8 @@ REMOTE_PREFIX=2
 | `src/svxlink/reflector/ReflectorMsg.h` | Added `MsgTrunkHello`–`MsgTrunkHeartbeat` (types 115–120); `MsgTrunkHello` carries `local_prefix` string instead of TG list |
 | `src/svxlink/reflector/TGHandler.h` | Added trunk talker map, 5 methods + snapshot accessor, `trunkTalkerUpdated` signal |
 | `src/svxlink/reflector/TGHandler.cpp` | Implemented trunk talker methods including `clearAllTrunkTalkers` |
-| `src/svxlink/reflector/Reflector.h` | Added `m_trunk_links`, `initTrunkLinks()`, `onTrunkTalkerUpdated()` |
-| `src/svxlink/reflector/Reflector.cpp` | Wired trunk init, signals, audio relay, arbitration guard, HTTP status |
+| `src/svxlink/reflector/Reflector.h` | Added `m_trunk_links`, `m_trunk_srv`, `initTrunkLinks()`, `initTrunkServer()`, `onTrunkTalkerUpdated()`, trunk inbound connection handling |
+| `src/svxlink/reflector/Reflector.cpp` | Wired trunk init, trunk server (listen + accept + auth), signals, audio relay, arbitration guard, HTTP status |
 | `src/svxlink/reflector/TrunkLink.h` | **New** — `TrunkLink` class declaration |
 | `src/svxlink/reflector/TrunkLink.cpp` | **New** — full trunk link implementation |
 | `src/svxlink/reflector/CMakeLists.txt` | Added `TrunkLink.cpp` to sources |

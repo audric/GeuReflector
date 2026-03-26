@@ -103,8 +103,9 @@ when a single reflector owns multiple prefix groups:
 ```ini
 [GLOBAL]
 LISTEN_PORT=5300
-LOCAL_PREFIX=1        # owns TGs 1, 10, 100, 1000, ...
-# LOCAL_PREFIX=11,12,13   # multiple prefixes on one instance
+LOCAL_PREFIX=1              # owns TGs 1, 10, 100, 1000, ...
+# LOCAL_PREFIX=11,12,13     # multiple prefixes on one instance
+# TRUNK_LISTEN_PORT=5302    # trunk server port (default 5302)
 ```
 
 ### 2. Cluster TGs (optional)
@@ -145,9 +146,13 @@ Repeat for each peer (`[TRUNK_3]`, `[TRUNK_4]`, …).
 
 ### Network requirements
 
-**Trunk links** require **mutual reachability**: each reflector connects outbound
-to every peer, so all reflectors in the mesh need a static IP (or stable DNS
-name) and the trunk port (default 5302) open for inbound TCP connections.
+**Trunk links** require **mutual reachability**: each reflector both listens for
+inbound trunk connections and connects outbound to every peer.  Both sides
+attempt to connect simultaneously; the first connection that authenticates
+becomes the active link (duplicate connections are resolved automatically via
+priority-based tie-breaking).  All reflectors in the mesh need a static IP (or
+stable DNS name) and the trunk port (default 5302, configurable via
+`TRUNK_LISTEN_PORT`) open for inbound TCP connections.
 
 **Satellite links** are **one-way**: the satellite connects outbound to the
 parent. Only the parent needs a static IP and its satellite port (default 5303)

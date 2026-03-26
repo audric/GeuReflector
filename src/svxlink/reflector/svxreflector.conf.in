@@ -93,6 +93,7 @@ CERT_CA_HOOK=@SVX_SHARE_INSTALL_DIR@/ca-hook.py
 #   Reflector B: LOCAL_PREFIX=2, [TRUNK_1] with REMOTE_PREFIX=1
 #
 #LOCAL_PREFIX=1
+#TRUNK_LISTEN_PORT=5302
 
 #[TRUNK_2]
 #HOST=reflector-b.example.com

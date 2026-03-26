@@ -299,6 +299,13 @@ class Reflector : public sigc::trackable
 
     std::vector<TrunkLink*>     m_trunk_links;
     std::set<uint32_t>          m_cluster_tgs;
+    static const size_t TRUNK_MAX_PENDING_CONS = 5;
+
+    FramedTcpServer*            m_trunk_srv = nullptr;
+    // Inbound trunk connections waiting for MsgTrunkHello identification
+    std::map<Async::FramedTcpConnection*, Async::Timer*> m_trunk_pending_cons;
+    // Handed-off inbound trunk connections mapped to their TrunkLink
+    std::map<Async::FramedTcpConnection*, TrunkLink*>    m_trunk_inbound_map;
 
     // Satellite support
     bool                        m_is_satellite = false;
@@ -332,6 +339,13 @@ class Reflector : public sigc::trackable
     void onTrunkTalkerUpdated(uint32_t tg, std::string old_cs,
                               std::string new_cs);
     void initTrunkLinks(void);
+    void initTrunkServer(void);
+    void trunkClientConnected(Async::FramedTcpConnection* con);
+    void trunkClientDisconnected(Async::FramedTcpConnection* con,
+        Async::FramedTcpConnection::DisconnectReason reason);
+    void trunkPendingFrameReceived(Async::FramedTcpConnection* con,
+                                    std::vector<uint8_t>& data);
+    void trunkPendingTimeout(Async::Timer* t);
     void initSatelliteServer(void);
     void satelliteConnected(Async::FramedTcpConnection* con);
     void satelliteDisconnected(Async::FramedTcpConnection* con,

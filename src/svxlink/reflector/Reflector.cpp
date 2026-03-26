@@ -31,6 +31,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  ****************************************************************************/
 
 #include <cassert>
+#include <sstream>
 #include <unistd.h>
 #include <algorithm>
 #include <fstream>
@@ -291,6 +292,14 @@ Reflector::~Reflector(void)
     delete link;
   }
   m_trunk_links.clear();
+  for (auto& kv : m_trunk_pending_cons)
+  {
+    delete kv.second;
+  }
+  m_trunk_pending_cons.clear();
+  m_trunk_inbound_map.clear();
+  delete m_trunk_srv;
+  m_trunk_srv = nullptr;
   for (auto& kv : m_satellite_con_map)
   {
     delete kv.second;
@@ -446,6 +455,7 @@ bool Reflector::initialize(Async::Config &cfg)
   }
 
   initTrunkLinks();
+  initTrunkServer();
   initSatelliteServer();
 
   return true;
@@ -2052,6 +2062,223 @@ void Reflector::initTrunkLinks(void)
     }
   }
 } /* Reflector::initTrunkLinks */
+
+
+void Reflector::initTrunkServer(void)
+{
+  if (m_trunk_links.empty())
+  {
+    return;  // No trunk links configured — no need for a trunk server
+  }
+
+  std::string trunk_port("5302");
+  m_cfg->getValue("GLOBAL", "TRUNK_LISTEN_PORT", trunk_port);
+
+  m_trunk_srv = new TcpServer<FramedTcpConnection>(trunk_port);
+  m_trunk_srv->clientConnected.connect(
+      sigc::mem_fun(*this, &Reflector::trunkClientConnected));
+  m_trunk_srv->clientDisconnected.connect(
+      sigc::mem_fun(*this, &Reflector::trunkClientDisconnected));
+
+  std::cout << "Trunk server listening on port " << trunk_port << std::endl;
+} /* Reflector::initTrunkServer */
+
+
+void Reflector::trunkClientConnected(Async::FramedTcpConnection* con)
+{
+  // Reject connections beyond the pending limit to prevent fd exhaustion
+  if (m_trunk_pending_cons.size() >= TRUNK_MAX_PENDING_CONS)
+  {
+    std::cerr << "*** WARNING: TRUNK inbound from "
+              << con->remoteHost()
+              << ": too many pending connections — rejecting" << std::endl;
+    con->disconnect();
+    return;
+  }
+
+  std::cout << "TRUNK: Inbound connection from "
+            << con->remoteHost() << ":" << con->remotePort() << std::endl;
+
+  // Set up a timeout for receiving the hello message
+  auto* timer = new Async::Timer(10000, Async::Timer::TYPE_ONESHOT);
+  timer->expired.connect(
+      sigc::mem_fun(*this, &Reflector::trunkPendingTimeout));
+  m_trunk_pending_cons[con] = timer;
+
+  // Use a limited frame size — only a hello message is expected.
+  // MsgTrunkHello contains strings + HMAC, so needs more than PREAUTH (64).
+  // Cap at SSL_SETUP size (4096) which is plenty for a hello.
+  con->setMaxFrameSize(ReflectorMsg::MAX_SSL_SETUP_FRAME_SIZE);
+  con->frameReceived.connect(
+      sigc::mem_fun(*this, &Reflector::trunkPendingFrameReceived));
+} /* Reflector::trunkClientConnected */
+
+
+void Reflector::trunkClientDisconnected(Async::FramedTcpConnection* con,
+    Async::FramedTcpConnection::DisconnectReason reason)
+{
+  // Check pending (pre-hello) connections
+  auto pit = m_trunk_pending_cons.find(con);
+  if (pit != m_trunk_pending_cons.end())
+  {
+    delete pit->second;  // timer
+    m_trunk_pending_cons.erase(pit);
+    std::cout << "TRUNK: Pending inbound from "
+              << con->remoteHost() << " disconnected" << std::endl;
+    return;
+  }
+
+  // Check handed-off connections
+  auto tit = m_trunk_inbound_map.find(con);
+  if (tit != m_trunk_inbound_map.end())
+  {
+    tit->second->onInboundDisconnected(con, reason);
+    m_trunk_inbound_map.erase(tit);
+  }
+} /* Reflector::trunkClientDisconnected */
+
+
+void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
+                                           std::vector<uint8_t>& data)
+{
+  auto pit = m_trunk_pending_cons.find(con);
+  if (pit == m_trunk_pending_cons.end())
+  {
+    return;  // Not a pending connection (already handed off)
+  }
+
+  auto buf = reinterpret_cast<const char*>(data.data());
+  std::stringstream ss;
+  ss.write(buf, data.size());
+
+  ReflectorMsg header;
+  if (!header.unpack(ss))
+  {
+    std::cerr << "*** ERROR: TRUNK inbound: failed to unpack message header"
+              << std::endl;
+    con->disconnect();
+    return;
+  }
+
+  if (header.type() != MsgTrunkHello::TYPE)
+  {
+    std::cerr << "*** WARNING: TRUNK inbound: expected MsgTrunkHello, got type="
+              << header.type() << std::endl;
+    con->disconnect();
+    return;
+  }
+
+  MsgTrunkHello msg;
+  if (!msg.unpack(ss))
+  {
+    std::cerr << "*** ERROR: TRUNK inbound: failed to unpack MsgTrunkHello"
+              << std::endl;
+    con->disconnect();
+    return;
+  }
+
+  if (msg.id().empty())
+  {
+    std::cerr << "*** ERROR: TRUNK inbound: peer sent empty trunk ID"
+              << std::endl;
+    con->disconnect();
+    return;
+  }
+
+  // Sanitize peer ID for safe logging (strip control chars)
+  std::string safe_id;
+  for (char c : msg.id())
+  {
+    if (c >= 0x20 && c < 0x7f)
+    {
+      safe_id += c;
+    }
+  }
+  if (safe_id.size() > 64)
+  {
+    safe_id.resize(64);
+  }
+
+  // Find the matching TrunkLink by verifying the shared secret AND matching
+  // the peer's declared prefix against our configured REMOTE_PREFIX.
+  // This allows multiple trunk sections to share the same secret safely.
+  TrunkLink* matched_link = nullptr;
+  for (auto* link : m_trunk_links)
+  {
+    if (!msg.verify(link->secret()))
+    {
+      continue;
+    }
+
+    // Check if the peer's local_prefix matches this link's remote_prefix.
+    // The peer sends a comma-separated prefix string; we compare the sorted
+    // sets for equality.
+    const auto& expected = link->remotePrefix();
+    std::vector<std::string> peer_prefixes;
+    {
+      std::istringstream pss(msg.localPrefix());
+      std::string tok;
+      while (std::getline(pss, tok, ','))
+      {
+        tok.erase(0, tok.find_first_not_of(" \t"));
+        tok.erase(tok.find_last_not_of(" \t") + 1);
+        if (!tok.empty()) peer_prefixes.push_back(tok);
+      }
+    }
+    std::vector<std::string> sorted_expected(expected);
+    std::vector<std::string> sorted_peer(peer_prefixes);
+    std::sort(sorted_expected.begin(), sorted_expected.end());
+    std::sort(sorted_peer.begin(), sorted_peer.end());
+    if (sorted_expected == sorted_peer)
+    {
+      matched_link = link;
+      break;
+    }
+  }
+
+  if (matched_link == nullptr)
+  {
+    std::cerr << "*** ERROR: TRUNK inbound: peer '" << safe_id
+              << "' failed authentication (no matching secret/prefix)"
+              << std::endl;
+    con->disconnect();
+    return;
+  }
+
+  // Clean up the pending entry
+  delete pit->second;  // timer
+  m_trunk_pending_cons.erase(pit);
+
+  // Disconnect the pending frame handler (Reflector will no longer handle
+  // frames for this connection — the TrunkLink takes over)
+  con->frameReceived.clear();
+
+  // Upgrade to full frame size now that the peer is authenticated
+  con->setMaxFrameSize(ReflectorMsg::MAX_POSTAUTH_FRAME_SIZE);
+
+  // Hand off to the TrunkLink
+  m_trunk_inbound_map[con] = matched_link;
+  matched_link->acceptInboundConnection(con, msg);
+} /* Reflector::trunkPendingFrameReceived */
+
+
+void Reflector::trunkPendingTimeout(Async::Timer* t)
+{
+  // Find which pending connection this timer belongs to
+  for (auto it = m_trunk_pending_cons.begin();
+       it != m_trunk_pending_cons.end(); ++it)
+  {
+    if (it->second == t)
+    {
+      std::cerr << "*** WARNING: TRUNK inbound from "
+                << it->first->remoteHost()
+                << ": hello timeout — disconnecting" << std::endl;
+      it->first->disconnect();
+      // trunkClientDisconnected will clean up
+      return;
+    }
+  }
+} /* Reflector::trunkPendingTimeout */
 
 
 void Reflector::initSatelliteServer(void)

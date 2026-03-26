@@ -237,7 +237,7 @@ Json::Value TrunkLink::statusJson(void) const
   Json::Value obj(Json::objectValue);
   obj["host"]          = m_peer_host;
   obj["port"]          = m_peer_port;
-  obj["connected"]     = m_con.isConnected();
+  obj["connected"]     = isActive();
   Json::Value local_arr(Json::arrayValue);
   for (const auto& p : m_local_prefix)  local_arr.append(p);
   obj["local_prefix"]  = local_arr;
@@ -262,9 +262,81 @@ Json::Value TrunkLink::statusJson(void) const
 } /* TrunkLink::statusJson */
 
 
+void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
+                                         const MsgTrunkHello& hello)
+{
+  if (m_active_dir == ConDir::INBOUND)
+  {
+    cerr << "*** WARNING[" << m_section
+         << "]: Already have an inbound connection, rejecting new one" << endl;
+    con->disconnect();
+    return;
+  }
+
+  if (m_active_dir == ConDir::OUTBOUND)
+  {
+    // We already have an outbound connection. Resolve the conflict.
+    m_inbound_con = con;
+    m_peer_priority = hello.priority();
+    resolveConnectionConflict();
+    return;
+  }
+
+  // No active connection — accept inbound and pause outbound
+  m_inbound_con = con;
+  m_active_dir = ConDir::INBOUND;
+  m_peer_priority = hello.priority();
+  m_hello_received = true;
+
+  // Regenerate our priority for this session
+  std::random_device rd;
+  std::mt19937 rng(rd());
+  std::uniform_int_distribution<uint32_t> dist;
+  m_priority = dist(rng);
+
+  m_hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
+  m_hb_rx_cnt = HEARTBEAT_RX_CNT_RESET;
+  m_heartbeat_timer.setEnable(true);
+  m_yielded_tgs.clear();
+  m_peer_active_tgs.clear();
+
+  pauseOutbound();
+
+  // Wire inbound frame handler to our message dispatcher
+  con->frameReceived.connect(
+      mem_fun(*this, &TrunkLink::onFrameReceived));
+
+  cout << m_section << ": Accepted inbound from " << con->remoteHost()
+       << ":" << con->remotePort() << " peer='" << hello.id()
+       << "' priority=" << m_peer_priority << endl;
+
+  // Send our hello back on the inbound connection
+  sendMsg(MsgTrunkHello(m_section, joinPrefixes(m_local_prefix), m_priority,
+                        m_secret));
+} /* TrunkLink::acceptInboundConnection */
+
+
+void TrunkLink::onInboundDisconnected(Async::FramedTcpConnection* con,
+    Async::FramedTcpConnection::DisconnectReason reason)
+{
+  if (m_active_dir != ConDir::INBOUND || con != m_inbound_con)
+  {
+    return;
+  }
+
+  cout << m_section << ": Inbound trunk connection lost" << endl;
+
+  m_inbound_con = nullptr;
+  cleanupTrunkState();
+
+  // Resume outbound connection attempts
+  resumeOutbound();
+} /* TrunkLink::onInboundDisconnected */
+
+
 void TrunkLink::onLocalTalkerStart(uint32_t tg, const std::string& callsign)
 {
-  if (!m_con.isConnected() || !m_hello_received ||
+  if (!isActive() || !m_hello_received ||
       (!isSharedTG(tg) && !m_reflector->isClusterTG(tg)))
   {
     return;
@@ -275,7 +347,7 @@ void TrunkLink::onLocalTalkerStart(uint32_t tg, const std::string& callsign)
 
 void TrunkLink::onLocalTalkerStop(uint32_t tg)
 {
-  if (!m_con.isConnected() || !m_hello_received ||
+  if (!isActive() || !m_hello_received ||
       (!isSharedTG(tg) && !m_reflector->isClusterTG(tg)))
   {
     return;
@@ -292,7 +364,7 @@ void TrunkLink::onLocalTalkerStop(uint32_t tg)
 
 void TrunkLink::onLocalAudio(uint32_t tg, const std::vector<uint8_t>& audio)
 {
-  if (!m_con.isConnected() || !m_hello_received ||
+  if (!isActive() || !m_hello_received ||
       (!isSharedTG(tg) && !m_reflector->isClusterTG(tg)) ||
       m_yielded_tgs.count(tg))
   {
@@ -304,7 +376,7 @@ void TrunkLink::onLocalAudio(uint32_t tg, const std::vector<uint8_t>& audio)
 
 void TrunkLink::onLocalFlush(uint32_t tg)
 {
-  if (!m_con.isConnected() || !m_hello_received ||
+  if (!isActive() || !m_hello_received ||
       (!isSharedTG(tg) && !m_reflector->isClusterTG(tg)))
   {
     return;
@@ -321,9 +393,17 @@ void TrunkLink::onLocalFlush(uint32_t tg)
 
 void TrunkLink::onConnected(void)
 {
-  cout << m_section << ": Connected to " << m_con.remoteHost()
+  cout << m_section << ": Outbound connected to " << m_con.remoteHost()
        << ":" << m_con.remotePort() << endl;
 
+  if (m_active_dir == ConDir::INBOUND)
+  {
+    // We already have an active inbound connection — resolve conflict
+    resolveConnectionConflict();
+    return;
+  }
+
+  m_active_dir = ConDir::OUTBOUND;
   m_hello_received = false;
   m_yielded_tgs.clear();
   m_peer_active_tgs.clear();
@@ -346,20 +426,18 @@ void TrunkLink::onConnected(void)
 void TrunkLink::onDisconnected(TcpConnection* con,
                                TcpConnection::DisconnectReason reason)
 {
+  // If we're using an inbound connection, ignore outbound disconnect events
+  // (the outbound was paused or is being cycled by TcpPrioClient)
+  if (m_active_dir == ConDir::INBOUND)
+  {
+    return;
+  }
+
   cout << m_section << ": Disconnected from " << m_con.remoteHost()
        << ":" << m_con.remotePort() << ": "
        << TcpConnection::disconnectReasonStr(reason) << endl;
 
-  m_heartbeat_timer.setEnable(false);
-  m_hello_received = false;
-
-  // Release only trunk talkers held by this peer
-  for (uint32_t tg : m_peer_active_tgs)
-  {
-    TGHandler::instance()->clearTrunkTalkerForTG(tg);
-  }
-  m_peer_active_tgs.clear();
-  m_yielded_tgs.clear();
+  cleanupTrunkState();
 } /* TrunkLink::onDisconnected */
 
 
@@ -595,7 +673,14 @@ void TrunkLink::sendMsg(const ReflectorMsg& msg)
     return;
   }
   m_hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
-  m_con.write(ss.str().data(), ss.str().size());
+  if (m_active_dir == ConDir::INBOUND && m_inbound_con != nullptr)
+  {
+    m_inbound_con->write(ss.str().data(), ss.str().size());
+  }
+  else
+  {
+    m_con.write(ss.str().data(), ss.str().size());
+  }
 } /* TrunkLink::sendMsg */
 
 
@@ -610,9 +695,126 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
   {
     cerr << "*** ERROR[" << m_section
          << "]: Trunk heartbeat timeout — disconnecting" << endl;
-    m_con.disconnect();
+    if (m_active_dir == ConDir::INBOUND && m_inbound_con != nullptr)
+    {
+      m_inbound_con->disconnect();
+    }
+    else
+    {
+      m_con.disconnect();
+    }
   }
 } /* TrunkLink::heartbeatTick */
+
+
+bool TrunkLink::isActive(void) const
+{
+  if (m_active_dir == ConDir::INBOUND)
+  {
+    return m_inbound_con != nullptr;
+  }
+  return m_con.isConnected();
+} /* TrunkLink::isActive */
+
+
+void TrunkLink::pauseOutbound(void)
+{
+  m_con.disconnect();
+} /* TrunkLink::pauseOutbound */
+
+
+void TrunkLink::resumeOutbound(void)
+{
+  m_con.connect();
+} /* TrunkLink::resumeOutbound */
+
+
+void TrunkLink::resolveConnectionConflict(void)
+{
+  // Both an inbound and outbound connection exist.
+  // Lower priority value keeps its outbound connection.
+  if (m_priority < m_peer_priority)
+  {
+    // We win — keep outbound, drop inbound
+    cout << m_section << ": Connection conflict — keeping outbound "
+         << "(our priority=" << m_priority
+         << " < peer=" << m_peer_priority << ")" << endl;
+    if (m_inbound_con != nullptr)
+    {
+      m_inbound_con->disconnect();
+      m_inbound_con = nullptr;
+    }
+    // If we didn't already have outbound as active, switch to it
+    if (m_active_dir != ConDir::OUTBOUND)
+    {
+      cleanupTrunkState();
+      m_active_dir = ConDir::OUTBOUND;
+      m_hello_received = false;
+      m_hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
+      m_hb_rx_cnt = HEARTBEAT_RX_CNT_RESET;
+
+      std::random_device rd;
+      std::mt19937 rng(rd());
+      std::uniform_int_distribution<uint32_t> dist;
+      m_priority = dist(rng);
+
+      sendMsg(MsgTrunkHello(m_section, joinPrefixes(m_local_prefix),
+                            m_priority, m_secret));
+      m_heartbeat_timer.setEnable(true);
+    }
+  }
+  else
+  {
+    // Peer wins — keep inbound, drop outbound
+    cout << m_section << ": Connection conflict — keeping inbound "
+         << "(our priority=" << m_priority
+         << " >= peer=" << m_peer_priority << ")" << endl;
+
+    // Clean up outbound state
+    cleanupTrunkState();
+    m_con.disconnect();
+
+    // Set up inbound as the active connection
+    m_active_dir = ConDir::INBOUND;
+    m_hello_received = true;
+    m_hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
+    m_hb_rx_cnt = HEARTBEAT_RX_CNT_RESET;
+    m_heartbeat_timer.setEnable(true);
+
+    // Regenerate our priority for this session
+    std::random_device rd;
+    std::mt19937 rng(rd());
+    std::uniform_int_distribution<uint32_t> dist;
+    m_priority = dist(rng);
+
+    // Wire inbound frame handler
+    m_inbound_con->frameReceived.connect(
+        mem_fun(*this, &TrunkLink::onFrameReceived));
+
+    cout << m_section << ": Accepted inbound from "
+         << m_inbound_con->remoteHost() << ":"
+         << m_inbound_con->remotePort() << endl;
+
+    // Send our hello back on the inbound connection
+    sendMsg(MsgTrunkHello(m_section, joinPrefixes(m_local_prefix),
+                          m_priority, m_secret));
+  }
+} /* TrunkLink::resolveConnectionConflict */
+
+
+void TrunkLink::cleanupTrunkState(void)
+{
+  m_heartbeat_timer.setEnable(false);
+  m_hello_received = false;
+  m_active_dir = ConDir::NONE;
+
+  for (uint32_t tg : m_peer_active_tgs)
+  {
+    TGHandler::instance()->clearTrunkTalkerForTG(tg);
+  }
+  m_peer_active_tgs.clear();
+  m_yielded_tgs.clear();
+} /* TrunkLink::cleanupTrunkState */
 
 
 /*
