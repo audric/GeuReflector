@@ -92,6 +92,10 @@ class TrunkLink : public sigc::trackable
     bool initialize(void);
 
     bool isSharedTG(uint32_t tg) const;
+    void setAllPrefixes(const std::vector<std::string>& all_prefixes)
+    {
+      m_all_prefixes = all_prefixes;
+    }
     const std::string& section(void) const { return m_section; }
 
     Json::Value statusJson(void) const;
@@ -128,6 +132,7 @@ class TrunkLink : public sigc::trackable
     Async::Timer        m_heartbeat_timer;
     unsigned            m_hb_tx_cnt;
     unsigned            m_hb_rx_cnt;
+    std::vector<std::string> m_all_prefixes;   // all prefixes in the mesh
     // TGs where we suppressed our local talker to defer to the peer
     std::set<uint32_t>  m_yielded_tgs;
     // TGs currently held by this specific trunk peer (for scoped cleanup)

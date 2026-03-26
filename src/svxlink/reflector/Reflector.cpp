@@ -1994,14 +1994,16 @@ void Reflector::initTrunkLinks(void)
     }
   }
 
+  // First pass: collect all remote prefixes so we can do longest-prefix-match
+  std::vector<std::string> trunk_sections;
   for (const auto& section : m_cfg->listSections())
   {
     if (section.substr(0, 6) != "TRUNK_")
     {
       continue;
     }
+    trunk_sections.push_back(section);
 
-    // Collect remote prefixes for validation
     std::string remote_prefix_str;
     m_cfg->getValue(section, "REMOTE_PREFIX", remote_prefix_str);
     {
@@ -2014,10 +2016,15 @@ void Reflector::initTrunkLinks(void)
         if (!token.empty()) all_prefixes.push_back(token);
       }
     }
+  }
 
+  // Second pass: create trunk links with full prefix knowledge
+  for (const auto& section : trunk_sections)
+  {
     auto* link = new TrunkLink(this, *m_cfg, section);
     if (link->initialize())
     {
+      link->setAllPrefixes(all_prefixes);
       m_trunk_links.push_back(link);
     }
     else

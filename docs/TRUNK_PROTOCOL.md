@@ -46,7 +46,9 @@ dedicated port (default 5302, separate from the client port 5300).
 ## TG Ownership and Routing
 
 A TG number belongs to the reflector whose `LOCAL_PREFIX` is a string prefix
-of the TG's decimal representation:
+of the TG's decimal representation.  When multiple prefixes match (because one
+prefix is itself a prefix of another), the **longest matching prefix wins** —
+analogous to longest-prefix-match in IP routing.
 
 | TG number | Decimal string | Owned by |
 |-----------|---------------|----------|
@@ -58,7 +60,24 @@ of the TG's decimal representation:
 | 25        | "25"          | prefix "2" |
 | 30        | "30"          | prefix "3" |
 
-Ownership check: `std::to_string(tg).substr(0, prefix.size()) == prefix`
+### Overlapping Prefixes
+
+Prefixes may overlap — one prefix can be a prefix of another.  This enables
+hierarchical TG numbering schemes.  For example, with prefixes `"12"` and
+`"120"`:
+
+| TG number | Matches        | Longest match | Owned by     |
+|-----------|----------------|---------------|--------------|
+| 125       | "12"           | "12" (len 2)  | prefix "12"  |
+| 1205      | "12" and "120" | "120" (len 3) | prefix "120" |
+| 12        | "12"           | "12" (len 2)  | prefix "12"  |
+| 1200      | "12" and "120" | "120" (len 3) | prefix "120" |
+
+At startup, each `TrunkLink` receives the complete set of all prefixes in the
+mesh (local + all remotes).  `isSharedTG(tg)` finds the best matching remote
+prefix for the peer, then verifies no other prefix in the mesh is a longer
+match.  If a longer match exists, the TG belongs to that other reflector
+instead.
 
 In a full mesh of N reflectors, each `[TRUNK_x]` section on reflector A points
 at reflector B and carries only TGs whose decimal string starts with B's prefix

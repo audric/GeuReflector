@@ -199,13 +199,36 @@ bool TrunkLink::initialize(void)
 bool TrunkLink::isSharedTG(uint32_t tg) const
 {
   const std::string s = std::to_string(tg);
+
+  // Find the best (longest) matching remote prefix for this peer
+  size_t best_remote_len = 0;
   for (const auto& prefix : m_remote_prefix)
   {
     if (s.size() >= prefix.size() &&
-        s.compare(0, prefix.size(), prefix) == 0)
-      return true;
+        s.compare(0, prefix.size(), prefix) == 0 &&
+        prefix.size() > best_remote_len)
+    {
+      best_remote_len = prefix.size();
+    }
   }
-  return false;
+  if (best_remote_len == 0)
+  {
+    return false;  // no remote prefix matches at all
+  }
+
+  // Check if any prefix in the mesh is a longer match — if so, that other
+  // reflector is more specific and this TG doesn't belong to this peer.
+  for (const auto& prefix : m_all_prefixes)
+  {
+    if (prefix.size() > best_remote_len &&
+        s.size() >= prefix.size() &&
+        s.compare(0, prefix.size(), prefix) == 0)
+    {
+      return false;  // a longer prefix claims this TG
+    }
+  }
+
+  return true;
 } /* TrunkLink::isSharedTG */
 
 
