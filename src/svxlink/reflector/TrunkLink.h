@@ -71,12 +71,16 @@ class MsgUdpAudio;
  ****************************************************************************/
 
 /**
-@brief  Manages a persistent TCP trunk connection to a peer SvxReflector
+@brief  Manages a persistent TCP trunk link to a peer SvxReflector
 
-One TrunkLink instance is created per [TRUNK_x] config section. It connects
-outbound to the peer reflector on the configured port, exchanges a handshake
-(MsgTrunkHello), then forwards talker state and audio in both directions for
-the set of shared TGs.
+One TrunkLink instance is created per [TRUNK_x] config section. It maintains
+two independent TCP connections to the peer:
+  - An outbound connection (TcpPrioClient) that we initiate and auto-reconnects
+  - An inbound connection accepted from the peer via the trunk server
+
+Both connections coexist independently. Data messages are sent on the outbound
+connection (with inbound as fallback). Heartbeats are sent on each connection
+independently to detect dead sockets.
 
 Talker arbitration tie-break: each side generates a random 32-bit priority at
 startup and exchanges it in MsgTrunkHello. When both sides claim the same TG
@@ -129,8 +133,6 @@ class TrunkLink : public sigc::trackable
     static const unsigned HEARTBEAT_TX_CNT_RESET = 10;
     static const unsigned HEARTBEAT_RX_CNT_RESET = 15;
 
-    enum class ConDir { NONE, OUTBOUND, INBOUND };
-
     using FramedTcpClient =
         Async::TcpPrioClient<Async::FramedTcpConnection>;
 
@@ -142,29 +144,31 @@ class TrunkLink : public sigc::trackable
     std::string         m_secret;
     std::vector<std::string> m_local_prefix;   // our authoritative TG prefixes
     std::vector<std::string> m_remote_prefix;  // peer's authoritative TG prefixes
-    uint32_t            m_priority;       // our tie-break nonce (random)
+    uint32_t            m_priority;       // our tie-break nonce (random, set once)
     uint32_t            m_peer_priority;  // peer's nonce, from MsgTrunkHello
-    bool                m_hello_received;
     FramedTcpClient     m_con;            // outbound client connection
     Async::FramedTcpConnection* m_inbound_con = nullptr;  // accepted inbound
-    ConDir              m_active_dir = ConDir::NONE;
     Async::Timer        m_heartbeat_timer;
-    unsigned            m_hb_tx_cnt;
-    unsigned            m_hb_rx_cnt;
     std::vector<std::string> m_all_prefixes;   // all prefixes in the mesh
     // TGs where we suppressed our local talker to defer to the peer
     std::set<uint32_t>  m_yielded_tgs;
     // TGs currently held by this specific trunk peer (for scoped cleanup)
     std::set<uint32_t>  m_peer_active_tgs;
 
+    // Per-connection state
+    bool                m_ob_hello_received = false;
+    unsigned            m_ob_hb_tx_cnt = 0;
+    unsigned            m_ob_hb_rx_cnt = 0;
+    bool                m_ib_hello_received = false;
+    unsigned            m_ib_hb_tx_cnt = 0;
+    unsigned            m_ib_hb_rx_cnt = 0;
+
     TrunkLink(const TrunkLink&);
     TrunkLink& operator=(const TrunkLink&);
 
     bool isActive(void) const;
-    void pauseOutbound(void);
-    void resumeOutbound(void);
-    void resolveConnectionConflict(void);
-    void cleanupTrunkState(void);
+    bool isOutboundReady(void) const;
+    bool isInboundReady(void) const;
 
     void onConnected(void);
     void onDisconnected(Async::TcpConnection* con,
@@ -180,7 +184,10 @@ class TrunkLink : public sigc::trackable
     void handleMsgTrunkHeartbeat(void);
 
     void sendMsg(const ReflectorMsg& msg);
+    void sendMsgOnOutbound(const ReflectorMsg& msg);
+    void sendMsgOnInbound(const ReflectorMsg& msg);
     void heartbeatTick(Async::Timer* t);
+    void clearPeerTalkerState(void);
 
 };  /* class TrunkLink */
 
