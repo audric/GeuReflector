@@ -1,0 +1,16 @@
+name: Trigger Docker image rebuild
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch rebuild to svxlink-docker
+        run: |
+          gh api repos/audric/svxlink-docker/dispatches \
+            -f event_type=rebuild
+        env:
+          GH_TOKEN: ${{ secrets.DOCKER_REPO_TOKEN }}
