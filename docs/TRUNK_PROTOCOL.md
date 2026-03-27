@@ -95,18 +95,24 @@ forwarded to **all** trunk peers regardless of `LOCAL_PREFIX` or `REMOTE_PREFIX`
 The routing decision in `TrunkLink` is:
 
 ```
-if isClusterTG(tg) → forward (regardless of prefix)
-else if isSharedTG(tg) → forward (prefix match)
-else → drop silently
+Sending:   if isClusterTG(tg) or isSharedTG(tg)  → send to peer
+Receiving: if isClusterTG(tg) or isOwnedTG(tg)   → accept from peer
+Otherwise: drop silently
 ```
 
-This check is applied **independently on both sides** of each trunk link:
+This check is applied **independently on both sides** of each trunk link,
+using different prefix checks appropriate to each direction:
 
 - **Sending side:** `TrunkLink::onLocalTalkerStart`, `onLocalAudio`, and
   `onLocalFlush` check `isSharedTG(tg) || isClusterTG(tg)` before sending.
+  `isSharedTG` matches the TG against the **remote** peer's prefix — i.e. it
+  only forwards TGs that belong to the peer.
 - **Receiving side:** `TrunkLink::handleMsgTrunkTalkerStart`,
-  `handleMsgTrunkAudio`, and `handleMsgTrunkFlush` perform the same check
-  before accepting.
+  `handleMsgTrunkAudio`, and `handleMsgTrunkFlush` check
+  `isOwnedTG(tg) || isClusterTG(tg)` before accepting.  `isOwnedTG` matches
+  the TG against both the **local** prefix (TG belongs to us — a peer's client
+  is talking on one of our TGs) and the **remote** prefix (TG belongs to the
+  peer — the peer is reporting its own talker state).
 
 Each reflector owner chooses which cluster TGs to subscribe to.  A reflector
 only sends and accepts traffic for cluster TGs listed in its own `CLUSTER_TGS`.
@@ -123,7 +129,7 @@ directions:
 
 | Aspect | Trunk link | Satellite link |
 |--------|-----------|----------------|
-| Prefix filtering (`isSharedTG`) | Yes | No |
+| Prefix filtering (`isSharedTG`/`isOwnedTG`) | Yes | No |
 | Cluster filtering (`isClusterTG`) | Yes | No |
 | What is forwarded | Only prefix-matched + cluster TGs | All TGs |
 | `CLUSTER_TGS` config needed | Yes, on both sides | No |

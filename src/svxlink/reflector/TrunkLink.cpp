@@ -230,6 +230,36 @@ bool TrunkLink::isSharedTG(uint32_t tg) const
 } /* TrunkLink::isSharedTG */
 
 
+bool TrunkLink::isOwnedTG(uint32_t tg) const
+{
+  const std::string s = std::to_string(tg);
+
+  // Accept TGs matching our local prefix (TG belongs to us — a peer's
+  // client is talking on one of our TGs)
+  for (const auto& prefix : m_local_prefix)
+  {
+    if (s.size() >= prefix.size() &&
+        s.compare(0, prefix.size(), prefix) == 0)
+    {
+      return true;
+    }
+  }
+
+  // Accept TGs matching the remote prefix (TG belongs to the peer —
+  // the peer is reporting its own talker state for our awareness)
+  for (const auto& prefix : m_remote_prefix)
+  {
+    if (s.size() >= prefix.size() &&
+        s.compare(0, prefix.size(), prefix) == 0)
+    {
+      return true;
+    }
+  }
+
+  return false;
+} /* TrunkLink::isOwnedTG */
+
+
 Json::Value TrunkLink::statusJson(void) const
 {
   Json::Value obj(Json::objectValue);
@@ -540,7 +570,7 @@ void TrunkLink::handleMsgTrunkTalkerStart(std::istream& is)
   }
 
   uint32_t tg = msg.tg();
-  if (!isSharedTG(tg) && !m_reflector->isClusterTG(tg))
+  if (!isOwnedTG(tg) && !m_reflector->isClusterTG(tg))
   {
     return;
   }
@@ -584,7 +614,7 @@ void TrunkLink::handleMsgTrunkTalkerStop(std::istream& is)
   }
 
   uint32_t tg = msg.tg();
-  if (!isSharedTG(tg) && !m_reflector->isClusterTG(tg))
+  if (!isOwnedTG(tg) && !m_reflector->isClusterTG(tg))
   {
     return;
   }
@@ -606,7 +636,7 @@ void TrunkLink::handleMsgTrunkAudio(std::istream& is)
   }
 
   uint32_t tg = msg.tg();
-  if ((!isSharedTG(tg) && !m_reflector->isClusterTG(tg)) || msg.audio().empty())
+  if ((!isOwnedTG(tg) && !m_reflector->isClusterTG(tg)) || msg.audio().empty())
   {
     return;
   }
@@ -637,7 +667,7 @@ void TrunkLink::handleMsgTrunkFlush(std::istream& is)
   }
 
   uint32_t tg = msg.tg();
-  if (!isSharedTG(tg) && !m_reflector->isClusterTG(tg))
+  if (!isOwnedTG(tg) && !m_reflector->isClusterTG(tg))
   {
     return;
   }

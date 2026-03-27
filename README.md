@@ -90,6 +90,26 @@ cmake --build build
 
 ---
 
+## Testing
+
+Integration tests spin up a 3-reflector Docker mesh and verify trunk routing,
+audio delivery, and protocol behavior:
+
+```bash
+cd tests && bash run_tests.sh
+```
+
+Requires Docker and Python 3.7+. The script builds the images, starts the mesh,
+runs 11 automated tests, then drops into an interactive prompt where you can
+enter any TG number and see which reflector it routes to (verified via container
+logs).
+
+The mesh topology is defined in `tests/topology.py` — edit prefixes, cluster
+TGs, or add reflectors there, and `run_tests.sh` regenerates all configs
+automatically.
+
+---
+
 ## Configuration
 
 GeuReflector uses the same `svxreflector.conf` format as SvxReflector with two

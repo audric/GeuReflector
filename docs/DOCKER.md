@@ -64,7 +64,8 @@ TRUNK_2: Trunk hello from peer 'TRUNK_1' local_prefix=2 priority=3847291042
 | 5300       | TCP      | SvxLink client connections                   |
 | 5300       | UDP      | SvxLink client audio                         |
 | 5302       | TCP      | Server-to-server trunk links                 |
-| 8080       | TCP      | HTTP `/status` endpoint (optional)           |
+| 5303       | TCP      | Satellite connections (optional)             |
+| 8080       | TCP      | HTTP `/status` and `/config` endpoints (optional) |
 
 If you do not set `HTTP_SRV_PORT` in the config, remove the `8080` port mapping
 from `docker-compose.yml`.

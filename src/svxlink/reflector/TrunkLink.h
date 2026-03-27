@@ -169,6 +169,7 @@ class TrunkLink : public sigc::trackable
     bool isActive(void) const;
     bool isOutboundReady(void) const;
     bool isInboundReady(void) const;
+    bool isOwnedTG(uint32_t tg) const;
 
     void onConnected(void);
     void onDisconnected(Async::TcpConnection* con,

@@ -80,7 +80,7 @@ Similar to `TrunkLink` but with different semantics:
 | Aspect | TrunkLink (peer-to-peer) | SatelliteLink |
 |--------|-------------------------|---------------|
 | Topology | Symmetric mesh peers | Asymmetric — parent is authority |
-| TG routing | Prefix-based (`isSharedTG`) + cluster (`isClusterTG`) | **No filtering** — all TGs forwarded unconditionally |
+| TG routing | Prefix-based (`isSharedTG`/`isOwnedTG`) + cluster (`isClusterTG`) | **No filtering** — all TGs forwarded unconditionally |
 | Talker arbitration | Nonce tie-break | Parent always wins |
 | Who initiates | Both sides connect to each other | Satellite connects to parent |
 | Audio path | Only prefix-matched + cluster TGs | All TGs active on either side |
@@ -260,11 +260,12 @@ void TrunkLink::onLocalTalkerStart(uint32_t tg, const std::string& callsign)
 }
 ```
 
-Similarly for inbound: `handleMsgTrunkTalkerStart` currently checks
-`isSharedTG`. Add `|| isClusterTG`:
+Similarly for inbound: `handleMsgTrunkTalkerStart` and the other receive
+handlers use `isOwnedTG` (checks both local and remote prefix) instead of
+`isSharedTG`, combined with `|| isClusterTG`:
 
 ```cpp
-if (!isSharedTG(tg) && !m_reflector->isClusterTG(tg))
+if (!isOwnedTG(tg) && !m_reflector->isClusterTG(tg))
 {
   return;
 }
