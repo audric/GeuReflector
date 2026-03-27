@@ -14,6 +14,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import socket
 import struct
 import sys
@@ -1069,8 +1070,8 @@ class TestTrunkIntegration(unittest.TestCase):
             # Check logs on the other reflector for trunk talker
             svc = T.service_name(other)
             lines = docker_log_lines(svc, since_lines=30)
-            found = any(f"Trunk talker start on TG #{tg}" in line
-                        for line in lines)
+            pat = re.compile(rf"Trunk talker start on TG #{tg}(?!\d)")
+            found = any(pat.search(line) for line in lines)
             self.assertTrue(found,
                 f"reflector-{other} did not receive trunk talker for TG {tg} "
                 f"from satellite via parent")
@@ -1294,8 +1295,9 @@ def interactive_loop():
                 lines = docker_log_lines(svc, since_lines=30)
 
                 events = []
+                tg_pattern = re.compile(rf"TG #{tg_str}(?!\d)")
                 for line in lines:
-                    if f"TG #{tg_str}" not in line:
+                    if not tg_pattern.search(line):
                         continue
                     # Extract the event part after the container prefix
                     parts = line.split("|", 1)
