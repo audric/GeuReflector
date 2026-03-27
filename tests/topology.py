@@ -35,6 +35,13 @@ TEST_PEER_RX = {
 # 9999: starts with test peer prefix "9"
 CLUSTER_TGS = [8000, 1201, 9999]
 
+# Satellite test config (parent is the first reflector in REFLECTORS)
+SATELLITE = {
+    "id": "SAT_TEST",
+    "secret": "sat_secret",
+    "listen_port": 5303,
+}
+
 # V2 test client credentials (added to [USERS]/[PASSWORDS] in every config)
 TEST_CLIENTS = [
     {"callsign": "N0TEST", "group": "TestGroup", "password": "testpass"},
@@ -87,6 +94,9 @@ def mapped_client_port(name: str) -> int:
 
 def service_name(name: str) -> str:
     return f"reflector-{name}"
+
+def mapped_satellite_port(name: str) -> int:
+    return REFLECTORS[name]["trunk_port_base"] + 303
 
 def trunk_section_name(peer_name: str) -> str:
     return f"TRUNK_{peer_name.upper()}"

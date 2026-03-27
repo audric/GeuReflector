@@ -47,6 +47,10 @@ TEST_PREFIX_FIRST = T.first_prefix(T.TEST_PEER["prefix"])  # first prefix for TG
 TEST_RX_SECRET = T.TEST_PEER_RX["secret"]
 TEST_RX_PREFIX = T.prefix_str(T.TEST_PEER_RX["prefix"])
 
+SAT_SECRET = T.SATELLITE["secret"]
+SAT_ID = T.SATELLITE["id"]
+ROLE_SATELLITE = 1
+
 # V2 client auth credentials (must match [USERS]/[PASSWORDS] in configs)
 CLIENT_CALLSIGN = T.TEST_CLIENTS[0]["callsign"]
 CLIENT_PASSWORD = T.TEST_CLIENTS[0]["password"]
@@ -246,6 +250,35 @@ class TrunkPeer:
             except OSError:
                 pass
             self.sock = None
+
+
+# ---------------------------------------------------------------------------
+# SatellitePeer — fake satellite connecting to a parent reflector
+# ---------------------------------------------------------------------------
+
+class SatellitePeer(TrunkPeer):
+    """Satellite peer — same wire format as TrunkPeer but role=SATELLITE."""
+
+    def connect_satellite(self, name=None):
+        """Connect to the satellite port of a reflector."""
+        if name is None:
+            name = sorted(T.REFLECTORS)[0]
+        host = HOST
+        port = T.mapped_satellite_port(name)
+        self.connect(host, port)
+
+    def handshake(self, sat_id=SAT_ID, secret=SAT_SECRET, priority=None,
+                  **kwargs):
+        """Send MsgTrunkHello with ROLE_SATELLITE.
+
+        Unlike trunk peers, the parent does NOT send a hello back —
+        authentication is one-way (satellite proves identity to parent).
+        """
+        if priority is None:
+            priority = struct.unpack("!I", os.urandom(4))[0]
+        hello = build_trunk_hello(sat_id, "", priority, secret,
+                                  role=ROLE_SATELLITE)
+        send_frame(self.sock, hello)
 
 
 # ---------------------------------------------------------------------------
@@ -901,6 +934,175 @@ class TestTrunkIntegration(unittest.TestCase):
         finally:
             sender.close()
             receiver.close()
+
+    # ------------------------------------------------------------------
+    # Test 12: Satellite handshake and /status
+    # ------------------------------------------------------------------
+    def test_12_satellite_handshake(self):
+        """Satellite connects to parent and appears in /status."""
+        sat = SatellitePeer()
+        sat.connect_satellite()
+        sat.handshake()
+        try:
+            def sat_in_status():
+                status = get_status(*_http(self.PRIMARY))
+                sats = status.get("satellites", {})
+                info = sats.get(SAT_ID, {})
+                return info.get("authenticated", False)
+
+            wait_until(sat_in_status, timeout=5.0,
+                       msg="satellite not visible in /status")
+        finally:
+            sat.close()
+
+    # ------------------------------------------------------------------
+    # Test 13: Satellite audio reaches parent's local clients
+    # ------------------------------------------------------------------
+    def test_13_satellite_audio_to_parent(self):
+        """Audio sent by satellite is received by a V2 client on the parent."""
+        # V2 client on parent reflector
+        client = ClientPeer()
+        client_port = T.mapped_client_port(self.PRIMARY)
+        client.connect(HOST, client_port)
+        client.authenticate()
+        client.setup_udp(udp_port=client_port)
+
+        tg = int(TEST_PREFIX_FIRST + "010")
+        client.select_tg(tg)
+        time.sleep(0.3)
+
+        # Satellite connects and sends audio
+        sat = SatellitePeer()
+        sat.connect_satellite()
+        sat.handshake()
+        try:
+            sat.send_talker_start(tg, "SAT_TX")
+            for _ in range(3):
+                sat.send_audio(tg, b"\xCA\xFE" * 80)
+            sat.send_flush(tg)
+            sat.send_talker_stop(tg)
+
+            msgs = client.recv_udp_all(timeout=3.0)
+            audio_count = sum(1 for t, _ in msgs if t == UDP_AUDIO)
+            self.assertGreater(audio_count, 0,
+                "V2 client on parent received no audio from satellite")
+        finally:
+            sat.close()
+            client.close()
+
+    # ------------------------------------------------------------------
+    # Test 14: Satellite receives audio from parent (trunk → satellite)
+    # ------------------------------------------------------------------
+    def test_14_satellite_receives_from_parent(self):
+        """Trunk talker audio on the parent is forwarded to the satellite.
+
+        Trunk harness sends audio on a cluster TG via TRUNK_TEST.
+        The parent forwards trunk talker events to connected satellites.
+        """
+        sat = SatellitePeer()
+        sat.connect_satellite()
+        sat.handshake()
+
+        sender, _ = self._connect_peer()
+        try:
+            tg = T.CLUSTER_TGS[0]
+            sender.send_talker_start(tg, "TRUNK_TO_SAT")
+
+            wait_until(lambda: self._get_test_talkers().get(str(tg)) == "TRUNK_TO_SAT",
+                       timeout=5.0, msg="trunk talker not visible")
+
+            for _ in range(3):
+                sender.send_audio(tg, b"\xBE\xEF" * 80)
+            sender.send_flush(tg)
+            sender.send_talker_stop(tg)
+
+            # Satellite should have received talker + audio + flush
+            sat.sock.settimeout(3.0)
+            got_audio = False
+            got_talker = False
+            try:
+                while True:
+                    data = recv_frame(sat.sock)
+                    msg_type, _ = parse_msg(data)
+                    if msg_type == MSG_TRUNK_TALKER_START:
+                        got_talker = True
+                    elif msg_type == MSG_TRUNK_AUDIO:
+                        got_audio = True
+                    elif msg_type == MSG_TRUNK_HEARTBEAT:
+                        continue
+            except (socket.timeout, ConnectionError, OSError):
+                pass
+
+            self.assertTrue(got_talker,
+                "satellite did not receive TalkerStart from trunk")
+            self.assertTrue(got_audio,
+                "satellite did not receive audio from trunk")
+        finally:
+            sender.close()
+            sat.close()
+
+    # ------------------------------------------------------------------
+    # Test 15: Satellite audio forwarded to trunk peers
+    # ------------------------------------------------------------------
+    def test_15_satellite_audio_to_trunk_peer(self):
+        """Audio from satellite is forwarded by parent to trunk peers.
+
+        Satellite sends audio for a TG owned by reflector-b. Parent
+        should forward to reflector-b via trunk.
+        """
+        sat = SatellitePeer()
+        sat.connect_satellite()
+        sat.handshake()
+
+        other = [n for n in REFLECTOR_NAMES if n != self.PRIMARY][0]
+        other_prefix = T.first_prefix(T.REFLECTORS[other]["prefix"])
+        tg = int(other_prefix + "010")
+
+        try:
+            sat.send_talker_start(tg, "SAT_ROUTE")
+            for _ in range(3):
+                sat.send_audio(tg, b"\x00" * 160)
+            sat.send_flush(tg)
+            sat.send_talker_stop(tg)
+            time.sleep(0.5)
+
+            # Check logs on the other reflector for trunk talker
+            svc = T.service_name(other)
+            lines = docker_log_lines(svc, since_lines=30)
+            found = any(f"Trunk talker start on TG #{tg}" in line
+                        for line in lines)
+            self.assertTrue(found,
+                f"reflector-{other} did not receive trunk talker for TG {tg} "
+                f"from satellite via parent")
+        finally:
+            sat.close()
+
+    # ------------------------------------------------------------------
+    # Test 16: Satellite disconnect cleanup
+    # ------------------------------------------------------------------
+    def test_16_satellite_disconnect_cleanup(self):
+        """Abrupt satellite disconnect clears it from /status."""
+        sat = SatellitePeer()
+        sat.connect_satellite()
+        sat.handshake()
+
+        def sat_visible():
+            status = get_status(*_http(self.PRIMARY))
+            return SAT_ID in status.get("satellites", {})
+
+        wait_until(sat_visible, timeout=5.0,
+                   msg="satellite not in /status before disconnect")
+
+        # Abrupt close
+        sat.sock.close()
+        sat.sock = None
+
+        def sat_gone():
+            status = get_status(*_http(self.PRIMARY))
+            return SAT_ID not in status.get("satellites", {})
+
+        wait_until(sat_gone, timeout=20.0,
+                   msg="satellite not cleared from /status after disconnect")
 
 
 # ---------------------------------------------------------------------------

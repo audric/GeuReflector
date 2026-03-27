@@ -74,6 +74,16 @@ def generate_reflector_conf(name: str) -> str:
         "",
     ]
 
+    # Satellite server section (only on the primary reflector)
+    primary = sorted(T.REFLECTORS)[0]
+    if name == primary:
+        lines += [
+            "[SATELLITE]",
+            f"LISTEN_PORT={T.SATELLITE['listen_port']}",
+            f"SECRET={T.SATELLITE['secret']}",
+            "",
+        ]
+
     return "\n".join(lines)
 
 
@@ -82,6 +92,8 @@ def generate_docker_compose() -> str:
     services = []
     volumes = []
 
+    primary = sorted(T.REFLECTORS)[0]
+
     for name in sorted(T.REFLECTORS):
         svc = T.service_name(name)
         client_port = T.mapped_client_port(name)
@@ -89,6 +101,12 @@ def generate_docker_compose() -> str:
         http_port = T.mapped_http_port(name)
         vol = f"pki-{name}"
         volumes.append(vol)
+
+        # Satellite port only on the primary reflector
+        sat_port_line = ""
+        if name == primary:
+            sat_port = T.mapped_satellite_port(name)
+            sat_port_line = f'\n      - "{sat_port}:{T.SATELLITE["listen_port"]}/tcp"'
 
         services.append(f"""  {svc}:
     build:
@@ -101,7 +119,7 @@ def generate_docker_compose() -> str:
       - "{client_port}:{T.INTERNAL_CLIENT_PORT}/tcp"
       - "{client_port}:{T.INTERNAL_CLIENT_PORT}/udp"
       - "{trunk_port}:{T.INTERNAL_TRUNK_PORT}/tcp"
-      - "{http_port}:{T.INTERNAL_HTTP_PORT}/tcp"
+      - "{http_port}:{T.INTERNAL_HTTP_PORT}/tcp"{sat_port_line}
     healthcheck:
       test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/{T.INTERNAL_HTTP_PORT}) 2>/dev/null'"]
       interval: 2s
