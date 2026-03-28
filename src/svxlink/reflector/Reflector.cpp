@@ -69,6 +69,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "ReflectorClient.h"
 #include "TGHandler.h"
 #include "TrunkLink.h"
+#include <version/SVXREFLECTOR.h>
 
 
 /****************************************************************************
@@ -1642,6 +1643,8 @@ void Reflector::httpRequestReceived(Async::HttpServerConnection *con,
     con->write(res);
     return;
   }
+
+  m_status["version"] = SVXREFLECTOR_VERSION;
 
   // Build trunk status fresh on each request (live state)
   Json::Value trunks(Json::objectValue);
