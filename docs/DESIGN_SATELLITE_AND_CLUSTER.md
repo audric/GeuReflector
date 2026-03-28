@@ -1,7 +1,7 @@
 # Design: Regional Satellites & Nationwide Cluster TGs
 
-Two proposed extensions to GeuReflector's trunk architecture. Each can be
-implemented independently.
+Two extensions to GeuReflector's trunk architecture, both now fully
+implemented.
 
 ---
 

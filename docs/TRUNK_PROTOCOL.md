@@ -140,7 +140,9 @@ directions:
 
 Each reflector both listens for inbound trunk connections on its trunk server
 port (default 5302) and actively connects outbound to each configured peer.
-Whichever direction succeeds first becomes the active connection for that peer.
+Outbound and inbound connections operate independently and can both be active
+at the same time.  When sending, the outbound connection is preferred; if it is
+not ready, the inbound connection is used as fallback.
 
 ### Outbound connection
 
@@ -167,8 +169,8 @@ The trunk server (`Reflector::m_trunk_srv`) listens on the configured
 2. The server waits for a `MsgTrunkHello` frame
 3. The shared secret is verified via HMAC against each configured `TrunkLink`
 4. On match, the connection is handed off to the corresponding `TrunkLink`
-5. The `TrunkLink` pauses its own outbound connection attempts and uses the
-   inbound connection
+5. The `TrunkLink` stores the inbound connection alongside any existing
+   outbound connection
 
 **Security hardening:**
 - Pre-authentication frame size is limited to 4 KB (vs 32 KB post-auth)
@@ -178,25 +180,24 @@ The trunk server (`Reflector::m_trunk_srv`) listens on the configured
 - Peer identifiers are sanitized before logging (control characters stripped,
   length capped at 64)
 
-### Connection Conflict Resolution
+### Dual Connection Model
 
-Because both sides connect outbound simultaneously, it is possible for both an
-inbound and outbound connection to be active at the same time for the same peer.
-When this is detected, a deterministic tie-break resolves the conflict:
+Each `TrunkLink` maintains two independent connections to the peer: an outbound
+connection (via `TcpPrioClient`) and an inbound connection (accepted by the
+trunk server).  Both can be active simultaneously.  When sending messages, the
+outbound connection is preferred; if it is not ready, the inbound connection is
+used as fallback.  Each connection has independent heartbeat timers.
 
-- The side with the **lower** priority nonce keeps its **outbound** connection
-- The side with the higher priority nonce keeps the **inbound** connection
-- Both sides independently reach the same conclusion, so exactly one TCP
-  connection survives
-
-This ensures convergence regardless of timing.
+If a second inbound connection arrives while one is already active, the new one
+is rejected.  Outbound reconnection is handled automatically by
+`TcpPrioClient`.
 
 ### `MsgTrunkHello` fields
 
 - `id` — the config section name (e.g. `TRUNK_2`), used for logging
 - `local_prefix` — the sender's authoritative TG prefix (e.g. `"1"`)
 - `priority` — random 32-bit nonce, regenerated per connection, used for
-  tie-breaking (both talker arbitration and connection conflict resolution)
+  talker arbitration tie-breaking
 - `nonce` + `digest` — HMAC authentication of the shared secret
 
 ---
@@ -438,6 +439,10 @@ REMOTE_PREFIX=2
 | `src/svxlink/reflector/Reflector.cpp` | Wired trunk init, trunk server (listen + accept + auth), signals, audio relay, arbitration guard, HTTP status |
 | `src/svxlink/reflector/TrunkLink.h` | **New** — `TrunkLink` class declaration |
 | `src/svxlink/reflector/TrunkLink.cpp` | **New** — full trunk link implementation |
+| `src/svxlink/reflector/SatelliteLink.h` | **New** — `SatelliteLink` class declaration |
+| `src/svxlink/reflector/SatelliteLink.cpp` | **New** — satellite link implementation (parent side) |
+| `src/svxlink/reflector/SatelliteClient.h` | **New** — `SatelliteClient` class declaration |
+| `src/svxlink/reflector/SatelliteClient.cpp` | **New** — satellite client implementation (satellite side) |
 | `src/svxlink/reflector/CMakeLists.txt` | Added `TrunkLink.cpp` to sources |
 | `src/svxlink/reflector/svxreflector.conf.in` | Added prefix-based trunk example config |
 | `src/versions` | Version bumped to `1.3.99.12+trunk1` |

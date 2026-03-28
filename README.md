@@ -168,9 +168,10 @@ Repeat for each peer (`[TRUNK_3]`, `[TRUNK_4]`, …).
 
 **Trunk links** require **mutual reachability**: each reflector both listens for
 inbound trunk connections and connects outbound to every peer.  Both sides
-attempt to connect simultaneously; the first connection that authenticates
-becomes the active link (duplicate connections are resolved automatically via
-priority-based tie-breaking).  All reflectors in the mesh need a static IP (or
+attempt to connect simultaneously; outbound and inbound connections operate
+independently and can both be active at the same time.  When sending, the
+outbound connection is preferred with inbound as fallback.  All reflectors in
+the mesh need a static IP (or
 stable DNS name) and the trunk port (default 5302, configurable via
 `TRUNK_LISTEN_PORT`) open for inbound TCP connections.
 
