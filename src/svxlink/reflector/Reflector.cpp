@@ -1541,6 +1541,7 @@ void Reflector::httpRequestReceived(Async::HttpServerConnection *con,
   if (req.target == "/config")
   {
     Json::Value cfg_json(Json::objectValue);
+    cfg_json["version"] = SVXREFLECTOR_VERSION;
 
     // Local prefixes
     std::string local_prefix_str;
@@ -1643,8 +1644,6 @@ void Reflector::httpRequestReceived(Async::HttpServerConnection *con,
     con->write(res);
     return;
   }
-
-  m_status["version"] = SVXREFLECTOR_VERSION;
 
   // Build trunk status fresh on each request (live state)
   Json::Value trunks(Json::objectValue);
