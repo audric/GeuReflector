@@ -292,7 +292,10 @@ MSG_AUTH_CHALLENGE = 10
 MSG_AUTH_RESPONSE = 11
 MSG_AUTH_OK = 12
 MSG_SERVER_INFO = 100
+MSG_TALKER_START = 104
+MSG_TALKER_STOP = 105
 MSG_SELECT_TG = 106
+MSG_TG_MONITOR = 107
 
 # Client UDP message types
 UDP_HEARTBEAT = 1
@@ -310,6 +313,8 @@ class ClientPeer:
         self._udp_seq = 0
         self._drain_thread = None
         self._drain_stop = threading.Event()
+        self._tcp_msgs = []
+        self._tcp_msgs_lock = threading.Lock()
 
     def connect(self, host: str, tcp_port: int, timeout: float = 5.0):
         self.tcp = socket.create_connection((host, tcp_port), timeout=timeout)
@@ -383,9 +388,17 @@ class ClientPeer:
         assert hdr_type == UDP_HEARTBEAT, f"expected UDP heartbeat, got {hdr_type}"
 
     def select_tg(self, tg: int):
-        """Send MsgSelectTG to monitor a talk group."""
+        """Send MsgSelectTG to switch to a talk group."""
         payload = struct.pack("!H", MSG_SELECT_TG)
         payload += struct.pack("!I", tg)
+        send_frame(self.tcp, payload)
+
+    def monitor_tgs(self, tgs: list):
+        """Send MsgTgMonitor with a set of TGs to passively monitor."""
+        payload = struct.pack("!H", MSG_TG_MONITOR)
+        payload += struct.pack("!H", len(tgs))
+        for tg in sorted(tgs):
+            payload += struct.pack("!I", tg)
         send_frame(self.tcp, payload)
 
     def recv_udp(self, timeout: float = 3.0):
@@ -426,14 +439,24 @@ class ClientPeer:
         self._udp_seq = (self._udp_seq + 1) & 0xFFFF
         self.udp.sendto(pkt, self._udp_target)
 
+    def get_tcp_msgs(self, msg_type=None):
+        """Return captured TCP messages, optionally filtered by type."""
+        with self._tcp_msgs_lock:
+            if msg_type is None:
+                return list(self._tcp_msgs)
+            return [(t, d) for t, d in self._tcp_msgs if t == msg_type]
+
     def _tcp_drain_loop(self):
-        """Background: read and discard TCP frames to keep connection alive."""
+        """Background: read and capture TCP frames to keep connection alive."""
         while not self._drain_stop.is_set():
             try:
                 if self.tcp is None:
                     break
                 self.tcp.settimeout(0.5)
-                recv_frame(self.tcp)
+                data = recv_frame(self.tcp)
+                msg_type = struct.unpack_from("!H", data, 0)[0]
+                with self._tcp_msgs_lock:
+                    self._tcp_msgs.append((msg_type, data))
             except (socket.timeout, ConnectionError, OSError):
                 pass
 
@@ -1104,6 +1127,96 @@ class TestTrunkIntegration(unittest.TestCase):
 
         wait_until(sat_gone, timeout=20.0,
                    msg="satellite not cleared from /status after disconnect")
+
+    # ------------------------------------------------------------------
+    # Test 17: Trunk talker notification reaches monitoring clients
+    # ------------------------------------------------------------------
+    def test_17_bidirectional_trunk_conversation(self):
+        """Full bidirectional conversation through trunk.
+
+        1. Client-A on reflector-a (prefix 122) selects TG 121001 (owned by b)
+        2. Client-B on reflector-b (prefix 121) monitors TG 121001
+        3. Client-A talks → audio reaches client-B via trunk (existing behavior)
+        4. Client-B replies on TG 121001 → audio reaches client-A via trunk
+           (new: peer interest tracking enables the return path)
+        Also verifies that monitoring clients receive MsgTalkerStart for
+        trunk talkers (TgMonitorFilter fix).
+        """
+        other = [n for n in REFLECTOR_NAMES if n != self.PRIMARY][0]
+        other_prefix = T.first_prefix(T.REFLECTORS[other]["prefix"])
+        foreign_tg = int(other_prefix + "001")
+
+        # Home TG for monitoring client on the OTHER reflector
+        home_prefix_other = T.first_prefix(T.REFLECTORS[other]["prefix"])
+        home_tg_other = int(home_prefix_other + "000")
+
+        # --- Client-A on PRIMARY reflector: selected on the foreign TG ---
+        client_a = ClientPeer()
+        a_port = T.mapped_client_port(self.PRIMARY)
+        client_a.connect(HOST, a_port)
+        client_a.authenticate(callsign=CLIENT_CALLSIGN,
+                              password=CLIENT_PASSWORD)
+        client_a.setup_udp(udp_port=a_port)
+        client_a.select_tg(foreign_tg)
+        time.sleep(0.3)
+
+        # --- Client-B on OTHER reflector: home TG, monitoring foreign TG ---
+        client_b = ClientPeer()
+        b_port = T.mapped_client_port(other)
+        client_b.connect(HOST, b_port)
+        client_b.authenticate(callsign=CLIENT2_CALLSIGN,
+                              password=CLIENT2_PASSWORD)
+        client_b.setup_udp(udp_port=b_port)
+        client_b.select_tg(home_tg_other)
+        client_b.monitor_tgs([foreign_tg])
+        time.sleep(0.3)
+
+        try:
+            # === Phase 1: Client-A talks on foreign TG ===
+            # This establishes peer interest on reflector-b's trunk to refl-a
+            for _ in range(5):
+                client_a.send_udp_audio(b"\xCA\xFE" * 80)
+                time.sleep(0.02)
+            client_a.send_udp_flush()
+
+            # Wait for trunk propagation
+            time.sleep(2.0)
+
+            # Client-B (monitoring) should have received MsgTalkerStart
+            talker_starts = client_b.get_tcp_msgs(MSG_TALKER_START)
+            found_start = any(
+                struct.unpack_from("!I", d, 2)[0] == foreign_tg
+                for _, d in talker_starts if len(d) >= 6
+            )
+            self.assertTrue(found_start,
+                f"Monitoring client-B did not receive MsgTalkerStart for "
+                f"TG {foreign_tg} via trunk")
+
+            # === Phase 2: Client-B switches to foreign TG and replies ===
+            client_b.select_tg(foreign_tg)
+            time.sleep(0.3)
+
+            for _ in range(5):
+                client_b.send_udp_audio(b"\xBE\xEF" * 80)
+                time.sleep(0.02)
+            client_b.send_udp_flush()
+
+            # Wait for trunk propagation (return path via interest tracking)
+            time.sleep(2.0)
+
+            # Client-A should receive audio on the return path
+            msgs_a = client_a.recv_udp_all(timeout=2.0)
+            audio_count = sum(1 for t, _ in msgs_a if t == UDP_AUDIO)
+            flush_count = sum(1 for t, _ in msgs_a if t == UDP_FLUSH)
+
+            self.assertGreater(audio_count + flush_count, 0,
+                f"Client-A on {self.PRIMARY} received no audio/flush for "
+                f"TG {foreign_tg} reply from {other} "
+                f"(peer interest tracking failed)")
+
+        finally:
+            client_a.close()
+            client_b.close()
 
 
 # ---------------------------------------------------------------------------

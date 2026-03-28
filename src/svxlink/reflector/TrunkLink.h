@@ -34,6 +34,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  ****************************************************************************/
 
 #include <set>
+#include <map>
 #include <string>
 #include <vector>
 #include <sigc++/sigc++.h>
@@ -155,6 +156,12 @@ class TrunkLink : public sigc::trackable
     // TGs currently held by this specific trunk peer (for scoped cleanup)
     std::set<uint32_t>  m_peer_active_tgs;
 
+    // TGs the peer has shown interest in (sent TalkerStart for).
+    // Maps TG number to last activity timestamp.  Entries expire after
+    // PEER_INTEREST_TIMEOUT_S seconds of inactivity.
+    static const time_t PEER_INTEREST_TIMEOUT_S = 600;  // 10 minutes
+    std::map<uint32_t, time_t> m_peer_interested_tgs;
+
     // Per-connection state
     bool                m_ob_hello_received = false;
     unsigned            m_ob_hb_tx_cnt = 0;
@@ -170,6 +177,7 @@ class TrunkLink : public sigc::trackable
     bool isOutboundReady(void) const;
     bool isInboundReady(void) const;
     bool isOwnedTG(uint32_t tg) const;
+    bool isPeerInterestedTG(uint32_t tg) const;
 
     void onConnected(void);
     void onDisconnected(Async::TcpConnection* con,

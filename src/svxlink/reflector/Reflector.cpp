@@ -2440,7 +2440,9 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
     broadcastMsg(MsgTalkerStop(tg, old_cs),
         ReflectorClient::mkAndFilter(
           ge_v2_client_filter,
-          ReflectorClient::TgFilter(tg)));
+          ReflectorClient::mkOrFilter(
+            ReflectorClient::TgFilter(tg),
+            ReflectorClient::TgMonitorFilter(tg))));
     broadcastUdpMsg(MsgUdpFlushSamples(),
         ReflectorClient::TgFilter(tg));
   }
@@ -2450,7 +2452,9 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
     broadcastMsg(MsgTalkerStart(tg, new_cs),
         ReflectorClient::mkAndFilter(
           ge_v2_client_filter,
-          ReflectorClient::TgFilter(tg)));
+          ReflectorClient::mkOrFilter(
+            ReflectorClient::TgFilter(tg),
+            ReflectorClient::TgMonitorFilter(tg))));
   }
 
   // Forward trunk talker events to connected satellites

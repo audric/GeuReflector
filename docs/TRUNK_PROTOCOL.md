@@ -95,7 +95,7 @@ forwarded to **all** trunk peers regardless of `LOCAL_PREFIX` or `REMOTE_PREFIX`
 The routing decision in `TrunkLink` is:
 
 ```
-Sending:   if isClusterTG(tg) or isSharedTG(tg)  → send to peer
+Sending:   if isClusterTG(tg) or isSharedTG(tg) or isPeerInterestedTG(tg)  → send to peer
 Receiving: if isClusterTG(tg) or isOwnedTG(tg)   → accept from peer
 Otherwise: drop silently
 ```
@@ -104,9 +104,12 @@ This check is applied **independently on both sides** of each trunk link,
 using different prefix checks appropriate to each direction:
 
 - **Sending side:** `TrunkLink::onLocalTalkerStart`, `onLocalAudio`, and
-  `onLocalFlush` check `isSharedTG(tg) || isClusterTG(tg)` before sending.
-  `isSharedTG` matches the TG against the **remote** peer's prefix — i.e. it
-  only forwards TGs that belong to the peer.
+  `onLocalFlush` check `isSharedTG(tg) || isClusterTG(tg) ||
+  isPeerInterestedTG(tg)` before sending.  `isSharedTG` matches the TG
+  against the **remote** peer's prefix — i.e. it forwards TGs that belong
+  to the peer.  Additionally, `isPeerInterestedTG` matches TGs that the
+  peer has previously sent traffic for, enabling the return path for
+  bidirectional conversations (see below).
 - **Receiving side:** `TrunkLink::handleMsgTrunkTalkerStart`,
   `handleMsgTrunkAudio`, and `handleMsgTrunkFlush` check
   `isOwnedTG(tg) || isClusterTG(tg)` before accepting.  `isOwnedTG` matches
@@ -120,6 +123,24 @@ If a cluster TG is declared on the sending reflector but not the receiving one,
 the receiving side silently ignores the traffic — this is normal operation, not
 a misconfiguration.  Only reflectors that both subscribe to a given cluster TG
 will exchange audio for it.
+
+### Peer Interest Tracking
+
+Prefix-based routing is inherently one-directional: when a client on
+reflector A visits a TG owned by reflector B, `isSharedTG` causes A to
+forward to B.  But when B's client replies on that same TG, B sees it as a
+local TG and has no reason to forward back to A.
+
+To enable the return path, each `TrunkLink` tracks **peer interest**: when
+a peer sends `MsgTrunkTalkerStart(tg)`, the receiving side records that the
+peer has active clients on that TG.  From that point, local talker activity
+on the same TG is also forwarded to the peer via `isPeerInterestedTG`.
+
+Interest is refreshed on each `MsgTrunkAudio` received for the TG (keeping
+it alive during long transmissions).  It expires after 10 minutes of
+inactivity on that TG from the peer, and is cleared immediately on trunk
+disconnect.  The interest map is per-link — disconnecting one peer does not
+affect interest tracked for other peers.
 
 ### Satellite Links — No TG Filtering
 

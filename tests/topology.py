@@ -11,9 +11,9 @@ to regenerate configs/ and docker-compose.test.yml.  The test harness
 
 REFLECTORS = {
     #  name       prefixes (list)          host-port-base
-    "a": {"prefix": ["120", "2", "3"],  "trunk_port_base": 15000},
-    "b": {"prefix": ["40", "5"],        "trunk_port_base": 25000},
-    "c": {"prefix": ["6"],              "trunk_port_base": 35000},
+    "a": {"prefix": ["122"],  "trunk_port_base": 15000},
+    "b": {"prefix": ["121"],  "trunk_port_base": 25000},
+    "c": {"prefix": ["1"],    "trunk_port_base": 35000},
 }
 
 # Fake trunk peers used by the test harness.
@@ -33,7 +33,7 @@ TEST_PEER_RX = {
 # 8000: no prefix match (not owned by any reflector)
 # 1201: starts with prefix "120" (overlaps with reflector-a's ownership)
 # 9999: starts with test peer prefix "9"
-CLUSTER_TGS = [8000, 1201, 9999]
+CLUSTER_TGS = [222, 999]
 
 # Satellite test config (parent is the first reflector in REFLECTORS)
 SATELLITE = {

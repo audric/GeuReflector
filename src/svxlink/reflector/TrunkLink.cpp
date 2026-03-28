@@ -36,6 +36,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <random>
 #include <cerrno>
 #include <cstring>
+#include <ctime>
 
 
 /****************************************************************************
@@ -260,6 +261,17 @@ bool TrunkLink::isOwnedTG(uint32_t tg) const
 } /* TrunkLink::isOwnedTG */
 
 
+bool TrunkLink::isPeerInterestedTG(uint32_t tg) const
+{
+  auto it = m_peer_interested_tgs.find(tg);
+  if (it == m_peer_interested_tgs.end())
+  {
+    return false;
+  }
+  return (std::time(nullptr) - it->second) < PEER_INTEREST_TIMEOUT_S;
+} /* TrunkLink::isPeerInterestedTG */
+
+
 Json::Value TrunkLink::statusJson(void) const
 {
   Json::Value obj(Json::objectValue);
@@ -357,7 +369,8 @@ void TrunkLink::onInboundDisconnected(Async::FramedTcpConnection* con,
 void TrunkLink::onLocalTalkerStart(uint32_t tg, const std::string& callsign)
 {
   if (!isActive() ||
-      (!isSharedTG(tg) && !m_reflector->isClusterTG(tg)))
+      (!isSharedTG(tg) && !m_reflector->isClusterTG(tg) &&
+       !isPeerInterestedTG(tg)))
   {
     return;
   }
@@ -368,7 +381,8 @@ void TrunkLink::onLocalTalkerStart(uint32_t tg, const std::string& callsign)
 void TrunkLink::onLocalTalkerStop(uint32_t tg)
 {
   if (!isActive() ||
-      (!isSharedTG(tg) && !m_reflector->isClusterTG(tg)))
+      (!isSharedTG(tg) && !m_reflector->isClusterTG(tg) &&
+       !isPeerInterestedTG(tg)))
   {
     return;
   }
@@ -385,7 +399,8 @@ void TrunkLink::onLocalTalkerStop(uint32_t tg)
 void TrunkLink::onLocalAudio(uint32_t tg, const std::vector<uint8_t>& audio)
 {
   if (!isActive() ||
-      (!isSharedTG(tg) && !m_reflector->isClusterTG(tg)) ||
+      (!isSharedTG(tg) && !m_reflector->isClusterTG(tg) &&
+       !isPeerInterestedTG(tg)) ||
       m_yielded_tgs.count(tg))
   {
     return;
@@ -397,7 +412,8 @@ void TrunkLink::onLocalAudio(uint32_t tg, const std::vector<uint8_t>& audio)
 void TrunkLink::onLocalFlush(uint32_t tg)
 {
   if (!isActive() ||
-      (!isSharedTG(tg) && !m_reflector->isClusterTG(tg)))
+      (!isSharedTG(tg) && !m_reflector->isClusterTG(tg) &&
+       !isPeerInterestedTG(tg)))
   {
     return;
   }
@@ -599,6 +615,7 @@ void TrunkLink::handleMsgTrunkTalkerStart(std::istream& is)
   }
 
   m_peer_active_tgs.insert(tg);
+  m_peer_interested_tgs[tg] = std::time(nullptr);
   TGHandler::instance()->setTrunkTalkerForTG(tg, msg.callsign());
 } /* TrunkLink::handleMsgTrunkTalkerStart */
 
@@ -646,6 +663,9 @@ void TrunkLink::handleMsgTrunkAudio(std::istream& is)
   {
     return;
   }
+
+  // Refresh peer interest timestamp on audio to keep alive during long TX
+  m_peer_interested_tgs[tg] = std::time(nullptr);
 
   // Rebuild a UDP audio message and broadcast to local clients on this TG
   MsgUdpAudio udp_msg(msg.audio());
@@ -756,6 +776,21 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
     }
   }
 
+  // Prune expired peer interest entries
+  time_t now = std::time(nullptr);
+  for (auto it = m_peer_interested_tgs.begin();
+       it != m_peer_interested_tgs.end(); )
+  {
+    if ((now - it->second) >= PEER_INTEREST_TIMEOUT_S)
+    {
+      it = m_peer_interested_tgs.erase(it);
+    }
+    else
+    {
+      ++it;
+    }
+  }
+
   // Disable timer when both connections are down
   if (!m_con.isConnected() && m_inbound_con == nullptr)
   {
@@ -790,6 +825,7 @@ void TrunkLink::clearPeerTalkerState(void)
   }
   m_peer_active_tgs.clear();
   m_yielded_tgs.clear();
+  m_peer_interested_tgs.clear();
 } /* TrunkLink::clearPeerTalkerState */
 
 
