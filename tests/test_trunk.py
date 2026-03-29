@@ -485,12 +485,6 @@ def get_status(host: str, port: int, timeout: float = 3.0) -> dict:
         return json.loads(resp.read())
 
 
-def get_config(host: str, port: int, timeout: float = 3.0) -> dict:
-    url = f"http://{host}:{port}/config"
-    with urlopen(url, timeout=timeout) as resp:
-        return json.loads(resp.read())
-
-
 def wait_until(predicate, timeout: float = 10.0, interval: float = 0.2,
                msg: str = "condition not met"):
     """Poll predicate() until it returns True or timeout expires."""

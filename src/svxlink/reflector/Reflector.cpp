@@ -1538,104 +1538,6 @@ void Reflector::httpRequestReceived(Async::HttpServerConnection *con,
     return;
   }
 
-  if (req.target == "/config")
-  {
-    Json::Value cfg_json(Json::objectValue);
-    cfg_json["version"] = SVXREFLECTOR_VERSION;
-
-    // Local prefixes
-    std::string local_prefix_str;
-    m_cfg->getValue("GLOBAL", "LOCAL_PREFIX", local_prefix_str);
-    Json::Value lp_arr(Json::arrayValue);
-    {
-      std::istringstream ss(local_prefix_str);
-      std::string token;
-      while (std::getline(ss, token, ','))
-      {
-        token.erase(0, token.find_first_not_of(" \t"));
-        token.erase(token.find_last_not_of(" \t") + 1);
-        if (!token.empty()) lp_arr.append(token);
-      }
-    }
-    cfg_json["local_prefix"] = lp_arr;
-
-    // Cluster TGs
-    Json::Value cluster_arr(Json::arrayValue);
-    for (uint32_t tg : m_cluster_tgs)
-    {
-      cluster_arr.append(tg);
-    }
-    cfg_json["cluster_tgs"] = cluster_arr;
-
-    // Trunk peers (static config)
-    Json::Value peers(Json::objectValue);
-    for (auto* link : m_trunk_links)
-    {
-      Json::Value peer(Json::objectValue);
-      Json::Value link_status = link->statusJson();
-      peer["host"] = link_status["host"];
-      peer["port"] = link_status["port"];
-      peer["remote_prefix"] = link_status["remote_prefix"];
-      peers[link->section()] = peer;
-    }
-    cfg_json["trunks"] = peers;
-
-    // Listen port
-    std::string listen_port("5300");
-    m_cfg->getValue("GLOBAL", "LISTEN_PORT", listen_port);
-    cfg_json["listen_port"] = listen_port;
-
-    // HTTP port
-    std::string http_port;
-    if (m_cfg->getValue("GLOBAL", "HTTP_SRV_PORT", http_port))
-    {
-      cfg_json["http_port"] = http_port;
-    }
-
-    // Satellite config
-    if (m_is_satellite)
-    {
-      cfg_json["mode"] = "satellite";
-      std::string sat_of, sat_port_str, sat_id;
-      m_cfg->getValue("GLOBAL", "SATELLITE_OF", sat_of);
-      m_cfg->getValue("GLOBAL", "SATELLITE_PORT", sat_port_str);
-      m_cfg->getValue("GLOBAL", "SATELLITE_ID", sat_id);
-      Json::Value sat_cfg(Json::objectValue);
-      sat_cfg["parent_host"] = sat_of;
-      if (!sat_port_str.empty()) sat_cfg["parent_port"] = sat_port_str;
-      if (!sat_id.empty()) sat_cfg["id"] = sat_id;
-      cfg_json["satellite"] = sat_cfg;
-    }
-    else
-    {
-      cfg_json["mode"] = "reflector";
-      // Satellite server config (if accepting satellites)
-      std::string sat_listen_port;
-      if (m_cfg->getValue("SATELLITE", "LISTEN_PORT", sat_listen_port))
-      {
-        Json::Value sat_srv(Json::objectValue);
-        sat_srv["listen_port"] = sat_listen_port;
-        sat_srv["connected_count"] =
-            static_cast<Json::UInt>(m_satellite_con_map.size());
-        cfg_json["satellite_server"] = sat_srv;
-      }
-    }
-
-    std::ostringstream os;
-    Json::StreamWriterBuilder builder;
-    builder["commentStyle"] = "None";
-    builder["indentation"] = "";
-    Json::StreamWriter* writer = builder.newStreamWriter();
-    writer->write(cfg_json, &os);
-    delete writer;
-
-    res.setContent("application/json", os.str());
-    res.setSendContent(req.method == "GET");
-    res.setCode(200);
-    con->write(res);
-    return;
-  }
-
   if (req.target != "/status")
   {
     res.setCode(404);
@@ -1684,6 +1586,61 @@ void Reflector::httpRequestReceived(Async::HttpServerConnection *con,
     else
     {
       m_status["satellites"] = sats;
+    }
+  }
+
+  // Static configuration
+  m_status["version"] = SVXREFLECTOR_VERSION;
+
+  {
+    std::string local_prefix_str;
+    m_cfg->getValue("GLOBAL", "LOCAL_PREFIX", local_prefix_str);
+    Json::Value lp_arr(Json::arrayValue);
+    std::istringstream ss(local_prefix_str);
+    std::string token;
+    while (std::getline(ss, token, ','))
+    {
+      token.erase(0, token.find_first_not_of(" \t"));
+      token.erase(token.find_last_not_of(" \t") + 1);
+      if (!token.empty()) lp_arr.append(token);
+    }
+    m_status["local_prefix"] = lp_arr;
+  }
+
+  std::string listen_port("5300");
+  m_cfg->getValue("GLOBAL", "LISTEN_PORT", listen_port);
+  m_status["listen_port"] = listen_port;
+
+  std::string http_port;
+  if (m_cfg->getValue("GLOBAL", "HTTP_SRV_PORT", http_port))
+  {
+    m_status["http_port"] = http_port;
+  }
+
+  if (m_is_satellite)
+  {
+    m_status["mode"] = "satellite";
+    std::string sat_of, sat_port_str, sat_id;
+    m_cfg->getValue("GLOBAL", "SATELLITE_OF", sat_of);
+    m_cfg->getValue("GLOBAL", "SATELLITE_PORT", sat_port_str);
+    m_cfg->getValue("GLOBAL", "SATELLITE_ID", sat_id);
+    Json::Value sat_cfg(Json::objectValue);
+    sat_cfg["parent_host"] = sat_of;
+    if (!sat_port_str.empty()) sat_cfg["parent_port"] = sat_port_str;
+    if (!sat_id.empty()) sat_cfg["id"] = sat_id;
+    m_status["satellite"] = sat_cfg;
+  }
+  else
+  {
+    m_status["mode"] = "reflector";
+    std::string sat_listen_port;
+    if (m_cfg->getValue("SATELLITE", "LISTEN_PORT", sat_listen_port))
+    {
+      Json::Value sat_srv(Json::objectValue);
+      sat_srv["listen_port"] = sat_listen_port;
+      sat_srv["connected_count"] =
+          static_cast<Json::UInt>(m_satellite_con_map.size());
+      m_status["satellite_server"] = sat_srv;
     }
   }
 

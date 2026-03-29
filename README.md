@@ -52,7 +52,7 @@ automatically.
 - **Satellite reflectors** — lightweight relay instances that connect to a parent
   reflector instead of joining the full mesh, reducing configuration overhead for
   large deployments
-- **HTTP `/status` and `/config` endpoints** — JSON status with trunk state,
+- **HTTP `/status` endpoint** — JSON status with trunk state,
   active talkers, satellite connections, and static configuration
 - SvxLink client nodes are **unmodified** — they connect to their local
   reflector as normal and are unaware of the trunk
@@ -293,14 +293,20 @@ trunk port `5302`).
 
 ## HTTP Status
 
-Enable with `HTTP_SRV_PORT=8080` in `[GLOBAL]`. Two endpoints are available:
+Enable with `HTTP_SRV_PORT=8080` in `[GLOBAL]`.
 
-### `GET /status` — live state
+### `GET /status`
 
-Returns nodes, trunk connection state, and active talkers:
+Returns live state (nodes, trunk connections, active talkers, satellites) and
+static configuration in a single response:
 
 ```json
 {
+  "version": "1.0.0",
+  "mode": "reflector",
+  "local_prefix": ["1"],
+  "listen_port": "5300",
+  "http_port": "8080",
   "nodes": { ... },
   "cluster_tgs": [222, 2221, 91],
   "trunks": {
@@ -322,31 +328,6 @@ Returns nodes, trunk connection state, and active talkers:
       "authenticated": true,
       "active_tgs": [1, 100]
     }
-  }
-}
-```
-
-`active_talkers` lists TGs with an active remote talker at query time (both
-prefix-based and cluster TGs). `satellites` appears only when satellites are
-connected.
-
-### `GET /config` — static configuration
-
-Returns the reflector's own configuration, useful for dashboards:
-
-```json
-{
-  "mode": "reflector",
-  "local_prefix": ["1"],
-  "cluster_tgs": [222, 2221, 91],
-  "listen_port": "5300",
-  "http_port": "8080",
-  "trunks": {
-    "TRUNK_2": {
-      "host": "reflector-b.example.com",
-      "port": 5302,
-      "remote_prefix": ["2"]
-    }
   },
   "satellite_server": {
     "listen_port": "5303",
@@ -355,19 +336,9 @@ Returns the reflector's own configuration, useful for dashboards:
 }
 ```
 
-When running in satellite mode:
-
-```json
-{
-  "mode": "satellite",
-  "listen_port": "5300",
-  "satellite": {
-    "parent_host": "reflector-01.example.com",
-    "parent_port": "5303",
-    "id": "my-satellite"
-  }
-}
-```
+`active_talkers` lists TGs with an active remote talker at query time (both
+prefix-based and cluster TGs). `satellites` and `satellite_server` appear only
+when applicable.
 
 ---
 
