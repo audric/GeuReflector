@@ -2045,11 +2045,32 @@ void Reflector::initTrunkServer(void)
 
 void Reflector::trunkClientConnected(Async::FramedTcpConnection* con)
 {
-  // Reject connections beyond the pending limit to prevent fd exhaustion
+  // Per-IP pending limit: allow at most 2 pending (pre-hello) connections per
+  // source IP to prevent reconnect storms where rapid retries from one peer
+  // fill the global pending pool and starve other peers.  A limit of 2 (rather
+  // than 1) tolerates one overlapping connection during normal reconnects.
+  const Async::IpAddress remote_ip = con->remoteHost();
+  unsigned ip_pending = 0;
+  for (const auto& kv : m_trunk_pending_cons)
+  {
+    if (kv.first->remoteHost() == remote_ip)
+    {
+      ++ip_pending;
+    }
+  }
+  if (ip_pending >= 2)
+  {
+    std::cerr << "*** WARNING: TRUNK inbound from " << remote_ip
+              << ": too many pending connections from this IP — rejecting"
+              << std::endl;
+    con->disconnect();
+    return;
+  }
+
+  // Reject connections beyond the global pending limit to prevent fd exhaustion
   if (m_trunk_pending_cons.size() >= TRUNK_MAX_PENDING_CONS)
   {
-    std::cerr << "*** WARNING: TRUNK inbound from "
-              << con->remoteHost()
+    std::cerr << "*** WARNING: TRUNK inbound from " << remote_ip
               << ": too many pending connections — rejecting" << std::endl;
     con->disconnect();
     return;

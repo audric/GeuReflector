@@ -189,6 +189,8 @@ bool TrunkLink::initialize(void)
        << " remote_prefix=" << joinPrefixes(m_remote_prefix) << endl;
 
   m_con.addStaticSRVRecord(0, 0, 0, m_peer_port, m_peer_host);
+  m_con.setReconnectMinTime(2000);
+  m_con.setReconnectMaxTime(30000);
   m_con.connect();
 
   return true;
