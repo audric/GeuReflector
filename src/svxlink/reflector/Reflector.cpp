@@ -455,6 +455,18 @@ bool Reflector::initialize(Async::Config &cfg)
     return true;
   }
 
+  // TRUNK_DEBUG — verbose logging for diagnosing trunk connection issues
+  std::string trunk_debug_str;
+  if (cfg.getValue("GLOBAL", "TRUNK_DEBUG", trunk_debug_str))
+  {
+    m_trunk_debug = (trunk_debug_str == "1" || trunk_debug_str == "true"
+                     || trunk_debug_str == "yes");
+    if (m_trunk_debug)
+    {
+      std::cout << "Trunk debug logging enabled" << std::endl;
+    }
+  }
+
   initTrunkLinks();
   initTrunkServer();
   initSatelliteServer();
@@ -2079,6 +2091,13 @@ void Reflector::trunkClientConnected(Async::FramedTcpConnection* con)
   std::cout << "TRUNK: Inbound connection from "
             << con->remoteHost() << ":" << con->remotePort() << std::endl;
 
+  if (m_trunk_debug)
+  {
+    std::cout << "TRUNK [DEBUG]: pending_count=" << m_trunk_pending_cons.size()
+              << " ip_pending=" << ip_pending
+              << " from " << remote_ip << std::endl;
+  }
+
   // Set up a timeout for receiving the hello message
   auto* timer = new Async::Timer(10000, Async::Timer::TYPE_ONESHOT);
   timer->expired.connect(
@@ -2187,6 +2206,12 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
   {
     if (!msg.verify(link->secret()))
     {
+      if (m_trunk_debug)
+      {
+        std::cout << "TRUNK [DEBUG]: peer '" << safe_id
+                  << "' HMAC mismatch against " << link->section()
+                  << std::endl;
+      }
       continue;
     }
 
@@ -2214,6 +2239,24 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
       matched_link = link;
       break;
     }
+    else if (m_trunk_debug)
+    {
+      std::string exp_str, peer_str;
+      for (const auto& p : sorted_expected)
+      {
+        if (!exp_str.empty()) exp_str += ",";
+        exp_str += p;
+      }
+      for (const auto& p : sorted_peer)
+      {
+        if (!peer_str.empty()) peer_str += ",";
+        peer_str += p;
+      }
+      std::cout << "TRUNK [DEBUG]: peer '" << safe_id
+                << "' secret OK for " << link->section()
+                << " but prefix mismatch: expected=[" << exp_str
+                << "] got=[" << peer_str << "]" << std::endl;
+    }
   }
 
   if (matched_link == nullptr)
@@ -2223,6 +2266,12 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
               << std::endl;
     con->disconnect();
     return;
+  }
+
+  if (m_trunk_debug)
+  {
+    std::cout << "TRUNK [DEBUG]: peer '" << safe_id
+              << "' matched to " << matched_link->section() << std::endl;
   }
 
   // Clean up the pending entry

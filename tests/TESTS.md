@@ -50,6 +50,8 @@ Two V2 clients are configured on every reflector:
 
 A satellite server is enabled on reflector-a (port 5303, secret `sat_secret`).
 
+All test configs have `TRUNK_DEBUG=1` enabled for verbose trunk logging during test runs.
+
 ### Port Mapping
 
 | Reflector | Client (TCP+UDP) | Trunk (TCP) | HTTP | Satellite |

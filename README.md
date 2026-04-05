@@ -151,7 +151,35 @@ Cluster TG numbers must not overlap with any `LOCAL_PREFIX` or `REMOTE_PREFIX`.
 **Note:** Satellite links are unaffected by cluster TG configuration — they
 forward all TGs unconditionally (see [Satellite reflectors](#satellite-reflectors)).
 
-### 3. Add a trunk section per peer
+### 3. Trunk debug logging (optional)
+
+Enable verbose trunk logging to diagnose connection issues:
+
+```ini
+[GLOBAL]
+TRUNK_DEBUG=1
+```
+
+When enabled, the reflector logs detailed information about every trunk
+connection state change, including:
+
+- Connection and disconnection events with full state (both directions'
+  hello/heartbeat counters, whether the other direction is up)
+- Heartbeat countdown warnings as the RX counter approaches timeout
+- Every non-heartbeat frame received, with direction (IB/OB), type, and size
+- Send path decisions (outbound, fallback to inbound, or dropped)
+- Trunk server peer matching: which sections matched or mismatched on HMAC
+  secret and prefix, making configuration errors immediately visible
+
+**Warning:** `TRUNK_DEBUG` logs **every audio frame** received over trunk. During
+active transmissions this means dozens of lines per second per TG per trunk link
+(e.g. ~50 lines/sec with 20ms Opus framing). On a busy reflector with multiple
+simultaneous talkers across several trunk peers, this can produce hundreds of
+log lines per second and rapidly fill disk. **Do not leave `TRUNK_DEBUG=1`
+enabled in production.** Use it only to diagnose a specific issue, then disable
+it immediately.
+
+### 4. Add a trunk section per peer
 
 ```ini
 [TRUNK_2]

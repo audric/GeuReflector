@@ -184,9 +184,17 @@ bool TrunkLink::initialize(void)
     return false;
   }
 
+  // TRUNK_DEBUG — verbose logging for connection diagnostics
+  std::string debug_str;
+  if (m_cfg.getValue("GLOBAL", "TRUNK_DEBUG", debug_str))
+  {
+    m_debug = (debug_str == "1" || debug_str == "true" || debug_str == "yes");
+  }
+
   cout << m_section << ": Trunk to " << m_peer_host << ":" << m_peer_port
        << " local_prefix=" << joinPrefixes(m_local_prefix)
-       << " remote_prefix=" << joinPrefixes(m_remote_prefix) << endl;
+       << " remote_prefix=" << joinPrefixes(m_remote_prefix)
+       << (m_debug ? " [debug on]" : "") << endl;
 
   m_con.addStaticSRVRecord(0, 0, 0, m_peer_port, m_peer_host);
   m_con.setReconnectMinTime(2000);
@@ -315,6 +323,16 @@ void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
   {
     cerr << "*** WARNING[" << m_section
          << "]: Already have an inbound connection, rejecting new one" << endl;
+    if (m_debug)
+    {
+      cerr << m_section << " [DEBUG]: existing inbound from "
+           << m_inbound_con->remoteHost() << ":"
+           << m_inbound_con->remotePort()
+           << " ib_hello=" << m_ib_hello_received
+           << " ib_hb_rx=" << m_ib_hb_rx_cnt
+           << " new inbound from " << con->remoteHost() << ":"
+           << con->remotePort() << endl;
+    }
     con->disconnect();
     return;
   }
@@ -336,6 +354,14 @@ void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
        << ":" << con->remotePort() << " peer='" << hello.id()
        << "' priority=" << m_peer_priority << endl;
 
+  if (m_debug)
+  {
+    cout << m_section << " [DEBUG]: inbound state: ob_connected="
+         << m_con.isConnected() << " ob_hello=" << m_ob_hello_received
+         << " ib_hb_tx=" << m_ib_hb_tx_cnt
+         << " ib_hb_rx=" << m_ib_hb_rx_cnt << endl;
+  }
+
   // Send our hello back on the inbound connection
   sendMsgOnInbound(MsgTrunkHello(m_section, joinPrefixes(m_local_prefix),
                                   m_priority, m_secret));
@@ -347,10 +373,26 @@ void TrunkLink::onInboundDisconnected(Async::FramedTcpConnection* con,
 {
   if (con != m_inbound_con)
   {
+    if (m_debug)
+    {
+      cerr << m_section << " [DEBUG]: onInboundDisconnected for unknown con "
+           << con->remoteHost() << ":" << con->remotePort()
+           << " (m_inbound_con="
+           << (m_inbound_con ? "set" : "null") << ")" << endl;
+    }
     return;
   }
 
   cout << m_section << ": Inbound trunk connection lost" << endl;
+
+  if (m_debug)
+  {
+    cout << m_section << " [DEBUG]: inbound lost: ib_hello=" << m_ib_hello_received
+         << " ib_hb_rx=" << m_ib_hb_rx_cnt
+         << " ob_connected=" << m_con.isConnected()
+         << " ob_hello=" << m_ob_hello_received
+         << " peer_active_tgs=" << m_peer_active_tgs.size() << endl;
+  }
 
   m_inbound_con = nullptr;
   m_ib_hello_received = false;
@@ -434,6 +476,13 @@ void TrunkLink::onConnected(void)
   cout << m_section << ": Outbound connected to " << m_con.remoteHost()
        << ":" << m_con.remotePort() << endl;
 
+  if (m_debug)
+  {
+    cout << m_section << " [DEBUG]: outbound up: ib_connected="
+         << (m_inbound_con != nullptr) << " ib_hello=" << m_ib_hello_received
+         << " sending hello with priority=" << m_priority << endl;
+  }
+
   m_ob_hello_received = false;
   m_ob_hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
   m_ob_hb_rx_cnt = HEARTBEAT_RX_CNT_RESET;
@@ -449,6 +498,14 @@ void TrunkLink::onDisconnected(TcpConnection* con,
 {
   cout << m_section << ": Outbound disconnected: "
        << TcpConnection::disconnectReasonStr(reason) << endl;
+
+  if (m_debug)
+  {
+    cout << m_section << " [DEBUG]: outbound lost: ob_hello=" << m_ob_hello_received
+         << " ob_hb_rx=" << m_ob_hb_rx_cnt
+         << " ib_connected=" << (m_inbound_con != nullptr)
+         << " ib_hello=" << m_ib_hello_received << endl;
+  }
 
   m_ob_hello_received = false;
   m_ob_hb_tx_cnt = 0;
@@ -502,6 +559,12 @@ void TrunkLink::onFrameReceived(FramedTcpConnection* con,
   else
   {
     m_ob_hb_rx_cnt = HEARTBEAT_RX_CNT_RESET;
+  }
+
+  if (m_debug && header.type() != MsgTrunkHeartbeat::TYPE)
+  {
+    cout << m_section << " [DEBUG]: rx " << (is_inbound ? "IB" : "OB")
+         << " type=" << header.type() << " len=" << data.size() << endl;
   }
 
   switch (header.type())
@@ -574,6 +637,14 @@ void TrunkLink::handleMsgTrunkHello(std::istream& is)
        << "' local_prefix=" << msg.localPrefix()
        << " priority=" << m_peer_priority
        << " (authenticated)" << endl;
+
+  if (m_debug)
+  {
+    cout << m_section << " [DEBUG]: hello done: ob_hello=" << m_ob_hello_received
+         << " ib_connected=" << (m_inbound_con != nullptr)
+         << " ib_hello=" << m_ib_hello_received
+         << " isActive=" << isActive() << endl;
+  }
 } /* TrunkLink::handleMsgTrunkHello */
 
 
@@ -710,7 +781,17 @@ void TrunkLink::sendMsg(const ReflectorMsg& msg)
   }
   else if (isInboundReady())
   {
+    if (m_debug)
+    {
+      cout << m_section << " [DEBUG]: tx fallback to IB type="
+           << msg.type() << endl;
+    }
     sendMsgOnInbound(msg);
+  }
+  else if (m_debug)
+  {
+    cerr << m_section << " [DEBUG]: tx dropped type=" << msg.type()
+         << " (no active connection)" << endl;
   }
 } /* TrunkLink::sendMsg */
 
@@ -753,6 +834,11 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
   {
     if (--m_ob_hb_tx_cnt == 0)
     {
+      if (m_debug)
+      {
+        cout << m_section << " [DEBUG]: OB heartbeat tx"
+             << " ob_hb_rx=" << m_ob_hb_rx_cnt << endl;
+      }
       sendMsgOnOutbound(MsgTrunkHeartbeat());
     }
     if (--m_ob_hb_rx_cnt == 0)
@@ -761,6 +847,11 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
            << "]: Outbound heartbeat timeout" << endl;
       m_con.disconnect();
     }
+    else if (m_debug && m_ob_hb_rx_cnt <= 5)
+    {
+      cerr << m_section << " [DEBUG]: OB heartbeat rx countdown: "
+           << m_ob_hb_rx_cnt << endl;
+    }
   }
 
   // Inbound heartbeat
@@ -768,6 +859,11 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
   {
     if (--m_ib_hb_tx_cnt == 0)
     {
+      if (m_debug)
+      {
+        cout << m_section << " [DEBUG]: IB heartbeat tx"
+             << " ib_hb_rx=" << m_ib_hb_rx_cnt << endl;
+      }
       sendMsgOnInbound(MsgTrunkHeartbeat());
     }
     if (--m_ib_hb_rx_cnt == 0)
@@ -775,6 +871,11 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
       cerr << "*** ERROR[" << m_section
            << "]: Inbound heartbeat timeout" << endl;
       m_inbound_con->disconnect();
+    }
+    else if (m_debug && m_ib_hb_rx_cnt <= 5)
+    {
+      cerr << m_section << " [DEBUG]: IB heartbeat rx countdown: "
+           << m_ib_hb_rx_cnt << endl;
     }
   }
 

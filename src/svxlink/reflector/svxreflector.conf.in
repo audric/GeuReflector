@@ -94,6 +94,7 @@ CERT_CA_HOOK=@SVX_SHARE_INSTALL_DIR@/ca-hook.py
 #
 #LOCAL_PREFIX=1
 #TRUNK_LISTEN_PORT=5302
+#TRUNK_DEBUG=0              # verbose trunk logging (high log volume — disable after diagnosis)
 
 #[TRUNK_2]
 #HOST=reflector-b.example.com

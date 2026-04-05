@@ -299,6 +299,7 @@ class Reflector : public sigc::trackable
 
     std::vector<TrunkLink*>     m_trunk_links;
     std::set<uint32_t>          m_cluster_tgs;
+    bool                        m_trunk_debug = false;
     static const size_t TRUNK_MAX_PENDING_CONS = 5;
 
     FramedTcpServer*            m_trunk_srv = nullptr;

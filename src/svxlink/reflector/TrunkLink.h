@@ -140,6 +140,7 @@ class TrunkLink : public sigc::trackable
     Reflector*          m_reflector;
     Async::Config&      m_cfg;
     std::string         m_section;
+    bool                m_debug = false;
     std::string         m_peer_host;
     uint16_t            m_peer_port;
     std::string         m_secret;
