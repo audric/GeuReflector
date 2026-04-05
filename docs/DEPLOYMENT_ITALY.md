@@ -122,115 +122,115 @@ CLUSTER_TGS=222
 HTTP_SRV_PORT=8080
 COMMAND_PTY=/dev/shm/reflector_ctrl
 
-[TRUNK_02]
+[TRUNK_01_02]
 HOST=svxref-sardegna.example.it
 PORT=5302
 SECRET=IT_01_02
 REMOTE_PREFIX=02
 
-[TRUNK_03]
+[TRUNK_01_03]
 HOST=svxref-umbria.example.it
 PORT=5302
 SECRET=IT_01_03
 REMOTE_PREFIX=03
 
-[TRUNK_11]
+[TRUNK_01_11]
 HOST=svxref-liguria.example.it
 PORT=5302
 SECRET=IT_01_11
 REMOTE_PREFIX=11
 
-[TRUNK_12]
+[TRUNK_01_12]
 HOST=svxref-piemonte.example.it
 PORT=5302
 SECRET=IT_01_12
 REMOTE_PREFIX=12
 
-[TRUNK_13]
+[TRUNK_01_13]
 HOST=svxref-valledaosta.example.it
 PORT=5302
 SECRET=IT_01_13
 REMOTE_PREFIX=13
 
-[TRUNK_21]
+[TRUNK_01_21]
 HOST=svxref-lombardia.example.it
 PORT=5302
 SECRET=IT_01_21
 REMOTE_PREFIX=21
 
-[TRUNK_31]
+[TRUNK_01_31]
 HOST=svxref-friuli.example.it
 PORT=5302
 SECRET=IT_01_31
 REMOTE_PREFIX=31
 
-[TRUNK_32]
+[TRUNK_01_32]
 HOST=svxref-trentino.example.it
 PORT=5302
 SECRET=IT_01_32
 REMOTE_PREFIX=32
 
-[TRUNK_33]
+[TRUNK_01_33]
 HOST=svxref-veneto.example.it
 PORT=5302
 SECRET=IT_01_33
 REMOTE_PREFIX=33
 
-[TRUNK_41]
+[TRUNK_01_41]
 HOST=svxref-emilia.example.it
 PORT=5302
 SECRET=IT_01_41
 REMOTE_PREFIX=41
 
-[TRUNK_51]
+[TRUNK_01_51]
 HOST=svxref-toscana.example.it
 PORT=5302
 SECRET=IT_01_51
 REMOTE_PREFIX=51
 
-[TRUNK_61]
+[TRUNK_01_61]
 HOST=svxref-abruzzo.example.it
 PORT=5302
 SECRET=IT_01_61
 REMOTE_PREFIX=61
 
-[TRUNK_62]
+[TRUNK_01_62]
 HOST=svxref-marche.example.it
 PORT=5302
 SECRET=IT_01_62
 REMOTE_PREFIX=62
 
-[TRUNK_71]
+[TRUNK_01_71]
 HOST=svxref-puglia.example.it
 PORT=5302
 SECRET=IT_01_71
 REMOTE_PREFIX=71
 
-[TRUNK_81]
+[TRUNK_01_81]
 HOST=svxref-basilicata.example.it
 PORT=5302
 SECRET=IT_01_81
 REMOTE_PREFIX=81
 
-[TRUNK_82]
+[TRUNK_01_82]
 HOST=svxref-calabria.example.it
 PORT=5302
 SECRET=IT_01_82
 REMOTE_PREFIX=82
 
-[TRUNK_83]
+[TRUNK_01_83]
 HOST=svxref-campania.example.it
 PORT=5302
 SECRET=IT_01_83
 REMOTE_PREFIX=83
 
-[TRUNK_84]
+[TRUNK_01_84]
 HOST=svxref-molise.example.it
 PORT=5302
 SECRET=IT_01_84
 REMOTE_PREFIX=84
 
-[TRUNK_91]
+[TRUNK_01_91]
 HOST=svxref-sicilia.example.it
 PORT=5302
 SECRET=IT_01_91
@@ -238,8 +238,12 @@ REMOTE_PREFIX=91
 ```
 
 All other regional configs follow the same pattern: set `LOCAL_PREFIX` to the
-region's 2-digit code and add one `[TRUNK_xx]` section for each of the other
-19 regions, using the matching `SECRET` from the convention above.
+region's 2-digit code and add one `[TRUNK_xx_yy]` section for each of the other
+19 regions, where `xx` and `yy` are the sorted pair of region codes (lower code
+first). Both sides of a trunk link must use the **same section name** — for
+example, the link between regions 02 and 21 is named `[TRUNK_02_21]` on both
+the SARDEGNA and LOMBARDIA reflectors. Use the matching `SECRET` from the
+convention above.
 
 ---
 
@@ -313,7 +317,7 @@ SATELLITE_SECRET=lazio_satellite_secret
 SATELLITE_ID=sat-roma
 ```
 
-The satellite does not set `LOCAL_PREFIX`, `REMOTE_PREFIX`, or any `[TRUNK_xx]`
+The satellite does not set `LOCAL_PREFIX`, `REMOTE_PREFIX`, or any `[TRUNK_xx_yy]`
 sections. It only needs `LISTEN_PORT=5300` for its local SvxLink clients. Also
 open port `5303` inbound on the regional reflector firewall.
 
@@ -322,7 +326,9 @@ open port `5303` inbound on the regional reflector firewall.
 ## Per-region config checklist
 
 1. Set `LOCAL_PREFIX` to the 2-digit code from the table above.
-2. Add one `[TRUNK_xx]` section for **every other region** (19 sections total).
+2. Add one `[TRUNK_xx_yy]` section for **every other region** (19 sections total),
+   where `xx` and `yy` are the sorted pair of region codes (lower first). Both
+   sides of a trunk link must use the **same** `[TRUNK_xx_yy]` section name.
 3. Use the same `SECRET` value as the matching section on the peer — mismatched
    secrets will prevent the trunk from connecting.
 4. Open TCP port `5302` inbound in the firewall (trunk) and `5300` inbound (clients).

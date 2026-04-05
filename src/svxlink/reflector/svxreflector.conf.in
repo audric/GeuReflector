@@ -88,15 +88,18 @@ CERT_CA_HOOK=@SVX_SHARE_INSTALL_DIR@/ca-hook.py
 # Add LOCAL_PREFIX to the [GLOBAL] section, then add one [TRUNK_x] section
 # per peer. REMOTE_PREFIX declares which TG prefix the peer owns.
 #
+# IMPORTANT: The [TRUNK_x] section name must be identical on both sides.
+# Both sysops must agree on a shared name and secret for each link.
+#
 # Example for a two-reflector mesh:
-#   Reflector A: LOCAL_PREFIX=1, [TRUNK_2] with REMOTE_PREFIX=2
-#   Reflector B: LOCAL_PREFIX=2, [TRUNK_1] with REMOTE_PREFIX=1
+#   Reflector A: LOCAL_PREFIX=1, [TRUNK_AB] with REMOTE_PREFIX=2
+#   Reflector B: LOCAL_PREFIX=2, [TRUNK_AB] with REMOTE_PREFIX=1
 #
 #LOCAL_PREFIX=1
 #TRUNK_LISTEN_PORT=5302
 #TRUNK_DEBUG=0              # verbose trunk logging (high log volume — disable after diagnosis)
 
-#[TRUNK_2]
+#[TRUNK_AB]
 #HOST=reflector-b.example.com
 #PORT=5302
 #SECRET=change_this_shared_secret

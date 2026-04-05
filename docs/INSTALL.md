@@ -108,15 +108,17 @@ LOCAL_PREFIX=11,12,13
 At the end of the config file, add one `[TRUNK_x]` section per peer reflector:
 
 ```ini
-[TRUNK_2]
+[TRUNK_1_2]
 HOST=reflector-b.example.com
 PORT=5302
 SECRET=a_strong_shared_secret
 REMOTE_PREFIX=2
 ```
 
+- **The section name must be identical on both sides.** Both sysops must agree
+  on a shared name (e.g. `TRUNK_1_2` for the link between prefix 1 and 2).
 - `PORT` defaults to `5302` if omitted.
-- Both sides of each trunk must use the same `SECRET`.
+- Both sides must use the same `SECRET`.
 - `REMOTE_PREFIX` also accepts a comma-separated list.
 
 ### 6c. Optional: enable the HTTP status endpoint
@@ -170,8 +172,8 @@ journalctl -u svxreflector -f
 A successful trunk connection looks like:
 
 ```
-TRUNK_2: Connected to reflector-b.example.com:5302
-TRUNK_2: Trunk hello from peer 'TRUNK_1' local_prefix=2 priority=3847291042
+TRUNK_1_2: Connected to reflector-b.example.com:5302
+TRUNK_1_2: Trunk hello from peer 'TRUNK_1_2' local_prefix=2 priority=3847291042
 ```
 
 If `HTTP_SRV_PORT` is set, query the status endpoint:

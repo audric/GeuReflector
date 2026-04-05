@@ -47,7 +47,7 @@ On the **parent reflector** (existing reflector, no role change needed):
 LOCAL_PREFIX=01
 
 # Existing trunk config unchanged
-[TRUNK_02]
+[TRUNK_01_02]
 HOST=reflector-02.example.com
 SECRET=secret_01_02
 REMOTE_PREFIX=02
@@ -330,7 +330,7 @@ each trunk link's `active_talkers`:
 {
   "cluster_tgs": [222, 2221, 91],
   "trunks": {
-    "TRUNK_02": {
+    "TRUNK_01_02": {
       "active_talkers": {
         "222": "IW1GEU",
         "25": "SM0ABC"

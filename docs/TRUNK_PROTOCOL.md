@@ -13,9 +13,16 @@ reflector configured with `LOCAL_PREFIX=1` is authoritative for TG 1, 10, 100,
 (country codes, area codes).
 
 Multiple reflectors can be trunked together in a full mesh.  Each pair of
-reflectors has one `[TRUNK_x]` section per side.  Each TG has exactly one
+reflectors shares one `[TRUNK_x]` section name on both sides.  Each TG has exactly one
 authoritative home reflector (the one whose prefix matches); all other
 reflectors are transparent proxies for that TG.
+
+> **Important:** Both reflectors in a trunk link **must use the same `[TRUNK_x]`
+> section name**.  The section name is transmitted in the `MsgTrunkHello`
+> handshake and both sides must agree on it for the connection to be matched to
+> the correct `TrunkLink` instance.  The convention is to use sorted pair
+> identifiers — for example, the link between reflector 1 and reflector 2 uses
+> `[TRUNK_1_2]` on **both** sides.
 
 Clients (SvxLink nodes) connect to their local reflector as normal and are
 completely unaware of the trunk.  When a remote talker is active on a TG whose
@@ -215,7 +222,8 @@ is rejected.  Outbound reconnection is handled automatically by
 
 ### `MsgTrunkHello` fields
 
-- `id` — the config section name (e.g. `TRUNK_2`), used for logging
+- `id` — the config section name (e.g. `TRUNK_1_2`), used for logging and
+  connection matching — both sides must use the same section name
 - `local_prefix` — the sender's authoritative TG prefix (e.g. `"1"`)
 - `priority` — random 32-bit nonce, regenerated per connection, used for
   talker arbitration tie-breaking
@@ -358,7 +366,7 @@ The `/status` JSON endpoint includes a `trunks` object alongside `nodes`:
 {
   "nodes": { ... },
   "trunks": {
-    "TRUNK_2": {
+    "TRUNK_1_2": {
       "host": "reflector-b.example.com",
       "port": 5302,
       "connected": true,
@@ -395,11 +403,14 @@ TRUNK_LISTEN_PORT=5302    # trunk server port (default 5302, optional)
 
 ### Per-trunk section
 
-Add one `[TRUNK_x]` section per peer.  `REMOTE_PREFIX` declares which TG prefix
-the peer owns:
+Add one `[TRUNK_x]` section per peer.  Both reflectors in a link **must use the
+same section name** — the name is exchanged during the handshake and used to
+match connections.  The convention is to use sorted pair identifiers (e.g.
+`[TRUNK_1_2]` for the link between reflector 1 and reflector 2).
+`REMOTE_PREFIX` declares which TG prefix the peer owns:
 
 ```ini
-[TRUNK_2]
+[TRUNK_1_2]
 HOST=reflector-b.example.com   # peer hostname or IP
 PORT=5302                       # peer trunk port (default 5302)
 SECRET=change_this_secret       # shared secret
@@ -410,12 +421,12 @@ REMOTE_PREFIX=2                 # peer owns TGs 2, 20, 200, 2000, ...
 
 **Reflector 1** (`LOCAL_PREFIX=1`):
 ```ini
-[TRUNK_2]
+[TRUNK_1_2]
 HOST=reflector-b.example.com
 SECRET=secret_ab
 REMOTE_PREFIX=2
 
-[TRUNK_3]
+[TRUNK_1_3]
 HOST=reflector-c.example.com
 SECRET=secret_ac
 REMOTE_PREFIX=3
@@ -423,12 +434,12 @@ REMOTE_PREFIX=3
 
 **Reflector 2** (`LOCAL_PREFIX=2`):
 ```ini
-[TRUNK_1]
+[TRUNK_1_2]
 HOST=reflector-a.example.com
 SECRET=secret_ab
 REMOTE_PREFIX=1
 
-[TRUNK_3]
+[TRUNK_2_3]
 HOST=reflector-c.example.com
 SECRET=secret_bc
 REMOTE_PREFIX=3
@@ -436,12 +447,12 @@ REMOTE_PREFIX=3
 
 **Reflector 3** (`LOCAL_PREFIX=3`):
 ```ini
-[TRUNK_1]
+[TRUNK_1_3]
 HOST=reflector-a.example.com
 SECRET=secret_ac
 REMOTE_PREFIX=1
 
-[TRUNK_2]
+[TRUNK_2_3]
 HOST=reflector-b.example.com
 SECRET=secret_bc
 REMOTE_PREFIX=2

@@ -182,7 +182,7 @@ it immediately.
 ### 4. Add a trunk section per peer
 
 ```ini
-[TRUNK_2]
+[TRUNK_AB]
 HOST=reflector-b.example.com
 PORT=5302             # trunk port (default 5302, separate from client port 5300)
 SECRET=shared_secret
@@ -190,7 +190,13 @@ REMOTE_PREFIX=2       # peer owns TGs 2, 20, 200, 2000, ...
 # REMOTE_PREFIX=11,12,13  # comma-separated list accepted here too
 ```
 
-Repeat for each peer (`[TRUNK_3]`, `[TRUNK_4]`, …).
+Repeat for each peer (`[TRUNK_AC]`, `[TRUNK_AD]`, …).
+
+**Important:** The `[TRUNK_x]` section name must be **identical on both sides** of
+the link. Both sysops must agree on a shared section name before configuring the
+link. For example, if reflectors A and B want to link, both configs must use the
+same name (e.g. `[TRUNK_AB]`). A connection from a peer whose section name does
+not match any local section will be rejected.
 
 ### Network requirements
 
@@ -222,12 +228,12 @@ run behind NAT, just like a regular SvxLink client node.
 [GLOBAL]
 LOCAL_PREFIX=1
 
-[TRUNK_2]
+[TRUNK_AB]
 HOST=reflector-b.example.com
 SECRET=secret_ab
 REMOTE_PREFIX=2
 
-[TRUNK_3]
+[TRUNK_AC]
 HOST=reflector-c.example.com
 SECRET=secret_ac
 REMOTE_PREFIX=3
@@ -238,12 +244,12 @@ REMOTE_PREFIX=3
 [GLOBAL]
 LOCAL_PREFIX=2
 
-[TRUNK_1]
+[TRUNK_AB]
 HOST=reflector-a.example.com
 SECRET=secret_ab
 REMOTE_PREFIX=1
 
-[TRUNK_3]
+[TRUNK_BC]
 HOST=reflector-c.example.com
 SECRET=secret_bc
 REMOTE_PREFIX=3
@@ -254,18 +260,20 @@ REMOTE_PREFIX=3
 [GLOBAL]
 LOCAL_PREFIX=3
 
-[TRUNK_1]
+[TRUNK_AC]
 HOST=reflector-a.example.com
 SECRET=secret_ac
 REMOTE_PREFIX=1
 
-[TRUNK_2]
+[TRUNK_BC]
 HOST=reflector-b.example.com
 SECRET=secret_bc
 REMOTE_PREFIX=2
 ```
 
-Both sides of each trunk must point at each other and share the same `SECRET`.
+Both sides of each trunk link must use the **same section name** and share the
+same `SECRET`. The sysops of both reflectors agree on the section name and
+secret when setting up the link.
 
 ### Satellite reflectors
 
