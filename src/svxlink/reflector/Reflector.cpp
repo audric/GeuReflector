@@ -2198,21 +2198,32 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
     safe_id.resize(64);
   }
 
-  // Find the matching TrunkLink by verifying the shared secret AND matching
-  // the peer's declared prefix against our configured REMOTE_PREFIX.
-  // This allows multiple trunk sections to share the same secret safely.
+  // Find the matching TrunkLink by section name, shared secret, and prefix.
+  // Both sides must use the same [TRUNK_x] section name — sysops agree on a
+  // shared link name. The peer's hello ID is its section name.
   TrunkLink* matched_link = nullptr;
   for (auto* link : m_trunk_links)
   {
+    // Section name must match (case-sensitive)
+    if (msg.id() != link->section())
+    {
+      continue;
+    }
+
     if (!msg.verify(link->secret()))
     {
       if (m_trunk_debug)
       {
         std::cout << "TRUNK [DEBUG]: peer '" << safe_id
-                  << "' HMAC mismatch against " << link->section()
-                  << std::endl;
+                  << "' section matches " << link->section()
+                  << " but HMAC mismatch" << std::endl;
       }
-      continue;
+      std::cerr << "*** ERROR: TRUNK inbound: peer '" << safe_id
+                << "' section matches " << link->section()
+                << " but authentication failed (wrong secret)"
+                << std::endl;
+      con->disconnect();
+      return;
     }
 
     // Check if the peer's local_prefix matches this link's remote_prefix.
@@ -2239,7 +2250,7 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
       matched_link = link;
       break;
     }
-    else if (m_trunk_debug)
+    else
     {
       std::string exp_str, peer_str;
       for (const auto& p : sorted_expected)
@@ -2252,17 +2263,19 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
         if (!peer_str.empty()) peer_str += ",";
         peer_str += p;
       }
-      std::cout << "TRUNK [DEBUG]: peer '" << safe_id
-                << "' secret OK for " << link->section()
+      std::cerr << "*** ERROR: TRUNK inbound: peer '" << safe_id
+                << "' section matches " << link->section()
                 << " but prefix mismatch: expected=[" << exp_str
                 << "] got=[" << peer_str << "]" << std::endl;
+      con->disconnect();
+      return;
     }
   }
 
   if (matched_link == nullptr)
   {
     std::cerr << "*** ERROR: TRUNK inbound: peer '" << safe_id
-              << "' failed authentication (no matching secret/prefix)"
+              << "' no matching section name"
               << std::endl;
     con->disconnect();
     return;

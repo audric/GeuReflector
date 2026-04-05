@@ -563,8 +563,25 @@ void TrunkLink::onFrameReceived(FramedTcpConnection* con,
 
   if (m_debug && header.type() != MsgTrunkHeartbeat::TYPE)
   {
-    cout << m_section << " [DEBUG]: rx " << (is_inbound ? "IB" : "OB")
-         << " type=" << header.type() << " len=" << data.size() << endl;
+    if (header.type() == MsgTrunkAudio::TYPE ||
+        header.type() == MsgTrunkFlush::TYPE)
+    {
+      if (m_debug_frame_cnt < 500)
+      {
+        cout << m_section << " [DEBUG]: rx " << (is_inbound ? "IB" : "OB")
+             << " type=" << header.type() << " len=" << data.size() << endl;
+        if (++m_debug_frame_cnt == 500)
+        {
+          cout << m_section << " [DEBUG]: audio frame log limit reached (500)"
+               << " — suppressing further audio/flush debug" << endl;
+        }
+      }
+    }
+    else
+    {
+      cout << m_section << " [DEBUG]: rx " << (is_inbound ? "IB" : "OB")
+           << " type=" << header.type() << " len=" << data.size() << endl;
+    }
   }
 
   switch (header.type())

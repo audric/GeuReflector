@@ -47,7 +47,7 @@ def generate_reflector_conf(name: str) -> str:
     # Trunk sections for each peer reflector
     for peer_name in sorted(peers):
         peer = peers[peer_name]
-        section = T.trunk_section_name(peer_name)
+        section = T.trunk_section_name(name, peer_name)
         secret = T.trunk_secret(name, peer_name)
         lines += [
             "",

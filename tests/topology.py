@@ -98,5 +98,13 @@ def service_name(name: str) -> str:
 def mapped_satellite_port(name: str) -> int:
     return REFLECTORS[name]["trunk_port_base"] + 303
 
-def trunk_section_name(peer_name: str) -> str:
-    return f"TRUNK_{peer_name.upper()}"
+def trunk_section_name(name_a: str, name_b: str = "") -> str:
+    """Shared trunk section name for a link between two reflectors.
+
+    Both sides must use the same section name. Convention: sorted pair.
+    If only one name given (legacy), returns TRUNK_<NAME> for test harness use.
+    """
+    if not name_b:
+        return f"TRUNK_{name_a.upper()}"
+    pair = tuple(sorted([name_a, name_b]))
+    return f"TRUNK_{pair[0].upper()}_{pair[1].upper()}"

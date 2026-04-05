@@ -210,7 +210,7 @@ class TrunkPeer:
         self.sock = socket.create_connection((host, port), timeout=timeout)
         self.sock.settimeout(timeout)
 
-    def handshake(self, trunk_id: str = "TEST_PEER", local_prefix: str = TEST_PREFIX,
+    def handshake(self, trunk_id: str = "TRUNK_TEST", local_prefix: str = TEST_PREFIX,
                   priority: int = None, secret: str = TEST_SECRET):
         if priority is None:
             priority = struct.unpack("!I", os.urandom(4))[0]
@@ -552,7 +552,7 @@ class TestTrunkIntegration(unittest.TestCase):
             for peer in REFLECTOR_NAMES:
                 if peer != name:
                     wait_for_trunk_connected(
-                        *_http(name), T.trunk_section_name(peer), timeout=30.0)
+                        *_http(name), T.trunk_section_name(name, peer), timeout=30.0)
         labels = "\u2194".join(n.upper() for n in REFLECTOR_NAMES)
         sys.stderr.write(f"\r\033[K  {G}\u2714{RST} Mesh connected ({labels})\n")
         sys.stderr.write(f"\033[2m{'─' * 50}\033[0m\n")
@@ -584,7 +584,7 @@ class TestTrunkIntegration(unittest.TestCase):
             for peer in REFLECTOR_NAMES:
                 if peer == name:
                     continue
-                section = T.trunk_section_name(peer)
+                section = T.trunk_section_name(name, peer)
                 self.assertTrue(
                     status["trunks"][section]["connected"],
                     f"{section} not connected on reflector-{name}")
@@ -694,10 +694,10 @@ class TestTrunkIntegration(unittest.TestCase):
 
             # Verify NOT propagated to other peers (no trunk-to-trunk forwarding)
             time.sleep(1.0)
-            primary_section = T.trunk_section_name(self.PRIMARY)
             for name in REFLECTOR_NAMES:
                 if name == self.PRIMARY:
                     continue
+                primary_section = T.trunk_section_name(name, self.PRIMARY)
                 status = get_status(*_http(name))
                 talkers = status["trunks"].get(primary_section, {}).get("active_talkers", {})
                 for tg in T.CLUSTER_TGS:
@@ -777,7 +777,7 @@ class TestTrunkIntegration(unittest.TestCase):
         receiver = TrunkPeer()
         receiver.connect(*_trunk(self.PRIMARY))
         rx_type, rx_fields = receiver.handshake(
-            trunk_id="TEST_RX", local_prefix=TEST_RX_PREFIX,
+            trunk_id="TRUNK_TEST_RX", local_prefix=TEST_RX_PREFIX,
             secret=TEST_RX_SECRET)
         self.assertEqual(rx_type, MSG_TRUNK_HELLO)
 
