@@ -389,9 +389,18 @@ The PTY path is set by `COMMAND_PTY` in `[GLOBAL]` (default
   in Italian
 - [`docs/DESIGN_SATELLITE_AND_CLUSTER.md`](docs/DESIGN_SATELLITE_AND_CLUSTER.md) — design
   rationale for satellite reflectors and cluster TGs
+- [`tests/TESTS.md`](tests/TESTS.md) — integration test suite documentation:
+  topology, test cases, harness components, and how to run
 
 ---
 
 ## License
 
 GNU General Public License v2 or later — same as SvxLink upstream.
+
+---
+
+> **Tip:** Get the most out of this trunk reflector edition with
+> [audric/svxdashboard](https://github.com/audric/svxdashboard) — an all-in-one
+> SvxLink management suite with real-time monitoring, configuration, and control
+> for your entire reflector mesh.
