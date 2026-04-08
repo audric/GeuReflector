@@ -85,6 +85,18 @@ def generate_reflector_conf(name: str) -> str:
             "",
         ]
 
+    # MQTT publishing section
+    lines += [
+        "[MQTT]",
+        f"HOST={T.MQTT['host']}",
+        f"PORT={T.MQTT['port']}",
+        f"USERNAME={T.MQTT['username']}",
+        f"PASSWORD={T.MQTT['password']}",
+        f"TOPIC_PREFIX=svxreflector/{name}",
+        "STATUS_INTERVAL=1000",
+        "",
+    ]
+
     return "\n".join(lines)
 
 
@@ -126,6 +138,20 @@ def generate_docker_compose() -> str:
       interval: 2s
       timeout: 2s
       retries: 15
+    networks:
+      - trunk_mesh""")
+
+    # Mosquitto broker for MQTT testing
+    services.append("""  mosquitto:
+    image: eclipse-mosquitto:2
+    command: sh -c 'echo "listener 1883" > /tmp/m.conf && echo "allow_anonymous true" >> /tmp/m.conf && mosquitto -c /tmp/m.conf -v'
+    ports:
+      - "11883:1883/tcp"
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -t test -m test || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
     networks:
       - trunk_mesh""")
 

@@ -24,6 +24,8 @@ import unittest
 from urllib.request import urlopen
 from urllib.error import URLError
 
+import paho.mqtt.client as mqtt_client
+
 # Ensure tests/ is on the path so topology can be imported
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import topology as T
@@ -1211,6 +1213,61 @@ class TestTrunkIntegration(unittest.TestCase):
         finally:
             client_a.close()
             client_b.close()
+
+    def test_18_mqtt_talker_event(self):
+        """MQTT publishes talker start/stop events."""
+        received = []
+        connected_event = threading.Event()
+
+        def on_connect(client, userdata, flags, rc):
+            client.subscribe("svxreflector/a/talker/#")
+            connected_event.set()
+
+        def on_message(client, userdata, msg):
+            received.append((msg.topic, json.loads(msg.payload)))
+
+        mc = mqtt_client.Client()
+        mc.on_connect = on_connect
+        mc.on_message = on_message
+        mc.connect(HOST, 11883, 60)
+        mc.loop_start()
+
+        try:
+            self.assertTrue(connected_event.wait(timeout=5),
+                            "MQTT subscribe timed out")
+            time.sleep(0.5)  # Let subscription settle
+
+            # Connect trunk peer and send talker start
+            peer = TrunkPeer()
+            peer.connect(*_trunk("a"))
+            peer.handshake()
+
+            tg = 1220  # Owned by reflector-a (prefix 122)
+            peer.send_talker_start(tg, "N0MQTT")
+            time.sleep(2)  # Allow propagation
+
+            # Verify MQTT talker start event
+            start_events = [r for r in received
+                            if r[0] == f"svxreflector/a/talker/{tg}/start"]
+            self.assertTrue(len(start_events) > 0,
+                            f"Expected MQTT talker start event on TG {tg}, "
+                            f"got topics: {[r[0] for r in received]}")
+            self.assertEqual(start_events[0][1]["callsign"], "N0MQTT")
+            self.assertEqual(start_events[0][1]["source"], "trunk")
+
+            # Send talker stop and verify
+            peer.send_talker_stop(tg)
+            time.sleep(2)
+
+            stop_events = [r for r in received
+                           if r[0] == f"svxreflector/a/talker/{tg}/stop"]
+            self.assertTrue(len(stop_events) > 0,
+                            f"Expected MQTT talker stop event on TG {tg}")
+
+            peer.close()
+        finally:
+            mc.loop_stop()
+            mc.disconnect()
 
 
 # ---------------------------------------------------------------------------

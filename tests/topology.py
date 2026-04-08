@@ -42,6 +42,14 @@ SATELLITE = {
     "listen_port": 5303,
 }
 
+# MQTT test config — broker runs as a Docker service in test compose
+MQTT = {
+    "host": "mosquitto",
+    "port": 1883,
+    "username": "test",
+    "password": "testpass",
+}
+
 # V2 test client credentials (added to [USERS]/[PASSWORDS] in every config)
 TEST_CLIENTS = [
     {"callsign": "N0TEST", "group": "TestGroup", "password": "testpass"},
