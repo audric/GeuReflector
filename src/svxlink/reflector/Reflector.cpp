@@ -2150,12 +2150,23 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
   std::stringstream ss;
   ss.write(buf, data.size());
 
+  // Helper: clean up the pending entry and disconnect.
+  // TcpConnection::disconnect() does NOT emit the disconnected signal,
+  // so trunkClientDisconnected would never fire — we must clean up the
+  // pending map entry ourselves before calling disconnect().
+  auto rejectPending = [&]()
+  {
+    delete pit->second;  // timer
+    m_trunk_pending_cons.erase(pit);
+    con->disconnect();
+  };
+
   ReflectorMsg header;
   if (!header.unpack(ss))
   {
     std::cerr << "*** ERROR: TRUNK inbound: failed to unpack message header"
               << std::endl;
-    con->disconnect();
+    rejectPending();
     return;
   }
 
@@ -2163,7 +2174,7 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
   {
     std::cerr << "*** WARNING: TRUNK inbound: expected MsgTrunkHello, got type="
               << header.type() << std::endl;
-    con->disconnect();
+    rejectPending();
     return;
   }
 
@@ -2172,7 +2183,7 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
   {
     std::cerr << "*** ERROR: TRUNK inbound: failed to unpack MsgTrunkHello"
               << std::endl;
-    con->disconnect();
+    rejectPending();
     return;
   }
 
@@ -2180,7 +2191,7 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
   {
     std::cerr << "*** ERROR: TRUNK inbound: peer sent empty trunk ID"
               << std::endl;
-    con->disconnect();
+    rejectPending();
     return;
   }
 
@@ -2222,7 +2233,7 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
                 << "' section matches " << link->section()
                 << " but authentication failed (wrong secret)"
                 << std::endl;
-      con->disconnect();
+      rejectPending();
       return;
     }
 
@@ -2267,7 +2278,7 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
                 << "' section matches " << link->section()
                 << " but prefix mismatch: expected=[" << exp_str
                 << "] got=[" << peer_str << "]" << std::endl;
-      con->disconnect();
+      rejectPending();
       return;
     }
   }
@@ -2277,7 +2288,7 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
     std::cerr << "*** ERROR: TRUNK inbound: peer '" << safe_id
               << "' no matching section name"
               << std::endl;
-    con->disconnect();
+    rejectPending();
     return;
   }
 
@@ -2315,8 +2326,10 @@ void Reflector::trunkPendingTimeout(Async::Timer* t)
       std::cerr << "*** WARNING: TRUNK inbound from "
                 << it->first->remoteHost()
                 << ": hello timeout — disconnecting" << std::endl;
-      it->first->disconnect();
-      // trunkClientDisconnected will clean up
+      auto* con = it->first;
+      delete it->second;  // timer
+      m_trunk_pending_cons.erase(it);
+      con->disconnect();
       return;
     }
   }
