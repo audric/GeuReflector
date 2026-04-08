@@ -121,3 +121,24 @@ CERT_CA_HOOK=@SVX_SHARE_INSTALL_DIR@/ca-hook.py
 #SATELLITE_SECRET=change_this_satellite_secret
 #SATELLITE_ID=my-satellite
 
+#
+# MQTT publishing. Optional — omit this section to disable.
+# Publishes real-time events (talker, client, trunk state) and periodic
+# full status to an external MQTT broker.
+#
+# All fields except TLS and STATUS_INTERVAL are required when this
+# section is present. TOPIC_PREFIX has no default — set it to a unique
+# identifier for this reflector (e.g. svxreflector/myreflector).
+#
+#[MQTT]
+#HOST=mqtt.example.com
+#PORT=1883
+#USERNAME=reflector
+#PASSWORD=secret
+#TOPIC_PREFIX=svxreflector/myreflector
+#STATUS_INTERVAL=1000
+#TLS_ENABLED=0
+#TLS_CA_CERT=/path/to/ca.crt
+#TLS_CLIENT_CERT=/path/to/client.crt
+#TLS_CLIENT_KEY=/path/to/client.key
+
