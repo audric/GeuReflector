@@ -54,6 +54,9 @@ automatically.
   large deployments
 - **HTTP `/status` endpoint** — JSON status with trunk state,
   active talkers, satellite connections, and static configuration
+- **MQTT publishing** — real-time event-driven updates (talker, client,
+  trunk state) to an external MQTT broker, plus configurable periodic
+  full status dumps
 - SvxLink client nodes are **unmodified** — they connect to their local
   reflector as normal and are unaware of the trunk
 
@@ -79,7 +82,7 @@ reflectors hear the same audio on TG 25 with no extra configuration.
 ## Build
 
 Requires the same dependencies as SvxReflector: libsigc++, OpenSSL, libjsoncpp,
-libpopt. Optional: libopus, libgsm, libspeex.
+libpopt, libmosquitto. Optional: libopus, libgsm, libspeex.
 
 ```bash
 cd geureflector
@@ -100,7 +103,7 @@ cd tests && bash run_tests.sh
 ```
 
 Requires Docker and Python 3.7+. The script builds the images, starts the mesh,
-runs 11 automated tests, then drops into an interactive prompt where you can
+runs 18 automated tests, then drops into an interactive prompt where you can
 enter any TG number and see which reflector it routes to (verified via container
 logs).
 
@@ -325,6 +328,26 @@ on the parent is heard on the satellite and vice versa, regardless of
 Port `5303` is the default satellite port (separate from client port `5300` and
 trunk port `5302`).
 
+### MQTT publishing (optional)
+
+Publishes real-time events and periodic status to an external MQTT broker,
+eliminating the need to poll the `/status` endpoint. See
+[`docs/MQTT.md`](docs/MQTT.md) for the full topic structure, payload format,
+and TLS configuration.
+
+```ini
+[MQTT]
+HOST=mqtt.example.com
+PORT=1883
+USERNAME=reflector
+PASSWORD=secret
+TOPIC_PREFIX=svxreflector/myreflector
+STATUS_INTERVAL=1000
+```
+
+Omit the `[MQTT]` section entirely to disable — zero overhead when not
+configured.
+
 ---
 
 ## HTTP Status
@@ -423,6 +446,8 @@ The PTY path is set by `COMMAND_PTY` in `[GLOBAL]` (default
   deployment example for Italy (20 regions, full mesh)
 - [`docs/DEPLOYMENT_ITALY_IT.md`](docs/DEPLOYMENT_ITALY_IT.md) — same document
   in Italian
+- [`docs/MQTT.md`](docs/MQTT.md) — MQTT publishing: topic structure, payload
+  format, configuration reference, and TLS setup
 - [`docs/DESIGN_SATELLITE_AND_CLUSTER.md`](docs/DESIGN_SATELLITE_AND_CLUSTER.md) — design
   rationale for satellite reflectors and cluster TGs
 - [`tests/TESTS.md`](tests/TESTS.md) — integration test suite documentation:
