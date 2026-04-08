@@ -187,7 +187,7 @@ class TrunkLink : public sigc::trackable
     void onFrameReceived(Async::FramedTcpConnection* con,
                          std::vector<uint8_t>& data);
 
-    void handleMsgTrunkHello(std::istream& is);
+    void handleMsgTrunkHello(std::istream& is, bool is_inbound);
     void handleMsgTrunkTalkerStart(std::istream& is);
     void handleMsgTrunkTalkerStop(std::istream& is);
     void handleMsgTrunkAudio(std::istream& is);

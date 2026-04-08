@@ -590,7 +590,7 @@ void TrunkLink::onFrameReceived(FramedTcpConnection* con,
       handleMsgTrunkHeartbeat();
       break;
     case MsgTrunkHello::TYPE:
-      handleMsgTrunkHello(ss);
+      handleMsgTrunkHello(ss, is_inbound);
       break;
     case MsgTrunkTalkerStart::TYPE:
       handleMsgTrunkTalkerStart(ss);
@@ -618,8 +618,21 @@ void TrunkLink::handleMsgTrunkHeartbeat(void)
 } /* TrunkLink::handleMsgTrunkHeartbeat */
 
 
-void TrunkLink::handleMsgTrunkHello(std::istream& is)
+void TrunkLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
 {
+  // Inbound hellos are already handled by acceptInboundConnection.
+  // A duplicate arriving here means the peer re-sent (e.g. TcpPrioClient
+  // background reconnect) — ignore it silently.
+  if (is_inbound)
+  {
+    if (m_debug)
+    {
+      cout << m_section << " [DEBUG]: ignoring duplicate hello on inbound"
+           << endl;
+    }
+    return;
+  }
+
   // Hello on outbound = peer's reply to our outbound hello
   MsgTrunkHello msg;
   if (!msg.unpack(is))
