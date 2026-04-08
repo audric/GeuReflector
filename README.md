@@ -462,6 +462,6 @@ GNU General Public License v2 or later — same as SvxLink upstream.
 ---
 
 > **Tip:** Get the most out of this trunk reflector edition with
-> [audric/svxdashboard](https://github.com/audric/svxdashboard) — an all-in-one
+> [audric/SvxReflectorDashboard](https://github.com/audric/SvxReflectorDashboard) — an all-in-one
 > SvxLink management suite with real-time monitoring, configuration, and control
 > for your entire reflector mesh.
