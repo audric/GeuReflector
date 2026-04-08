@@ -245,7 +245,8 @@ Reflector::Reflector(void)
     m_random_qsy_hi(0), m_random_qsy_tg(0), m_http_server(0), m_cmd_pty(0),
     m_keys_dir("private/"), m_pending_csrs_dir("pending_csrs/"),
     m_csrs_dir("csrs/"), m_certs_dir("certs/"), m_pki_dir("pki/"),
-    m_sat_cleanup_timer(0, Async::Timer::TYPE_ONESHOT)
+    m_sat_cleanup_timer(0, Async::Timer::TYPE_ONESHOT),
+    m_mqtt_status_timer(1000, Async::Timer::TYPE_ONESHOT)
 {
   TGHandler::instance()->talkerUpdated.connect(
       mem_fun(*this, &Reflector::onTalkerUpdated));
@@ -280,6 +281,10 @@ Reflector::Reflector(void)
 
 Reflector::~Reflector(void)
 {
+  m_mqtt_status_timer.setEnable(false);
+  delete m_mqtt;
+  m_mqtt = nullptr;
+
   delete m_http_server;
   m_http_server = 0;
   delete m_udp_sock;
@@ -470,6 +475,33 @@ bool Reflector::initialize(Async::Config &cfg)
   initTrunkLinks();
   initTrunkServer();
   initSatelliteServer();
+
+  // Initialize MQTT publisher if [MQTT] section is configured
+  std::string mqtt_host;
+  if (cfg.getValue("MQTT", "HOST", mqtt_host))
+  {
+    m_mqtt = new MqttPublisher(cfg);
+    if (!m_mqtt->initialize())
+    {
+      cerr << "*** WARNING: MQTT publisher failed to initialize, continuing without MQTT" << endl;
+      delete m_mqtt;
+      m_mqtt = nullptr;
+    }
+    else
+    {
+      // Set up periodic status publishing
+      unsigned status_interval = 1000;
+      cfg.getValue("MQTT", "STATUS_INTERVAL", status_interval);
+      m_mqtt_status_timer.setTimeout(status_interval);
+      m_mqtt_status_timer.setEnable(true);
+      m_mqtt_status_timer.expired.connect(
+          [this](Async::Timer*)
+          {
+            m_mqtt->publishFullStatus(m_status);
+            m_mqtt_status_timer.setEnable(true);
+          });
+    }
+  }
 
   return true;
 } /* Reflector::initialize */
@@ -1014,6 +1046,10 @@ void Reflector::clientDisconnected(Async::FramedTcpConnection *con,
     m_status["nodes"].removeMember(client->callsign());
     broadcastMsg(MsgNodeLeft(client->callsign()),
         ReflectorClient::ExceptFilter(client));
+      if (m_mqtt != nullptr)
+      {
+        m_mqtt->onClientDisconnected(client->callsign());
+      }
   }
   //Application::app().runTask([=]{ delete client; });
   delete client;
@@ -1473,6 +1509,10 @@ void Reflector::onTalkerUpdated(uint32_t tg, ReflectorClient* old_talker,
           ReflectorClient::mkAndFilter(
             ReflectorClient::TgFilter(tg),
             ReflectorClient::ExceptFilter(old_talker)));
+    if (m_mqtt != nullptr)
+    {
+      m_mqtt->onTalkerStop(tg, old_talker->callsign(), false);
+    }
   }
   if (new_talker != 0)
   {
@@ -1487,6 +1527,10 @@ void Reflector::onTalkerUpdated(uint32_t tg, ReflectorClient* old_talker,
     if (tg == tgForV1Clients())
     {
       broadcastMsg(MsgTalkerStartV1(new_talker->callsign()), v1_client_filter);
+    }
+    if (m_mqtt != nullptr)
+    {
+      m_mqtt->onTalkerStart(tg, new_talker->callsign(), false);
     }
   }
 
@@ -2500,6 +2544,10 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
             ReflectorClient::TgMonitorFilter(tg))));
     broadcastUdpMsg(MsgUdpFlushSamples(),
         ReflectorClient::TgFilter(tg));
+    if (m_mqtt != nullptr)
+    {
+      m_mqtt->onTalkerStop(tg, old_cs, true);
+    }
   }
   if (!new_cs.empty())
   {
@@ -2510,6 +2558,10 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
           ReflectorClient::mkOrFilter(
             ReflectorClient::TgFilter(tg),
             ReflectorClient::TgMonitorFilter(tg))));
+    if (m_mqtt != nullptr)
+    {
+      m_mqtt->onTalkerStart(tg, new_cs, true);
+    }
   }
 
   // Forward trunk talker events to connected satellites
@@ -2525,6 +2577,34 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
     }
   }
 } /* Reflector::onTrunkTalkerUpdated */
+
+
+void Reflector::onClientAuthenticated(const std::string& callsign,
+                                      uint32_t tg, const std::string& ip)
+{
+  if (m_mqtt != nullptr)
+  {
+    m_mqtt->onClientConnected(callsign, tg, ip);
+  }
+} /* Reflector::onClientAuthenticated */
+
+
+void Reflector::onTrunkStateChanged(const std::string& section,
+                                    const std::string& direction, bool up,
+                                    const std::string& host, uint16_t port)
+{
+  if (m_mqtt != nullptr)
+  {
+    if (up)
+    {
+      m_mqtt->onTrunkUp(section, direction, host, port);
+    }
+    else
+    {
+      m_mqtt->onTrunkDown(section, direction);
+    }
+  }
+} /* Reflector::onTrunkStateChanged */
 
 
 bool Reflector::loadCertificateFiles(void)

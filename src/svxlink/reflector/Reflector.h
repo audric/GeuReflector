@@ -67,6 +67,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "TrunkLink.h"
 #include "SatelliteLink.h"
 #include "SatelliteClient.h"
+#include "MqttPublisher.h"
 
 
 /****************************************************************************
@@ -253,6 +254,13 @@ class Reflector : public sigc::trackable
                                          const std::vector<uint8_t>& audio);
     void forwardFlushToSatellitesExcept(SatelliteLink* except, uint32_t tg);
 
+    void onClientAuthenticated(const std::string& callsign, uint32_t tg,
+                               const std::string& ip);
+    void onTrunkStateChanged(const std::string& section,
+                             const std::string& direction, bool up,
+                             const std::string& host = "",
+                             uint16_t port = 0);
+
   protected:
 
   private:
@@ -316,6 +324,10 @@ class Reflector : public sigc::trackable
     std::map<Async::FramedTcpConnection*, SatelliteLink*> m_satellite_con_map;
     std::vector<SatelliteLink*>  m_sat_cleanup_pending;
     Async::Timer                 m_sat_cleanup_timer;
+
+    // MQTT publishing
+    MqttPublisher*              m_mqtt = nullptr;
+    Async::Timer                m_mqtt_status_timer;
 
     Reflector(const Reflector&);
     Reflector& operator=(const Reflector&);

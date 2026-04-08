@@ -1344,6 +1344,8 @@ void ReflectorClient::connectionAuthenticated(const std::string& callsign)
     }
 
     m_reflector->broadcastMsg(MsgNodeJoined(m_callsign), ExceptFilter(this));
+    m_reflector->onClientAuthenticated(m_callsign, currentTG(),
+                                       m_con->remoteHost().toString());
   }
   else
   {

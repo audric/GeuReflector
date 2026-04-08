@@ -353,6 +353,9 @@ void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
   cout << m_section << ": Accepted inbound from " << con->remoteHost()
        << ":" << con->remotePort() << " peer='" << hello.id()
        << "' priority=" << m_peer_priority << endl;
+  m_reflector->onTrunkStateChanged(m_section, "inbound", true,
+                                   con->remoteHost().toString(),
+                                   con->remotePort());
 
   if (m_debug)
   {
@@ -384,6 +387,7 @@ void TrunkLink::onInboundDisconnected(Async::FramedTcpConnection* con,
   }
 
   cout << m_section << ": Inbound trunk connection lost" << endl;
+  m_reflector->onTrunkStateChanged(m_section, "inbound", false);
 
   if (m_debug)
   {
@@ -475,6 +479,9 @@ void TrunkLink::onConnected(void)
 {
   cout << m_section << ": Outbound connected to " << m_con.remoteHost()
        << ":" << m_con.remotePort() << endl;
+  m_reflector->onTrunkStateChanged(m_section, "outbound", true,
+                                   m_con.remoteHost().toString(),
+                                   m_con.remotePort());
 
   if (m_debug)
   {
@@ -498,6 +505,7 @@ void TrunkLink::onDisconnected(TcpConnection* con,
 {
   cout << m_section << ": Outbound disconnected: "
        << TcpConnection::disconnectReasonStr(reason) << endl;
+  m_reflector->onTrunkStateChanged(m_section, "outbound", false);
 
   if (m_debug)
   {
