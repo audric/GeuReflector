@@ -19,6 +19,11 @@ pkg_check_modules (JSONCPP REQUIRED jsoncpp)
 include_directories(${JSONCPP_INCLUDE_DIRS})
 set(LIBS ${LIBS} ${JSONCPP_LIBRARIES})
 
+# Find mosquitto library (MQTT publishing)
+pkg_check_modules(MOSQUITTO REQUIRED libmosquitto)
+include_directories(${MOSQUITTO_INCLUDE_DIRS})
+set(LIBS ${LIBS} ${MOSQUITTO_LIBRARIES})
+
 # Add project libraries
 set(LIBS asynccpp asyncaudio asynccore svxmisc ${LIBS})
 

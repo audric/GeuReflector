@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpopt-dev \
     libopus-dev \
     libgsm1-dev \
+    libmosquitto-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -28,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpopt0 \
     libopus0 \
     libgsm1 \
+    libmosquitto1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/build/bin/svxreflector /usr/bin/svxreflector
