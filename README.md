@@ -55,8 +55,8 @@ automatically.
 - **HTTP `/status` endpoint** — JSON status with trunk state,
   active talkers, satellite connections, and static configuration
 - **MQTT publishing** — real-time event-driven updates (talker, client,
-  trunk state) to an external MQTT broker, plus configurable periodic
-  full status dumps
+  trunk state, receiver signal levels) to an external MQTT broker, plus
+  configurable periodic full status dumps
 - SvxLink client nodes are **unmodified** — they connect to their local
   reflector as normal and are unaware of the trunk
 

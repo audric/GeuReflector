@@ -497,6 +497,7 @@ bool Reflector::initialize(Async::Config &cfg)
       m_mqtt_status_timer.expired.connect(
           [this](Async::Timer*)
           {
+            refreshStatus();
             m_mqtt->publishFullStatus(m_status);
             m_mqtt_status_timer.setEnable(true);
           });
@@ -1472,6 +1473,7 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
           client->setRxSqlOpen(rx.id(), rx.sqlOpen());
           client->setRxActive(rx.id(), rx.active());
         }
+        publishRxUpdate(client);
       }
       break;
     }
@@ -1603,7 +1605,26 @@ void Reflector::httpRequestReceived(Async::HttpServerConnection *con,
     return;
   }
 
-  // Build trunk status fresh on each request (live state)
+  refreshStatus();
+
+  std::ostringstream os;
+  Json::StreamWriterBuilder builder;
+  builder["commentStyle"] = "None";
+  builder["indentation"] = ""; //The JSON document is written on a single line
+  Json::StreamWriter* writer = builder.newStreamWriter();
+  writer->write(m_status, &os);
+  delete writer;
+
+  res.setContent("application/json", os.str());
+  res.setSendContent(req.method == "GET");
+  res.setCode(200);
+  con->write(res);
+} /* Reflector::requestReceived */
+
+
+void Reflector::refreshStatus(void)
+{
+  // Build trunk status fresh (live state)
   Json::Value trunks(Json::objectValue);
   for (auto* link : m_trunk_links)
   {
@@ -1699,20 +1720,7 @@ void Reflector::httpRequestReceived(Async::HttpServerConnection *con,
       m_status["satellite_server"] = sat_srv;
     }
   }
-
-  std::ostringstream os;
-  Json::StreamWriterBuilder builder;
-  builder["commentStyle"] = "None";
-  builder["indentation"] = ""; //The JSON document is written on a single line
-  Json::StreamWriter* writer = builder.newStreamWriter();
-  writer->write(m_status, &os);
-  delete writer;
-
-  res.setContent("application/json", os.str());
-  res.setSendContent(req.method == "GET");
-  res.setCode(200);
-  con->write(res);
-} /* Reflector::requestReceived */
+} /* Reflector::refreshStatus */
 
 
 void Reflector::httpClientConnected(Async::HttpServerConnection *con)
@@ -2577,6 +2585,15 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
     }
   }
 } /* Reflector::onTrunkTalkerUpdated */
+
+
+void Reflector::publishRxUpdate(ReflectorClient* client)
+{
+  if (m_mqtt != nullptr && !client->callsign().empty())
+  {
+    m_mqtt->onRxUpdate(client->callsign(), client->rxStatusJson());
+  }
+} /* Reflector::publishRxUpdate */
 
 
 void Reflector::onClientAuthenticated(const std::string& callsign,

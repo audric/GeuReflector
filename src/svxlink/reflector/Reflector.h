@@ -254,6 +254,7 @@ class Reflector : public sigc::trackable
                                          const std::vector<uint8_t>& audio);
     void forwardFlushToSatellitesExcept(SatelliteLink* except, uint32_t tg);
 
+    void publishRxUpdate(ReflectorClient* client);
     void onClientAuthenticated(const std::string& callsign, uint32_t tg,
                                const std::string& ip);
     void onTrunkStateChanged(const std::string& section,
@@ -351,6 +352,7 @@ class Reflector : public sigc::trackable
     void cfgUpdated(const std::string& section, const std::string& tag);
     void onTrunkTalkerUpdated(uint32_t tg, std::string old_cs,
                               std::string new_cs);
+    void refreshStatus(void);
     void initTrunkLinks(void);
     void initTrunkServer(void);
     void trunkClientConnected(Async::FramedTcpConnection* con);

@@ -267,6 +267,16 @@ void MqttPublisher::onTrunkDown(const std::string& section,
 }
 
 
+void MqttPublisher::onRxUpdate(const std::string& callsign,
+                               const Json::Value& rx_json)
+{
+  Json::StreamWriterBuilder wb;
+  wb["indentation"] = "";
+  string topic = "client/" + callsign + "/rx";
+  publish(topic, Json::writeString(wb, rx_json));
+}
+
+
 void MqttPublisher::publishFullStatus(const Json::Value& status)
 {
   Json::StreamWriterBuilder wb;

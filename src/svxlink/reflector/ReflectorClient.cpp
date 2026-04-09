@@ -1044,6 +1044,7 @@ void ReflectorClient::handleMsgSignalStrengthValues(std::istream& is)
     setRxSqlOpen(rx.id(), rx.sqlOpen());
     setRxActive(rx.id(), rx.active());
   }
+  m_reflector->publishRxUpdate(this);
 } /* ReflectorClient::handleMsgSignalStrengthValues */
 
 

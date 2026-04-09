@@ -87,6 +87,28 @@ Disconnected payload:
 {}
 ```
 
+### Receiver (RX) status events
+
+Published on every signal strength update from a connected node. Each node can
+have multiple receivers — the payload contains all of them keyed by receiver ID.
+
+```
+{TOPIC_PREFIX}/client/{callsign}/rx
+```
+
+Payload:
+```json
+{"A":{"name":"Rx1","siglev":42,"enabled":true,"sql_open":true,"active":true},"B":{"name":"Rx2","siglev":0,"enabled":true,"sql_open":false,"active":false}}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Receiver name from the node's QTH configuration |
+| `siglev` | integer | Signal level (0–100) |
+| `enabled` | boolean | Whether the receiver is enabled |
+| `sql_open` | boolean | Whether the squelch is open |
+| `active` | boolean | Whether the receiver is actively selected |
+
 ### Trunk events
 
 Published when a trunk link's outbound or inbound connection goes up or down.
@@ -127,7 +149,9 @@ subscribers immediately receive the last known state.
 | Topic | QoS | Retain |
 |-------|-----|--------|
 | `talker/...` | 0 | No |
-| `client/...` | 0 | No |
+| `client/.../connected` | 0 | No |
+| `client/.../disconnected` | 0 | No |
+| `client/.../rx` | 0 | No |
 | `trunk/...` | 0 | No |
 | `status` | 0 | **Yes** |
 

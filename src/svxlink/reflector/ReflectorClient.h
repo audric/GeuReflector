@@ -463,6 +463,17 @@ class ReflectorClient : public sigc::trackable
       }
       return ids;
     }
+    Json::Value rxStatusJson(void) const
+    {
+      Json::Value rx_json(Json::objectValue);
+      for (const auto& rx : m_json_rx_map)
+      {
+        std::string key(1, rx.first);
+        rx_json[key] = rx.second;
+      }
+      return rx_json;
+    }
+
     void setRxSiglev(char id, uint8_t siglev)
     {
       setRxParam(id, "siglev", siglev);

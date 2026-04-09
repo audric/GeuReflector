@@ -32,6 +32,9 @@ class MqttPublisher
                    const std::string& host, uint16_t port);
     void onTrunkDown(const std::string& section, const std::string& direction);
 
+    // RX status update (per-client, all receivers)
+    void onRxUpdate(const std::string& callsign, const Json::Value& rx_json);
+
     // Periodic full status
     void publishFullStatus(const Json::Value& status);
 
