@@ -448,6 +448,8 @@ The PTY path is set by `COMMAND_PTY` in `[GLOBAL]` (default
   in Italian
 - [`docs/MQTT.md`](docs/MQTT.md) — MQTT publishing: topic structure, payload
   format, configuration reference, and TLS setup
+- [`docs/MESSAGING_IDEAS.md`](docs/MESSAGING_IDEAS.md) — ideas for consuming
+  MQTT events via Telegram, SMS, Discord, webhooks, dashboards, and more
 - [`docs/DESIGN_SATELLITE_AND_CLUSTER.md`](docs/DESIGN_SATELLITE_AND_CLUSTER.md) — design
   rationale for satellite reflectors and cluster TGs
 - [`tests/TESTS.md`](tests/TESTS.md) — integration test suite documentation:
