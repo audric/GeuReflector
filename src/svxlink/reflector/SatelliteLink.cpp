@@ -182,6 +182,13 @@ void SatelliteLink::handleMsgTrunkHello(std::istream& is)
 
   cout << "SAT: Satellite '" << m_satellite_id
        << "' authenticated" << endl;
+
+  // Send hello reply so the satellite client can set m_hello_received
+  // and start forwarding local events.  This also generates early
+  // parent→satellite traffic, keeping the connection alive through
+  // firewalls / NAT devices that drop idle TCP sessions.
+  sendMsg(MsgTrunkHello("PARENT", "", 0, m_secret,
+                         MsgTrunkHello::ROLE_PEER));
 } /* SatelliteLink::handleMsgTrunkHello */
 
 

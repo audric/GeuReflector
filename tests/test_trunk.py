@@ -272,16 +272,20 @@ class SatellitePeer(TrunkPeer):
 
     def handshake(self, sat_id=SAT_ID, secret=SAT_SECRET, priority=None,
                   **kwargs):
-        """Send MsgTrunkHello with ROLE_SATELLITE.
+        """Send MsgTrunkHello with ROLE_SATELLITE and read parent reply.
 
-        Unlike trunk peers, the parent does NOT send a hello back —
-        authentication is one-way (satellite proves identity to parent).
+        Two-way authentication: satellite proves identity, parent replies
+        with its own hello so the satellite can verify and start forwarding.
         """
         if priority is None:
             priority = struct.unpack("!I", os.urandom(4))[0]
         hello = build_trunk_hello(sat_id, "", priority, secret,
                                   role=ROLE_SATELLITE)
         send_frame(self.sock, hello)
+        # Read the parent's hello reply
+        msg_type, _fields = self.recv_msg(timeout=5.0)
+        assert msg_type == MSG_TRUNK_HELLO, \
+            f"Expected hello reply, got type={msg_type}"
 
 
 # ---------------------------------------------------------------------------

@@ -81,7 +81,7 @@ Simulates a trunk peer connection. Connects via TCP, performs HMAC handshake, an
 
 ### SatellitePeer
 
-Extends `TrunkPeer` with satellite-specific behavior: connects to the satellite port and sends a hello with `role=SATELLITE`. Authentication is one-way (satellite proves identity to parent; parent does not send a hello back).
+Extends `TrunkPeer` with satellite-specific behavior: connects to the satellite port and sends a hello with `role=SATELLITE`. Authentication is two-way: the satellite proves identity to the parent, then the parent sends a hello reply back so the satellite can verify the parent and enable event forwarding.
 
 ### ClientPeer
 
