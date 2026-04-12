@@ -446,6 +446,8 @@ The PTY path is set by `COMMAND_PTY` in `[GLOBAL]` (default
   deployment example for Italy (20 regions, full mesh)
 - [`docs/DEPLOYMENT_ITALY_IT.md`](docs/DEPLOYMENT_ITALY_IT.md) — same document
   in Italian
+- [`docs/WW_DEPLOYMENT.md`](docs/WW_DEPLOYMENT.md) — worldwide deployment
+  example (25 countries, full mesh, DMR MCC-based TG numbering)
 - [`docs/MQTT.md`](docs/MQTT.md) — MQTT publishing: topic structure, payload
   format, configuration reference, and TLS setup
 - [`docs/MESSAGING_IDEAS.md`](docs/MESSAGING_IDEAS.md) — ideas for consuming
