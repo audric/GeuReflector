@@ -65,6 +65,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "ProtoVer.h"
 #include "ReflectorClient.h"
 #include "TrunkLink.h"
+#include "ReflectorMsg.h"
 #include "SatelliteLink.h"
 #include "SatelliteClient.h"
 #include "MqttPublisher.h"
@@ -258,9 +259,17 @@ class Reflector : public sigc::trackable
     void onClientAuthenticated(const std::string& callsign, uint32_t tg,
                                const std::string& ip);
     void onTrunkStateChanged(const std::string& section,
+                             const std::string& peer_id,
                              const std::string& direction, bool up,
                              const std::string& host = "",
                              uint16_t port = 0);
+
+    // Triggered when a local client logs in/out or changes TG. Schedules
+    // a debounced node-list emission to all trunk peers and to MQTT.
+    void scheduleNodeListUpdate(void);
+    // Called by TrunkLink when a peer sends us its node list.
+    void onPeerNodeList(const std::string& peer_id,
+                        const std::vector<MsgTrunkNodeList::NodeEntry>& nodes);
 
   protected:
 
@@ -309,6 +318,7 @@ class Reflector : public sigc::trackable
     std::vector<TrunkLink*>     m_trunk_links;
     std::set<uint32_t>          m_cluster_tgs;
     bool                        m_trunk_debug = false;
+    Async::Timer                m_nodelist_timer;
     static const size_t TRUNK_MAX_PENDING_CONS = 5;
 
     FramedTcpServer*            m_trunk_srv = nullptr;
@@ -367,6 +377,7 @@ class Reflector : public sigc::trackable
         Async::FramedTcpConnection::DisconnectReason reason);
     void onSatelliteLinkFailed(SatelliteLink* link);
     void processSatelliteCleanup(Async::Timer* t);
+    void sendNodeListToAllPeers(void);
     bool loadCertificateFiles(void);
     bool loadServerCertificateFiles(void);
     bool generateKeyFile(Async::SslKeypair& pkey, const std::string& keyfile);

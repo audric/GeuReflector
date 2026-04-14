@@ -3,7 +3,9 @@
 
 #include <string>
 #include <cstdint>
+#include <vector>
 #include <json/json.h>
+#include "ReflectorMsg.h"
 
 struct mosquitto;
 
@@ -37,6 +39,12 @@ class MqttPublisher
 
     // Periodic full status
     void publishFullStatus(const Json::Value& status);
+
+    // Node-list snapshots — published retained
+    void publishLocalNodes(
+        const std::vector<MsgTrunkNodeList::NodeEntry>& nodes);
+    void publishPeerNodes(const std::string& peer_id,
+        const std::vector<MsgTrunkNodeList::NodeEntry>& nodes);
 
   private:
     Async::Config&      m_cfg;

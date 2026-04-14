@@ -1444,6 +1444,7 @@ void ReflectorClient::setTg(uint32_t tg)
     }
 
     m_current_tg = tg;
+    if (m_reflector != nullptr) m_reflector->scheduleNodeListUpdate();
   }
 
   if (m_status != nullptr)

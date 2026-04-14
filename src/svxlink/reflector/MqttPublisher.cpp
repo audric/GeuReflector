@@ -89,6 +89,16 @@ bool MqttPublisher::initialize(void)
     m_topic_prefix.pop_back();
   }
 
+  // Optional MQTT_NAME — appended as a path component so each reflector
+  // publishes under a unique sub-tree (TOPIC_PREFIX/MQTT_NAME/...).
+  string mqtt_name;
+  if (m_cfg.getValue("MQTT", "MQTT_NAME", mqtt_name) && !mqtt_name.empty())
+  {
+    while (!mqtt_name.empty() && mqtt_name.back()  == '/') mqtt_name.pop_back();
+    while (!mqtt_name.empty() && mqtt_name.front() == '/') mqtt_name.erase(0, 1);
+    if (!mqtt_name.empty()) m_topic_prefix += "/" + mqtt_name;
+  }
+
   // Read optional TLS config
   string tls_str;
   if (m_cfg.getValue("MQTT", "TLS_ENABLED", tls_str) && tls_str == "1")
@@ -282,4 +292,48 @@ void MqttPublisher::publishFullStatus(const Json::Value& status)
   Json::StreamWriterBuilder wb;
   wb["indentation"] = "";
   publish("status", Json::writeString(wb, status), true);
+}
+
+
+static Json::Value nodeListToJson(
+    const std::vector<MsgTrunkNodeList::NodeEntry>& nodes)
+{
+  Json::Value arr(Json::arrayValue);
+  for (const auto& n : nodes)
+  {
+    Json::Value e;
+    e["callsign"] = n.callsign;
+    e["tg"]       = n.tg;
+    if (n.lat != 0.0f || n.lon != 0.0f)
+    {
+      e["lat"] = n.lat;
+      e["lon"] = n.lon;
+    }
+    if (!n.qth_name.empty()) e["qth_name"] = n.qth_name;
+    arr.append(e);
+  }
+  Json::Value root;
+  root["nodes"]     = arr;
+  root["timestamp"] = (Json::Int64)time(nullptr);
+  return root;
+}
+
+
+void MqttPublisher::publishLocalNodes(
+    const std::vector<MsgTrunkNodeList::NodeEntry>& nodes)
+{
+  Json::StreamWriterBuilder wb;
+  wb["indentation"] = "";
+  publish("nodes/local",
+          Json::writeString(wb, nodeListToJson(nodes)), true);
+}
+
+
+void MqttPublisher::publishPeerNodes(const std::string& peer_id,
+    const std::vector<MsgTrunkNodeList::NodeEntry>& nodes)
+{
+  Json::StreamWriterBuilder wb;
+  wb["indentation"] = "";
+  publish("nodes/" + peer_id,
+          Json::writeString(wb, nodeListToJson(nodes)), true);
 }

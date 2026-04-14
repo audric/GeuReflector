@@ -454,6 +454,9 @@ The PTY path is set by `COMMAND_PTY` in `[GLOBAL]` (default
   MQTT events via Telegram, SMS, Discord, webhooks, dashboards, and more
 - [`docs/DESIGN_SATELLITE_AND_CLUSTER.md`](docs/DESIGN_SATELLITE_AND_CLUSTER.md) — design
   rationale for satellite reflectors and cluster TGs
+- [`docs/JAY-additions.md`](docs/JAY-additions.md) — features merged from
+  jayReflector by DJ1JAY / FM-Funknetz: per-trunk filters, TG mapping,
+  PEER_ID, MQTT_NAME, node-list exchange, PTY mute/reload/status
 - [`tests/TESTS.md`](tests/TESTS.md) — integration test suite documentation:
   topology, test cases, harness components, and how to run
 

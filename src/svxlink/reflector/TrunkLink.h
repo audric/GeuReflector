@@ -52,6 +52,9 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <AsyncFramedTcpConnection.h>
 #include <AsyncTimer.h>
 
+#include "TgFilter.h"
+#include "ReflectorMsg.h"
+
 
 /****************************************************************************
  *
@@ -103,6 +106,10 @@ class TrunkLink : public sigc::trackable
       m_all_prefixes = all_prefixes;
     }
     const std::string& section(void) const { return m_section; }
+    const std::string& peerId(void) const
+    {
+      return m_peer_id_received.empty() ? m_section : m_peer_id_received;
+    }
 
     Json::Value statusJson(void) const;
 
@@ -130,6 +137,28 @@ class TrunkLink : public sigc::trackable
     // Called by Reflector when a local talker's audio stream ends
     void onLocalFlush(uint32_t tg);
 
+    // Send the local node list (callsign + current TG per local client)
+    // to the peer. Called from Reflector after debounce.
+    void sendNodeList(const std::vector<MsgTrunkNodeList::NodeEntry>& nodes);
+
+    // PTY-driven controls
+    void muteCallsign(const std::string& callsign)
+    {
+      m_muted_callsigns.insert(callsign);
+    }
+    void unmuteCallsign(const std::string& callsign)
+    {
+      m_muted_callsigns.erase(callsign);
+    }
+    bool isCallsignMuted(const std::string& callsign) const
+    {
+      return m_muted_callsigns.count(callsign) > 0;
+    }
+    // Re-parse BLACKLIST_TGS, ALLOW_TGS and TG_MAP from current config
+    void reloadConfig(void);
+    // One-line summary for TRUNK STATUS
+    std::string statusLine(void) const;
+
   private:
     static const unsigned HEARTBEAT_TX_CNT_RESET = 10;
     static const unsigned HEARTBEAT_RX_CNT_RESET = 15;
@@ -145,6 +174,8 @@ class TrunkLink : public sigc::trackable
     std::string         m_peer_host;
     uint16_t            m_peer_port;
     std::string         m_secret;
+    std::string         m_peer_id_config;    // our hello id (from PEER_ID; defaults to section)
+    std::string         m_peer_id_received;  // peer's hello id (set on hello rx)
     std::vector<std::string> m_local_prefix;   // our authoritative TG prefixes
     std::vector<std::string> m_remote_prefix;  // peer's authoritative TG prefixes
     uint32_t            m_priority;       // our tie-break nonce (random, set once)
@@ -153,6 +184,11 @@ class TrunkLink : public sigc::trackable
     Async::FramedTcpConnection* m_inbound_con = nullptr;  // accepted inbound
     Async::Timer        m_heartbeat_timer;
     std::vector<std::string> m_all_prefixes;   // all prefixes in the mesh
+    TgFilter            m_blacklist_filter;    // TGs never carried on this link
+    TgFilter            m_allow_filter;        // if non-empty: only these TGs pass
+    std::map<uint32_t, uint32_t> m_tg_map_in;  // peer wire TG -> local TG
+    std::map<uint32_t, uint32_t> m_tg_map_out; // local TG -> peer wire TG
+    std::set<std::string>        m_muted_callsigns;
     // TGs where we suppressed our local talker to defer to the peer
     std::set<uint32_t>  m_yielded_tgs;
     // TGs currently held by this specific trunk peer (for scoped cleanup)
@@ -180,6 +216,18 @@ class TrunkLink : public sigc::trackable
     bool isInboundReady(void) const;
     bool isOwnedTG(uint32_t tg) const;
     bool isPeerInterestedTG(uint32_t tg) const;
+    bool isBlacklisted(uint32_t tg) const;
+    bool isAllowed(uint32_t tg) const;
+    uint32_t mapTgIn(uint32_t peer_tg) const
+    {
+      auto it = m_tg_map_in.find(peer_tg);
+      return (it != m_tg_map_in.end()) ? it->second : peer_tg;
+    }
+    uint32_t mapTgOut(uint32_t local_tg) const
+    {
+      auto it = m_tg_map_out.find(local_tg);
+      return (it != m_tg_map_out.end()) ? it->second : local_tg;
+    }
 
     void onConnected(void);
     void onDisconnected(Async::TcpConnection* con,
@@ -193,6 +241,7 @@ class TrunkLink : public sigc::trackable
     void handleMsgTrunkAudio(std::istream& is);
     void handleMsgTrunkFlush(std::istream& is);
     void handleMsgTrunkHeartbeat(void);
+    void handleMsgTrunkNodeList(std::istream& is);
 
     void sendMsg(const ReflectorMsg& msg);
     void sendMsgOnOutbound(const ReflectorMsg& msg);

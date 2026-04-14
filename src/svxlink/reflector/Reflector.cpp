@@ -245,9 +245,14 @@ Reflector::Reflector(void)
     m_random_qsy_hi(0), m_random_qsy_tg(0), m_http_server(0), m_cmd_pty(0),
     m_keys_dir("private/"), m_pending_csrs_dir("pending_csrs/"),
     m_csrs_dir("csrs/"), m_certs_dir("certs/"), m_pki_dir("pki/"),
+    m_nodelist_timer(500, Async::Timer::TYPE_ONESHOT),
     m_sat_cleanup_timer(0, Async::Timer::TYPE_ONESHOT),
     m_mqtt_status_timer(1000, Async::Timer::TYPE_ONESHOT)
 {
+  m_nodelist_timer.setEnable(false);
+  m_nodelist_timer.expired.connect(
+      [this](Async::Timer*) { sendNodeListToAllPeers(); });
+
   TGHandler::instance()->talkerUpdated.connect(
       mem_fun(*this, &Reflector::onTalkerUpdated));
   TGHandler::instance()->requestAutoQsy.connect(
@@ -1051,6 +1056,7 @@ void Reflector::clientDisconnected(Async::FramedTcpConnection *con,
       {
         m_mqtt->onClientDisconnected(client->callsign());
       }
+      scheduleNodeListUpdate();
   }
   //Application::app().runTask([=]{ delete client; });
   delete client;
@@ -1949,13 +1955,101 @@ void Reflector::ctrlPtyDataReceived(const void *buf, size_t count)
       goto write_status;
     }
   }
+  else if (cmd == "TRUNK")
+  {
+    std::string subcmd;
+    if (!(ss >> subcmd))
+    {
+      errss << "Invalid TRUNK PTY command. "
+               "Usage: TRUNK MUTE|UNMUTE <section> <callsign> | "
+               "TRUNK RELOAD [<section>] | TRUNK STATUS [<section>]";
+      goto write_status;
+    }
+    std::transform(subcmd.begin(), subcmd.end(), subcmd.begin(), ::toupper);
+
+    auto find_link = [&](const std::string& section) -> TrunkLink* {
+      for (auto* link : m_trunk_links)
+        if (link->section() == section) return link;
+      return nullptr;
+    };
+
+    if (subcmd == "MUTE" || subcmd == "UNMUTE")
+    {
+      std::string section, callsign;
+      if (!(ss >> section >> callsign))
+      {
+        errss << "Usage: TRUNK " << subcmd << " <section> <callsign>";
+        goto write_status;
+      }
+      TrunkLink* link = find_link(section);
+      if (link == nullptr)
+      {
+        errss << "Unknown trunk section: " << section;
+        goto write_status;
+      }
+      if (subcmd == "MUTE") link->muteCallsign(callsign);
+      else                  link->unmuteCallsign(callsign);
+      m_cmd_pty->write(section + ": " + subcmd + " " + callsign + "\n");
+    }
+    else if (subcmd == "RELOAD")
+    {
+      std::string section;
+      ss >> section;
+      if (section.empty())
+      {
+        for (auto* link : m_trunk_links) link->reloadConfig();
+        m_cmd_pty->write("Reloaded all trunk links\n");
+      }
+      else
+      {
+        TrunkLink* link = find_link(section);
+        if (link == nullptr)
+        {
+          errss << "Unknown trunk section: " << section;
+          goto write_status;
+        }
+        link->reloadConfig();
+        m_cmd_pty->write(section + ": reloaded\n");
+      }
+    }
+    else if (subcmd == "STATUS")
+    {
+      std::string section;
+      ss >> section;
+      if (section.empty())
+      {
+        for (auto* link : m_trunk_links)
+          m_cmd_pty->write(link->statusLine() + "\n");
+      }
+      else
+      {
+        TrunkLink* link = find_link(section);
+        if (link == nullptr)
+        {
+          errss << "Unknown trunk section: " << section;
+          goto write_status;
+        }
+        m_cmd_pty->write(link->statusLine() + "\n");
+      }
+    }
+    else
+    {
+      errss << "Invalid TRUNK subcommand '" << subcmd << "'. "
+               "Usage: TRUNK MUTE|UNMUTE <section> <callsign> | "
+               "TRUNK RELOAD [<section>] | TRUNK STATUS [<section>]";
+      goto write_status;
+    }
+  }
   else
   {
-    errss << "Valid commands are: CFG, NODE, CA\n"
+    errss << "Valid commands are: CFG, NODE, CA, TRUNK\n"
           << "Usage:\n"
           << "CFG <section> <tag> <value>\n"
           << "NODE BLOCK <callsign> <blocktime seconds>\n"
           << "CA LS|LSC|LSP|SIGN <callsign>|RM <callsign>\n"
+          << "TRUNK MUTE|UNMUTE <section> <callsign>\n"
+          << "TRUNK RELOAD [<section>]\n"
+          << "TRUNK STATUS [<section>]\n"
           << "\nEmpty CFG lists all configuration";
   }
 
@@ -2603,22 +2697,70 @@ void Reflector::onClientAuthenticated(const std::string& callsign,
   {
     m_mqtt->onClientConnected(callsign, tg, ip);
   }
+  scheduleNodeListUpdate();
 } /* Reflector::onClientAuthenticated */
 
 
-void Reflector::onTrunkStateChanged(const std::string& section,
-                                    const std::string& direction, bool up,
-                                    const std::string& host, uint16_t port)
+void Reflector::scheduleNodeListUpdate(void)
+{
+  // Debounce — multiple rapid login/TG-change events coalesce into one send
+  m_nodelist_timer.setEnable(false);
+  m_nodelist_timer.setTimeout(500);
+  m_nodelist_timer.setEnable(true);
+} /* Reflector::scheduleNodeListUpdate */
+
+
+void Reflector::sendNodeListToAllPeers(void)
+{
+  std::vector<MsgTrunkNodeList::NodeEntry> nodes;
+  for (const auto& kv : m_client_con_map)
+  {
+    ReflectorClient* c = kv.second;
+    if (c->callsign().empty()) continue;
+    MsgTrunkNodeList::NodeEntry e;
+    e.callsign = c->callsign();
+    e.tg       = c->currentTG();
+    nodes.push_back(e);
+  }
+
+  for (auto* link : m_trunk_links)
+  {
+    link->sendNodeList(nodes);
+  }
+
+  if (m_mqtt != nullptr)
+  {
+    m_mqtt->publishLocalNodes(nodes);
+  }
+} /* Reflector::sendNodeListToAllPeers */
+
+
+void Reflector::onPeerNodeList(const std::string& peer_id,
+    const std::vector<MsgTrunkNodeList::NodeEntry>& nodes)
 {
   if (m_mqtt != nullptr)
   {
+    m_mqtt->publishPeerNodes(peer_id, nodes);
+  }
+} /* Reflector::onPeerNodeList */
+
+
+void Reflector::onTrunkStateChanged(const std::string& section,
+                                    const std::string& peer_id,
+                                    const std::string& direction, bool up,
+                                    const std::string& host, uint16_t port)
+{
+  (void)section;  // reserved for local logging; MQTT uses peer_id
+  if (m_mqtt != nullptr)
+  {
+    const std::string& topic_id = peer_id.empty() ? section : peer_id;
     if (up)
     {
-      m_mqtt->onTrunkUp(section, direction, host, port);
+      m_mqtt->onTrunkUp(topic_id, direction, host, port);
     }
     else
     {
-      m_mqtt->onTrunkDown(section, direction);
+      m_mqtt->onTrunkDown(topic_id, direction);
     }
   }
 } /* Reflector::onTrunkStateChanged */

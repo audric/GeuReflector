@@ -73,6 +73,16 @@ def generate_reflector_conf(name: str) -> str:
         f"SECRET={T.TEST_PEER_RX['secret']}",
         f"REMOTE_PREFIX={T.prefix_str(T.TEST_PEER_RX['prefix'])}",
         "",
+        "[TRUNK_TEST_FILTER]",
+        "HOST=192.0.2.1",
+        "PORT=59304",
+        f"SECRET={T.TEST_PEER_FILTER['secret']}",
+        f"REMOTE_PREFIX={T.prefix_str(T.TEST_PEER_FILTER['prefix'])}",
+        f"PEER_ID={T.TEST_PEER_FILTER['peer_id']}",
+        f"BLACKLIST_TGS={T.TEST_PEER_FILTER['blacklist_tgs']}",
+        f"ALLOW_TGS={T.TEST_PEER_FILTER['allow_tgs']}",
+        f"TG_MAP={T.TEST_PEER_FILTER['tg_map']}",
+        "",
     ]
 
     # Satellite server section (only on the primary reflector)
@@ -94,8 +104,10 @@ def generate_reflector_conf(name: str) -> str:
         f"PASSWORD={T.MQTT['password']}",
         f"TOPIC_PREFIX=svxreflector/{name}",
         "STATUS_INTERVAL=1000",
-        "",
     ]
+    if name in T.MQTT_NAMES:
+        lines.append(f"MQTT_NAME={T.MQTT_NAMES[name]}")
+    lines.append("")
 
     return "\n".join(lines)
 

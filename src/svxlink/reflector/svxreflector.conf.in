@@ -104,6 +104,17 @@ CERT_CA_HOOK=@SVX_SHARE_INSTALL_DIR@/ca-hook.py
 #PORT=5302
 #SECRET=change_this_shared_secret
 #REMOTE_PREFIX=2
+# Optional PEER_ID — name advertised to the peer in the trunk hello
+# (defaults to section name). The peer uses it as the MQTT topic
+# component for this link, so set it to a stable, broker-friendly name.
+#PEER_ID=reflector-a
+# Optional per-trunk TG filters (syntax: exact "26200", prefix "24*",
+# range "2427-2438", comma-separated):
+#BLACKLIST_TGS=666,777*       # never carried in either direction on this link
+#ALLOW_TGS=24*,2624123        # if set, ONLY these TGs are exchanged
+# Optional bidirectional TG remap (peer_tg:local_tg, comma-separated).
+# Mapped TGs bypass the prefix routing check on this link.
+#TG_MAP=1:2624123,2:2624124
 
 # --- Satellite reflectors ---
 # A satellite is a lightweight reflector that connects to a parent
@@ -136,6 +147,10 @@ CERT_CA_HOOK=@SVX_SHARE_INSTALL_DIR@/ca-hook.py
 #USERNAME=reflector
 #PASSWORD=secret
 #TOPIC_PREFIX=svxreflector/myreflector
+# Optional MQTT_NAME — appended as a path component, so topics become
+# <TOPIC_PREFIX>/<MQTT_NAME>/... — useful when several reflectors share
+# the same TOPIC_PREFIX. Leave unset to keep topics flat.
+#MQTT_NAME=reflector-01
 #STATUS_INTERVAL=1000
 #TLS_ENABLED=0
 #TLS_CA_CERT=/path/to/ca.crt

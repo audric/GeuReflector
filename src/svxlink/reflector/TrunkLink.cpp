@@ -191,10 +191,69 @@ bool TrunkLink::initialize(void)
     m_debug = (debug_str == "1" || debug_str == "true" || debug_str == "yes");
   }
 
+  // PEER_ID — name we advertise in our hello (defaults to section name).
+  // Used by the receiving peer as the MQTT topic component for this link.
+  if (!m_cfg.getValue(m_section, "PEER_ID", m_peer_id_config)
+      || m_peer_id_config.empty())
+  {
+    m_peer_id_config = m_section;
+  }
+
+  // BLACKLIST_TGS — flexible filter (exact, prefix "24*", range "10-20")
+  std::string blacklist_str;
+  if (m_cfg.getValue(m_section, "BLACKLIST_TGS", blacklist_str)
+      && !blacklist_str.empty())
+  {
+    m_blacklist_filter = TgFilter::parse(blacklist_str);
+    if (!m_blacklist_filter.empty())
+      cout << m_section << ": Blacklisted TGs: "
+           << m_blacklist_filter.toString() << endl;
+  }
+
+  // ALLOW_TGS — flexible whitelist (empty = allow all)
+  std::string allow_str;
+  if (m_cfg.getValue(m_section, "ALLOW_TGS", allow_str) && !allow_str.empty())
+  {
+    m_allow_filter = TgFilter::parse(allow_str);
+    if (!m_allow_filter.empty())
+      cout << m_section << ": Allowed TGs: "
+           << m_allow_filter.toString() << endl;
+  }
+
+  // TG_MAP — bidirectional TG remap, syntax "peer:local,peer2:local2"
+  std::string tgmap_str;
+  if (m_cfg.getValue(m_section, "TG_MAP", tgmap_str) && !tgmap_str.empty())
+  {
+    std::istringstream ms(tgmap_str);
+    std::string pair;
+    while (std::getline(ms, pair, ','))
+    {
+      auto colon = pair.find(':');
+      if (colon == std::string::npos) continue;
+      try {
+        uint32_t peer_tg  = std::stoul(pair.substr(0, colon));
+        uint32_t local_tg = std::stoul(pair.substr(colon + 1));
+        m_tg_map_in[peer_tg]   = local_tg;
+        m_tg_map_out[local_tg] = peer_tg;
+      } catch (...) { /* skip malformed */ }
+    }
+    if (!m_tg_map_in.empty())
+    {
+      cout << m_section << ": TG mappings (peer<->local):";
+      for (const auto& kv : m_tg_map_in)
+        cout << " " << kv.first << "<->" << kv.second;
+      cout << endl;
+    }
+  }
+
   cout << m_section << ": Trunk to " << m_peer_host << ":" << m_peer_port
        << " local_prefix=" << joinPrefixes(m_local_prefix)
        << " remote_prefix=" << joinPrefixes(m_remote_prefix)
-       << (m_debug ? " [debug on]" : "") << endl;
+       << (m_debug ? " [debug on]" : "")
+       << (m_blacklist_filter.empty() ? "" : " [blacklist]")
+       << (m_allow_filter.empty()     ? "" : " [whitelist]")
+       << (m_tg_map_in.empty()        ? "" : " [tg_map]")
+       << endl;
 
   m_con.addStaticSRVRecord(0, 0, 0, m_peer_port, m_peer_host);
   m_con.setReconnectMinTime(2000);
@@ -282,6 +341,18 @@ bool TrunkLink::isPeerInterestedTG(uint32_t tg) const
 } /* TrunkLink::isPeerInterestedTG */
 
 
+bool TrunkLink::isBlacklisted(uint32_t tg) const
+{
+  return !m_blacklist_filter.empty() && m_blacklist_filter.matches(tg);
+} /* TrunkLink::isBlacklisted */
+
+
+bool TrunkLink::isAllowed(uint32_t tg) const
+{
+  return m_allow_filter.empty() || m_allow_filter.matches(tg);
+} /* TrunkLink::isAllowed */
+
+
 Json::Value TrunkLink::statusJson(void) const
 {
   Json::Value obj(Json::objectValue);
@@ -350,10 +421,11 @@ void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
   con->frameReceived.connect(
       mem_fun(*this, &TrunkLink::onFrameReceived));
 
+  m_peer_id_received = hello.id();
   cout << m_section << ": Accepted inbound from " << con->remoteHost()
        << ":" << con->remotePort() << " peer='" << hello.id()
        << "' priority=" << m_peer_priority << endl;
-  m_reflector->onTrunkStateChanged(m_section, "inbound", true,
+  m_reflector->onTrunkStateChanged(m_section, peerId(), "inbound", true,
                                    con->remoteHost().toString(),
                                    con->remotePort());
 
@@ -366,7 +438,8 @@ void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
   }
 
   // Send our hello back on the inbound connection
-  sendMsgOnInbound(MsgTrunkHello(m_section, joinPrefixes(m_local_prefix),
+  sendMsgOnInbound(MsgTrunkHello(m_peer_id_config,
+                                  joinPrefixes(m_local_prefix),
                                   m_priority, m_secret));
 } /* TrunkLink::acceptInboundConnection */
 
@@ -387,7 +460,7 @@ void TrunkLink::onInboundDisconnected(Async::FramedTcpConnection* con,
   }
 
   cout << m_section << ": Inbound trunk connection lost" << endl;
-  m_reflector->onTrunkStateChanged(m_section, "inbound", false);
+  m_reflector->onTrunkStateChanged(m_section, peerId(), "inbound", false);
 
   if (m_debug)
   {
@@ -416,21 +489,25 @@ void TrunkLink::onInboundDisconnected(Async::FramedTcpConnection* con,
 
 void TrunkLink::onLocalTalkerStart(uint32_t tg, const std::string& callsign)
 {
-  if (!isActive() ||
-      (!isSharedTG(tg) && !m_reflector->isClusterTG(tg) &&
-       !isPeerInterestedTG(tg)))
+  if (!isActive() || isBlacklisted(tg) || !isAllowed(tg)) return;
+  bool mapped = m_tg_map_out.count(tg) > 0;
+  if (!mapped &&
+      !isSharedTG(tg) && !m_reflector->isClusterTG(tg) &&
+      !isPeerInterestedTG(tg))
   {
     return;
   }
-  sendMsg(MsgTrunkTalkerStart(tg, callsign));
+  sendMsg(MsgTrunkTalkerStart(mapTgOut(tg), callsign));
 } /* TrunkLink::onLocalTalkerStart */
 
 
 void TrunkLink::onLocalTalkerStop(uint32_t tg)
 {
-  if (!isActive() ||
-      (!isSharedTG(tg) && !m_reflector->isClusterTG(tg) &&
-       !isPeerInterestedTG(tg)))
+  if (!isActive() || isBlacklisted(tg) || !isAllowed(tg)) return;
+  bool mapped = m_tg_map_out.count(tg) > 0;
+  if (!mapped &&
+      !isSharedTG(tg) && !m_reflector->isClusterTG(tg) &&
+      !isPeerInterestedTG(tg))
   {
     return;
   }
@@ -440,32 +517,39 @@ void TrunkLink::onLocalTalkerStop(uint32_t tg)
   {
     return;
   }
-  sendMsg(MsgTrunkTalkerStop(tg));
+  sendMsg(MsgTrunkTalkerStop(mapTgOut(tg)));
 } /* TrunkLink::onLocalTalkerStop */
 
 
 void TrunkLink::onLocalAudio(uint32_t tg, const std::vector<uint8_t>& audio)
 {
-  if (!isActive() ||
-      (!isSharedTG(tg) && !m_reflector->isClusterTG(tg) &&
-       !isPeerInterestedTG(tg)) ||
-      m_yielded_tgs.count(tg))
+  if (!isActive() || isBlacklisted(tg) || !isAllowed(tg)
+      || m_yielded_tgs.count(tg))
   {
     return;
   }
-  sendMsg(MsgTrunkAudio(tg, audio));
+  bool mapped = m_tg_map_out.count(tg) > 0;
+  if (!mapped &&
+      !isSharedTG(tg) && !m_reflector->isClusterTG(tg) &&
+      !isPeerInterestedTG(tg))
+  {
+    return;
+  }
+  sendMsg(MsgTrunkAudio(mapTgOut(tg), audio));
 } /* TrunkLink::onLocalAudio */
 
 
 void TrunkLink::onLocalFlush(uint32_t tg)
 {
-  if (!isActive() ||
-      (!isSharedTG(tg) && !m_reflector->isClusterTG(tg) &&
-       !isPeerInterestedTG(tg)))
+  if (!isActive() || isBlacklisted(tg) || !isAllowed(tg)) return;
+  bool mapped = m_tg_map_out.count(tg) > 0;
+  if (!mapped &&
+      !isSharedTG(tg) && !m_reflector->isClusterTG(tg) &&
+      !isPeerInterestedTG(tg))
   {
     return;
   }
-  sendMsg(MsgTrunkFlush(tg));
+  sendMsg(MsgTrunkFlush(mapTgOut(tg)));
 } /* TrunkLink::onLocalFlush */
 
 
@@ -479,7 +563,7 @@ void TrunkLink::onConnected(void)
 {
   cout << m_section << ": Outbound connected to " << m_con.remoteHost()
        << ":" << m_con.remotePort() << endl;
-  m_reflector->onTrunkStateChanged(m_section, "outbound", true,
+  m_reflector->onTrunkStateChanged(m_section, peerId(), "outbound", true,
                                    m_con.remoteHost().toString(),
                                    m_con.remotePort());
 
@@ -495,7 +579,8 @@ void TrunkLink::onConnected(void)
   m_ob_hb_rx_cnt = HEARTBEAT_RX_CNT_RESET;
   m_heartbeat_timer.setEnable(true);
 
-  sendMsgOnOutbound(MsgTrunkHello(m_section, joinPrefixes(m_local_prefix),
+  sendMsgOnOutbound(MsgTrunkHello(m_peer_id_config,
+                                   joinPrefixes(m_local_prefix),
                                    m_priority, m_secret));
 } /* TrunkLink::onConnected */
 
@@ -505,7 +590,7 @@ void TrunkLink::onDisconnected(TcpConnection* con,
 {
   cout << m_section << ": Outbound disconnected: "
        << TcpConnection::disconnectReasonStr(reason) << endl;
-  m_reflector->onTrunkStateChanged(m_section, "outbound", false);
+  m_reflector->onTrunkStateChanged(m_section, peerId(), "outbound", false);
 
   if (m_debug)
   {
@@ -612,6 +697,9 @@ void TrunkLink::onFrameReceived(FramedTcpConnection* con,
     case MsgTrunkFlush::TYPE:
       handleMsgTrunkFlush(ss);
       break;
+    case MsgTrunkNodeList::TYPE:
+      handleMsgTrunkNodeList(ss);
+      break;
     default:
       cerr << "*** WARNING[" << m_section
            << "]: Unknown trunk message type=" << header.type() << endl;
@@ -669,6 +757,7 @@ void TrunkLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
   }
 
   m_peer_priority = msg.priority();
+  m_peer_id_received = msg.id();
   m_ob_hello_received = true;
 
   cout << m_section << ": Trunk hello from peer '" << msg.id()
@@ -696,38 +785,44 @@ void TrunkLink::handleMsgTrunkTalkerStart(std::istream& is)
     return;
   }
 
-  uint32_t tg = msg.tg();
-  if (!isOwnedTG(tg) && !m_reflector->isClusterTG(tg))
+  uint32_t wire_tg  = msg.tg();
+  uint32_t local_tg = mapTgIn(wire_tg);
+  if (isBlacklisted(wire_tg) || isBlacklisted(local_tg) || !isAllowed(wire_tg))
+  {
+    return;
+  }
+  bool mapped = m_tg_map_in.count(wire_tg) > 0;
+  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg))
   {
     return;
   }
 
   // Tie-break: if we already have a local talker on this TG, decide who wins.
   // Lower priority value wins. If equal (shouldn't happen), local wins.
-  ReflectorClient* local_talker = TGHandler::instance()->talkerForTG(tg);
+  ReflectorClient* local_talker = TGHandler::instance()->talkerForTG(local_tg);
   if (local_talker != nullptr)
   {
     if (m_priority <= m_peer_priority)
     {
       // We win — ignore peer's claim
-      cout << m_section << ": TG #" << tg
+      cout << m_section << ": TG #" << local_tg
            << " conflict — local wins (our priority=" << m_priority
            << " <= peer=" << m_peer_priority << ")" << endl;
       return;
     }
     // We defer — clear local talker and accept remote
-    cout << m_section << ": TG #" << tg
+    cout << m_section << ": TG #" << local_tg
          << " conflict — deferring to peer (our priority=" << m_priority
          << " > peer=" << m_peer_priority << ")" << endl;
-    m_yielded_tgs.insert(tg);
-    TGHandler::instance()->setTalkerForTG(tg, nullptr);
+    m_yielded_tgs.insert(local_tg);
+    TGHandler::instance()->setTalkerForTG(local_tg, nullptr);
     // onTalkerUpdated will fire; Reflector must not re-send TrunkTalkerStart
     // for this TG since it's in m_yielded_tgs (checked in Reflector.cpp)
   }
 
-  m_peer_active_tgs.insert(tg);
-  m_peer_interested_tgs[tg] = std::time(nullptr);
-  TGHandler::instance()->setTrunkTalkerForTG(tg, msg.callsign());
+  m_peer_active_tgs.insert(local_tg);
+  m_peer_interested_tgs[local_tg] = std::time(nullptr);
+  TGHandler::instance()->setTrunkTalkerForTG(local_tg, msg.callsign());
 } /* TrunkLink::handleMsgTrunkTalkerStart */
 
 
@@ -741,15 +836,21 @@ void TrunkLink::handleMsgTrunkTalkerStop(std::istream& is)
     return;
   }
 
-  uint32_t tg = msg.tg();
-  if (!isOwnedTG(tg) && !m_reflector->isClusterTG(tg))
+  uint32_t wire_tg  = msg.tg();
+  uint32_t local_tg = mapTgIn(wire_tg);
+  if (isBlacklisted(wire_tg) || isBlacklisted(local_tg) || !isAllowed(wire_tg))
+  {
+    return;
+  }
+  bool mapped = m_tg_map_in.count(wire_tg) > 0;
+  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg))
   {
     return;
   }
 
-  m_yielded_tgs.erase(tg);
-  m_peer_active_tgs.erase(tg);
-  TGHandler::instance()->clearTrunkTalkerForTG(tg);
+  m_yielded_tgs.erase(local_tg);
+  m_peer_active_tgs.erase(local_tg);
+  TGHandler::instance()->clearTrunkTalkerForTG(local_tg);
 } /* TrunkLink::handleMsgTrunkTalkerStop */
 
 
@@ -763,27 +864,41 @@ void TrunkLink::handleMsgTrunkAudio(std::istream& is)
     return;
   }
 
-  uint32_t tg = msg.tg();
-  if ((!isOwnedTG(tg) && !m_reflector->isClusterTG(tg)) || msg.audio().empty())
+  uint32_t wire_tg  = msg.tg();
+  uint32_t local_tg = mapTgIn(wire_tg);
+  if (msg.audio().empty()) return;
+  if (isBlacklisted(wire_tg) || isBlacklisted(local_tg) || !isAllowed(wire_tg))
+  {
+    return;
+  }
+  bool mapped = m_tg_map_in.count(wire_tg) > 0;
+  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg))
   {
     return;
   }
 
   // Only forward audio if this peer has claimed the TG via TalkerStart
-  if (m_peer_active_tgs.find(tg) == m_peer_active_tgs.end())
+  if (m_peer_active_tgs.find(local_tg) == m_peer_active_tgs.end())
+  {
+    return;
+  }
+
+  // PTY-driven mute: drop audio if the current peer talker is muted
+  std::string cs = TGHandler::instance()->trunkTalkerForTG(local_tg);
+  if (!cs.empty() && isCallsignMuted(cs))
   {
     return;
   }
 
   // Refresh peer interest timestamp on audio to keep alive during long TX
-  m_peer_interested_tgs[tg] = std::time(nullptr);
+  m_peer_interested_tgs[local_tg] = std::time(nullptr);
 
   // Rebuild a UDP audio message and broadcast to local clients on this TG
   MsgUdpAudio udp_msg(msg.audio());
-  m_reflector->broadcastUdpMsg(udp_msg, ReflectorClient::TgFilter(tg));
+  m_reflector->broadcastUdpMsg(udp_msg, ReflectorClient::TgFilter(local_tg));
 
   // Forward trunk audio to connected satellites
-  m_reflector->forwardAudioToSatellitesExcept(nullptr, tg, msg.audio());
+  m_reflector->forwardAudioToSatellitesExcept(nullptr, local_tg, msg.audio());
 } /* TrunkLink::handleMsgTrunkAudio */
 
 
@@ -797,17 +912,23 @@ void TrunkLink::handleMsgTrunkFlush(std::istream& is)
     return;
   }
 
-  uint32_t tg = msg.tg();
-  if (!isOwnedTG(tg) && !m_reflector->isClusterTG(tg))
+  uint32_t wire_tg  = msg.tg();
+  uint32_t local_tg = mapTgIn(wire_tg);
+  if (isBlacklisted(wire_tg) || isBlacklisted(local_tg) || !isAllowed(wire_tg))
+  {
+    return;
+  }
+  bool mapped = m_tg_map_in.count(wire_tg) > 0;
+  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg))
   {
     return;
   }
 
   m_reflector->broadcastUdpMsg(MsgUdpFlushSamples(),
-      ReflectorClient::TgFilter(tg));
+      ReflectorClient::TgFilter(local_tg));
 
   // Forward trunk flush to connected satellites
-  m_reflector->forwardFlushToSatellitesExcept(nullptr, tg);
+  m_reflector->forwardFlushToSatellitesExcept(nullptr, local_tg);
 } /* TrunkLink::handleMsgTrunkFlush */
 
 
@@ -968,6 +1089,90 @@ void TrunkLink::clearPeerTalkerState(void)
   m_yielded_tgs.clear();
   m_peer_interested_tgs.clear();
 } /* TrunkLink::clearPeerTalkerState */
+
+
+void TrunkLink::reloadConfig(void)
+{
+  m_blacklist_filter = TgFilter{};
+  m_allow_filter     = TgFilter{};
+  m_tg_map_in.clear();
+  m_tg_map_out.clear();
+
+  std::string blacklist_str;
+  if (m_cfg.getValue(m_section, "BLACKLIST_TGS", blacklist_str)
+      && !blacklist_str.empty())
+  {
+    m_blacklist_filter = TgFilter::parse(blacklist_str);
+  }
+
+  std::string allow_str;
+  if (m_cfg.getValue(m_section, "ALLOW_TGS", allow_str) && !allow_str.empty())
+  {
+    m_allow_filter = TgFilter::parse(allow_str);
+  }
+
+  std::string tgmap_str;
+  if (m_cfg.getValue(m_section, "TG_MAP", tgmap_str) && !tgmap_str.empty())
+  {
+    std::istringstream ms(tgmap_str);
+    std::string pair;
+    while (std::getline(ms, pair, ','))
+    {
+      auto colon = pair.find(':');
+      if (colon == std::string::npos) continue;
+      try {
+        uint32_t peer_tg  = std::stoul(pair.substr(0, colon));
+        uint32_t local_tg = std::stoul(pair.substr(colon + 1));
+        m_tg_map_in[peer_tg]   = local_tg;
+        m_tg_map_out[local_tg] = peer_tg;
+      } catch (...) { /* skip malformed */ }
+    }
+  }
+
+  cout << m_section << ": Reloaded filters"
+       << (m_blacklist_filter.empty() ? "" :
+            " blacklist=" + m_blacklist_filter.toString())
+       << (m_allow_filter.empty()     ? "" :
+            " allow="     + m_allow_filter.toString())
+       << " tg_map_entries=" << m_tg_map_in.size() << endl;
+} /* TrunkLink::reloadConfig */
+
+
+void TrunkLink::sendNodeList(
+    const std::vector<MsgTrunkNodeList::NodeEntry>& nodes)
+{
+  if (!isActive()) return;
+  sendMsg(MsgTrunkNodeList(nodes));
+} /* TrunkLink::sendNodeList */
+
+
+void TrunkLink::handleMsgTrunkNodeList(std::istream& is)
+{
+  MsgTrunkNodeList msg;
+  if (!msg.unpack(is))
+  {
+    cerr << "*** ERROR[" << m_section
+         << "]: Failed to unpack MsgTrunkNodeList" << endl;
+    return;
+  }
+  m_reflector->onPeerNodeList(peerId(), msg.nodes());
+} /* TrunkLink::handleMsgTrunkNodeList */
+
+
+std::string TrunkLink::statusLine(void) const
+{
+  ostringstream s;
+  s << m_section
+    << " peer_id=" << peerId()
+    << " ob=" << (isOutboundReady() ? "up" : "down")
+    << " ib=" << (isInboundReady()  ? "up" : "down")
+    << " active_tgs=" << m_peer_active_tgs.size()
+    << " muted=" << m_muted_callsigns.size()
+    << (m_blacklist_filter.empty() ? "" : " [blacklist]")
+    << (m_allow_filter.empty()     ? "" : " [allow]")
+    << (m_tg_map_in.empty()        ? "" : " [tg_map]");
+  return s.str();
+} /* TrunkLink::statusLine */
 
 
 /*

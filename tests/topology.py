@@ -29,6 +29,25 @@ TEST_PEER_RX = {
     "secret": "test_secret_rx",
 }
 
+# Third test peer used to exercise per-link BLACKLIST_TGS / ALLOW_TGS /
+# TG_MAP / PEER_ID. Kept isolated from TEST_PEER so routing tests don't
+# interact with filter tests.
+TEST_PEER_FILTER = {
+    "prefix":        ["7"],
+    "secret":        "test_secret_filter",
+    "peer_id":       "filter-peer",
+    "blacklist_tgs": "12345",
+    "allow_tgs":     "7*,1220",
+    "tg_map":        "7000:1220",
+}
+
+# Per-reflector MQTT_NAME overrides — when set, the reflector publishes
+# under <TOPIC_PREFIX>/<MQTT_NAME>/... so tests can verify the new key
+# without breaking the flat-topic MQTT test on reflector 'a'.
+MQTT_NAMES = {
+    "c": "mqname-c",
+}
+
 # Cluster TGs — forwarded to all peers regardless of prefix ownership
 # 8000: no prefix match (not owned by any reflector)
 # 1201: starts with prefix "120" (overlaps with reflector-a's ownership)

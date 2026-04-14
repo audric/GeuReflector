@@ -1821,6 +1821,93 @@ class MsgUdpAudio : public ReflectorUdpMsgBase<101>
 #endif
 
 
+/**
+@brief Trunk node list message (jayReflector extension, type 121)
+
+Sent by a reflector to its trunk peer whenever its local client list changes
+(login, logout, TG change). The receiving peer can publish it via its own
+MQTT publisher. Older peers that don't know type 121 ignore it — fully
+backward compatible.
+
+Each entry: callsign, current TG, optional lat/lon/QTH name.
+*/
+class MsgTrunkNodeList : public ReflectorMsgBase<121>
+{
+  public:
+    struct NodeEntry
+    {
+      std::string callsign;
+      uint32_t    tg = 0;
+      float       lat = 0.0f;
+      float       lon = 0.0f;
+      std::string qth_name;
+    };
+
+    MsgTrunkNodeList(void) {}
+    explicit MsgTrunkNodeList(const std::vector<NodeEntry>& nodes)
+    {
+      for (const auto& n : nodes)
+      {
+        m_callsigns.push_back(n.callsign);
+        m_tgs.push_back(n.tg);
+        m_lats.push_back(n.lat);
+        m_lons.push_back(n.lon);
+        m_qth_names.push_back(n.qth_name);
+      }
+    }
+
+    std::vector<NodeEntry> nodes(void) const
+    {
+      std::vector<NodeEntry> result;
+      size_t sz = std::min(m_callsigns.size(), m_tgs.size());
+      for (size_t i = 0; i < sz; ++i)
+      {
+        NodeEntry e;
+        e.callsign = m_callsigns[i];
+        e.tg       = m_tgs[i];
+        e.lat      = (i < m_lats.size())      ? m_lats[i]      : 0.0f;
+        e.lon      = (i < m_lons.size())      ? m_lons[i]      : 0.0f;
+        e.qth_name = (i < m_qth_names.size()) ? m_qth_names[i] : "";
+        result.push_back(e);
+      }
+      return result;
+    }
+
+    ASYNC_MSG_MEMBERS(m_callsigns, m_tgs, m_lats, m_lons, m_qth_names)
+
+  private:
+    std::vector<std::string> m_callsigns;
+    std::vector<uint32_t>    m_tgs;
+    std::vector<float>       m_lats;
+    std::vector<float>       m_lons;
+    std::vector<std::string> m_qth_names;
+}; /* MsgTrunkNodeList */
+
+
+/**
+@brief Trunk filter advertisement (jayReflector extension, type 122)
+
+Optional message sent (typically by a satellite after Hello) to tell the
+parent which TGs it wants to receive. Filter syntax matches TgFilter
+(exact / "24*" prefix / "10-20" range, comma-separated). Older peers
+silently ignore unknown message types.
+*/
+class MsgTrunkFilter : public ReflectorMsgBase<122>
+{
+  public:
+    MsgTrunkFilter(void) {}
+    explicit MsgTrunkFilter(const std::string& filter)
+      : m_filter(filter) {}
+
+    const std::string& filter(void) const { return m_filter; }
+
+    ASYNC_MSG_MEMBERS(m_filter)
+
+  private:
+    std::string m_filter;
+}; /* MsgTrunkFilter */
+
+
 #endif /* REFLECTOR_MSG_INCLUDED */
 
 

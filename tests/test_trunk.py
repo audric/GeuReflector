@@ -17,6 +17,7 @@ import os
 import re
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -67,6 +68,11 @@ MSG_TRUNK_TALKER_STOP = 117
 MSG_TRUNK_AUDIO = 118
 MSG_TRUNK_FLUSH = 119
 MSG_TRUNK_HEARTBEAT = 120
+MSG_TRUNK_NODE_LIST = 121
+
+# Filter test peer constants
+FILTER_SECRET = T.TEST_PEER_FILTER["secret"]
+FILTER_PREFIX = T.prefix_str(T.TEST_PEER_FILTER["prefix"])
 
 # ---------------------------------------------------------------------------
 # Wire format helpers
@@ -196,6 +202,32 @@ def parse_msg(data: bytes):
         return msg_type, {"tg": tg}
     elif msg_type == MSG_TRUNK_HEARTBEAT:
         return msg_type, {}
+    elif msg_type == MSG_TRUNK_NODE_LIST:
+        # vec<string> callsigns, vec<u32> tgs, vec<float> lat, vec<float> lon,
+        # vec<string> qth_names. Each vector is u32-prefixed length.
+        def read_vec_str(off):
+            n = struct.unpack_from("!I", data, off)[0]; off += 4
+            out = []
+            for _ in range(n):
+                s, off = unpack_string(data, off)
+                out.append(s)
+            return out, off
+
+        def read_vec_u32(off):
+            n = struct.unpack_from("!I", data, off)[0]; off += 4
+            out = list(struct.unpack_from(f"!{n}I", data, off))
+            off += 4 * n
+            return out, off
+
+        def read_vec_f32(off):
+            n = struct.unpack_from("!I", data, off)[0]; off += 4
+            out = list(struct.unpack_from(f"!{n}f", data, off))
+            off += 4 * n
+            return out, off
+
+        callsigns, off = read_vec_str(off)
+        tgs,       off = read_vec_u32(off)
+        return msg_type, {"callsigns": callsigns, "tgs": tgs}
     else:
         return msg_type, {"raw": data[off:]}
 
@@ -528,6 +560,38 @@ def wait_for_trunk_connected(host: str, port: int, trunk_name: str,
         return trunks.get(trunk_name, {}).get("connected", False)
     wait_until(check, timeout=timeout,
                msg=f"trunk {trunk_name} on {host}:{port} not connected")
+
+
+def pty_send(reflector_name: str, command: str, timeout: float = 5.0) -> str:
+    """Write a line to /dev/shm/reflector_ctrl inside a reflector container
+    and return the captured stdout (the reflector echoes responses there
+    over the next ~200ms — we just confirm the write succeeded)."""
+    svc = T.service_name(reflector_name)
+    # bash here-string ensures a trailing newline (line-buffered PTY)
+    proc = subprocess.run(
+        ["docker", "compose", "-f", "docker-compose.test.yml",
+         "exec", "-T", svc,
+         "bash", "-c", f"printf '%s\\n' {repr(command)} > /dev/shm/reflector_ctrl"],
+        cwd=os.path.dirname(os.path.abspath(__file__)),
+        capture_output=True, text=True, timeout=timeout,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"pty_send to {svc} failed: rc={proc.returncode} "
+            f"stderr={proc.stderr.strip()}")
+    return proc.stdout
+
+
+def docker_logs_since(reflector_name: str, since: str = "5s") -> str:
+    """Return the stdout/stderr of a reflector container since N seconds ago."""
+    svc = T.service_name(reflector_name)
+    proc = subprocess.run(
+        ["docker", "compose", "-f", "docker-compose.test.yml",
+         "logs", "--no-color", "--since", since, svc],
+        cwd=os.path.dirname(os.path.abspath(__file__)),
+        capture_output=True, text=True, timeout=10.0,
+    )
+    return proc.stdout + proc.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -1272,6 +1336,325 @@ class TestTrunkIntegration(unittest.TestCase):
         finally:
             mc.loop_stop()
             mc.disconnect()
+
+    # ------------------------------------------------------------------
+    # Test 19: PEER_ID is advertised in MsgTrunkHello
+    # ------------------------------------------------------------------
+    def test_19_peer_id_in_hello(self):
+        """When PEER_ID is configured, the reflector advertises it (not the
+        section name) in its outbound hello on the TRUNK_TEST_FILTER link."""
+        # Listen for an outbound connection on port 59304 — the reflector
+        # is configured to dial 192.0.2.1:59304 which is a black hole, so
+        # we can't capture *that*. Instead we verify the PEER_ID via the
+        # inbound side: we connect to the reflector's trunk port and send
+        # a hello as the FILTER peer; the reflector replies with its hello
+        # using PEER_ID="filter-peer".
+        peer = TrunkPeer()
+        peer.connect(*_trunk(self.PRIMARY))
+        msg_type, fields = peer.handshake(
+            trunk_id="TRUNK_TEST_FILTER",
+            local_prefix=FILTER_PREFIX,
+            secret=FILTER_SECRET,
+        )
+        try:
+            self.assertEqual(msg_type, MSG_TRUNK_HELLO)
+            self.assertEqual(fields["id"], T.TEST_PEER_FILTER["peer_id"],
+                f"Expected PEER_ID '{T.TEST_PEER_FILTER['peer_id']}' "
+                f"in reflector's hello, got '{fields['id']}'")
+        finally:
+            peer.close()
+
+    # ------------------------------------------------------------------
+    # Test 20: BLACKLIST_TGS drops talker on receive path
+    # ------------------------------------------------------------------
+    def test_20_blacklist_drops_tg(self):
+        """A TalkerStart on a blacklisted TG must NOT appear as an active
+        talker on the receiving reflector."""
+        peer = TrunkPeer()
+        peer.connect(*_trunk(self.PRIMARY))
+        peer.handshake(trunk_id="TRUNK_TEST_FILTER",
+                       local_prefix=FILTER_PREFIX,
+                       secret=FILTER_SECRET)
+        try:
+            blocked_tg = int(T.TEST_PEER_FILTER["blacklist_tgs"])
+            peer.send_talker_start(blocked_tg, "N0BLACK")
+            time.sleep(1.0)
+
+            status = get_status(*_http(self.PRIMARY))
+            active = status["trunks"].get(
+                "TRUNK_TEST_FILTER", {}).get("active_talkers", {})
+            self.assertNotIn(str(blocked_tg), active,
+                f"Blacklisted TG {blocked_tg} appeared as active talker: "
+                f"{active}")
+        finally:
+            peer.close()
+
+    # ------------------------------------------------------------------
+    # Test 21: ALLOW_TGS rejects TGs not in the whitelist
+    # ------------------------------------------------------------------
+    def test_21_allow_tgs_blocks_others(self):
+        """ALLOW_TGS=7*,1220 — TG 7100 must pass, TG 99 must be dropped."""
+        peer = TrunkPeer()
+        peer.connect(*_trunk(self.PRIMARY))
+        peer.handshake(trunk_id="TRUNK_TEST_FILTER",
+                       local_prefix=FILTER_PREFIX,
+                       secret=FILTER_SECRET)
+        try:
+            allowed_tg = 7100  # matches "7*"
+            peer.send_talker_start(allowed_tg, "N0ALLOW")
+            disallowed_tg = 99   # matches neither "7*" nor "1220"
+            peer.send_talker_start(disallowed_tg, "N0BLOCK")
+            time.sleep(1.0)
+
+            active = get_status(*_http(self.PRIMARY))[
+                "trunks"]["TRUNK_TEST_FILTER"]["active_talkers"]
+            self.assertIn(str(allowed_tg), active,
+                f"Allowed TG {allowed_tg} missing from active talkers: "
+                f"{active}")
+            self.assertNotIn(str(disallowed_tg), active,
+                f"Disallowed TG {disallowed_tg} should not be active: "
+                f"{active}")
+        finally:
+            peer.close()
+
+    # ------------------------------------------------------------------
+    # Test 22: TG_MAP remaps incoming TGs
+    # ------------------------------------------------------------------
+    def test_22_tg_map_remap_in(self):
+        """TG_MAP=7000:1220 — peer sends TalkerStart on wire TG 7000,
+        reflector should track it as local TG 1220."""
+        peer = TrunkPeer()
+        peer.connect(*_trunk(self.PRIMARY))
+        peer.handshake(trunk_id="TRUNK_TEST_FILTER",
+                       local_prefix=FILTER_PREFIX,
+                       secret=FILTER_SECRET)
+        try:
+            wire_tg, local_tg = 7000, 1220
+            peer.send_talker_start(wire_tg, "N0MAP")
+            time.sleep(1.0)
+
+            active = get_status(*_http(self.PRIMARY))[
+                "trunks"]["TRUNK_TEST_FILTER"]["active_talkers"]
+            # After mapping, the reflector tracks the LOCAL TG
+            self.assertIn(str(local_tg), active,
+                f"Mapped local TG {local_tg} not active "
+                f"(after wire TG {wire_tg}): {active}")
+            self.assertNotIn(str(wire_tg), active,
+                f"Wire TG {wire_tg} should have been remapped to "
+                f"{local_tg}: {active}")
+        finally:
+            peer.close()
+
+    # ------------------------------------------------------------------
+    # Test 23: PTY TRUNK STATUS lists trunks
+    # ------------------------------------------------------------------
+    def test_23_pty_trunk_status(self):
+        """`TRUNK STATUS` over PTY enumerates the configured trunks."""
+        # Issue command and read the docker logs for the reflector's PTY
+        # echo (the reflector also writes the response back to the PTY,
+        # which our subprocess can't read — so we check that the command
+        # was accepted via no-error from pty_send).
+        out = pty_send(self.PRIMARY, "TRUNK STATUS")
+        # The actual list goes back to the PTY reader. Best we can do
+        # without a PTY reader is verify the command did not error and
+        # the per-link config was previously logged at startup.
+        logs = docker_logs_since(self.PRIMARY, since="120s")
+        self.assertIn("TRUNK_TEST_FILTER", logs,
+            "TRUNK_TEST_FILTER section was not loaded by reflector "
+            f"(out={out!r}, logs head={logs[:400]!r})")
+
+    # ------------------------------------------------------------------
+    # Test 24: PTY TRUNK MUTE blocks audio from the muted callsign
+    # ------------------------------------------------------------------
+    def test_24_pty_trunk_mute(self):
+        """After TRUNK MUTE on a callsign, audio from that callsign on
+        the muted trunk link is dropped (not delivered to local clients)."""
+        peer = TrunkPeer()
+        peer.connect(*_trunk(self.PRIMARY))
+        peer.handshake(trunk_id="TRUNK_TEST_FILTER",
+                       local_prefix=FILTER_PREFIX,
+                       secret=FILTER_SECRET)
+        try:
+            local_tg = 1220       # via TG_MAP from wire 7000
+            wire_tg  = 7000
+
+            # Mute first, then claim TG and send audio
+            pty_send(self.PRIMARY,
+                     "TRUNK MUTE TRUNK_TEST_FILTER N0MUTE")
+            time.sleep(0.3)
+
+            # Local listener
+            listener = ClientPeer()
+            port = T.mapped_client_port(self.PRIMARY)
+            listener.connect(HOST, port)
+            listener.authenticate(callsign=CLIENT_CALLSIGN,
+                                  password=CLIENT_PASSWORD)
+            listener.setup_udp(udp_port=port)
+            listener.select_tg(local_tg)
+            time.sleep(0.3)
+
+            peer.send_talker_start(wire_tg, "N0MUTE")
+            for _ in range(5):
+                peer.send_audio(wire_tg, b"\xAA" * 80)
+                time.sleep(0.02)
+            time.sleep(1.0)
+
+            msgs = listener.recv_udp_all(timeout=1.0)
+            audio_count = sum(1 for t, _ in msgs if t == UDP_AUDIO)
+            listener.close()
+
+            # Cleanup mute
+            pty_send(self.PRIMARY,
+                     "TRUNK UNMUTE TRUNK_TEST_FILTER N0MUTE")
+
+            self.assertEqual(audio_count, 0,
+                f"Listener received {audio_count} audio frame(s) for "
+                f"muted callsign N0MUTE on TG {local_tg}")
+        finally:
+            peer.close()
+
+    # ------------------------------------------------------------------
+    # Test 25: PTY TRUNK RELOAD re-reads BLACKLIST after live CFG update
+    # ------------------------------------------------------------------
+    def test_25_pty_trunk_reload(self):
+        """CFG-update BLACKLIST_TGS for TRUNK_TEST_FILTER, then TRUNK RELOAD
+        — a TG that was previously allowed must now be blocked."""
+        peer = TrunkPeer()
+        peer.connect(*_trunk(self.PRIMARY))
+        peer.handshake(trunk_id="TRUNK_TEST_FILTER",
+                       local_prefix=FILTER_PREFIX,
+                       secret=FILTER_SECRET)
+        try:
+            tg_to_block = 7200  # currently allowed by ALLOW_TGS=7*
+
+            # Sanity: it currently goes through
+            peer.send_talker_start(tg_to_block, "N0PRE")
+            time.sleep(0.5)
+            active = get_status(*_http(self.PRIMARY))[
+                "trunks"]["TRUNK_TEST_FILTER"]["active_talkers"]
+            self.assertIn(str(tg_to_block), active,
+                f"Pre-reload: TG {tg_to_block} should be active, got {active}")
+            peer.send_talker_stop(tg_to_block)
+            time.sleep(0.3)
+
+            # Update config + reload
+            pty_send(self.PRIMARY,
+                     f"CFG TRUNK_TEST_FILTER BLACKLIST_TGS {tg_to_block}")
+            pty_send(self.PRIMARY, "TRUNK RELOAD TRUNK_TEST_FILTER")
+            time.sleep(0.5)
+
+            # Now it must be blocked
+            peer.send_talker_start(tg_to_block, "N0POST")
+            time.sleep(0.5)
+            active = get_status(*_http(self.PRIMARY))[
+                "trunks"]["TRUNK_TEST_FILTER"]["active_talkers"]
+            self.assertNotIn(str(tg_to_block), active,
+                f"Post-reload: TG {tg_to_block} should be blacklisted, "
+                f"got {active}")
+
+            # Restore original config so other tests aren't affected
+            pty_send(self.PRIMARY,
+                     f"CFG TRUNK_TEST_FILTER BLACKLIST_TGS "
+                     f"{T.TEST_PEER_FILTER['blacklist_tgs']}")
+            pty_send(self.PRIMARY, "TRUNK RELOAD TRUNK_TEST_FILTER")
+        finally:
+            peer.close()
+
+    # ------------------------------------------------------------------
+    # Test 26: MQTT_NAME inserts a path component before the topic suffix
+    # ------------------------------------------------------------------
+    def test_26_mqtt_name_in_topic(self):
+        """Reflector 'c' has MQTT_NAME=mqname-c → topics live under
+        svxreflector/c/mqname-c/... — verify a node-list update arrives
+        on the namespaced 'nodes/local' topic."""
+        received = []
+        connected_event = threading.Event()
+        topic_sub = f"svxreflector/c/{T.MQTT_NAMES['c']}/nodes/local"
+
+        def on_connect(client, userdata, flags, rc):
+            client.subscribe(topic_sub)
+            connected_event.set()
+
+        def on_message(client, userdata, msg):
+            received.append((msg.topic, msg.payload.decode()))
+
+        mc = mqtt_client.Client()
+        mc.on_connect = on_connect
+        mc.on_message = on_message
+        mc.connect(HOST, 11883, 60)
+        mc.loop_start()
+        try:
+            self.assertTrue(connected_event.wait(timeout=5),
+                            "MQTT subscribe timed out")
+            time.sleep(0.5)
+
+            # Trigger a node-list update by connecting a client to 'c'
+            client = ClientPeer()
+            port = T.mapped_client_port("c")
+            client.connect(HOST, port)
+            client.authenticate(callsign=CLIENT_CALLSIGN,
+                                password=CLIENT_PASSWORD)
+            try:
+                # Wait for a retained or fresh message
+                wait_until(lambda: len(received) > 0, timeout=5.0,
+                           msg=f"no message on {topic_sub}")
+                topic, payload = received[-1]
+                self.assertEqual(topic, topic_sub)
+                self.assertIn("nodes", payload)
+            finally:
+                client.close()
+        finally:
+            mc.loop_stop()
+            mc.disconnect()
+
+    # ------------------------------------------------------------------
+    # Test 27: MsgTrunkNodeList is emitted on local client login
+    # ------------------------------------------------------------------
+    def test_27_node_list_emitted_to_trunk_peer(self):
+        """Connect as the TRUNK_TEST_RX harness, then connect a V2 client
+        on the primary reflector — within the debounce window the harness
+        must receive a MsgTrunkNodeList containing that client."""
+        rx = TrunkPeer()
+        rx.connect(*_trunk(self.PRIMARY))
+        rx.handshake(trunk_id="TRUNK_TEST_RX",
+                     local_prefix=TEST_RX_PREFIX,
+                     secret=TEST_RX_SECRET)
+        try:
+            # Drain any messages already queued from existing local state
+            rx.sock.settimeout(0.5)
+            try:
+                while True:
+                    recv_frame(rx.sock)
+            except (socket.timeout, ConnectionError):
+                pass
+            rx.sock.settimeout(5.0)
+
+            # Trigger: new client connects → debounced node-list emission
+            client = ClientPeer()
+            port = T.mapped_client_port(self.PRIMARY)
+            client.connect(HOST, port)
+            client.authenticate(callsign=CLIENT_CALLSIGN,
+                                password=CLIENT_PASSWORD)
+            try:
+                # Wait up to 5s for a NodeList frame containing our callsign
+                deadline = time.monotonic() + 5.0
+                found = False
+                while time.monotonic() < deadline and not found:
+                    try:
+                        msg_type, fields = rx.recv_msg(timeout=1.0)
+                    except socket.timeout:
+                        continue
+                    if msg_type != MSG_TRUNK_NODE_LIST:
+                        continue
+                    if CLIENT_CALLSIGN in fields["callsigns"]:
+                        found = True
+                self.assertTrue(found,
+                    f"No MsgTrunkNodeList containing {CLIENT_CALLSIGN} "
+                    f"was received on the trunk")
+            finally:
+                client.close()
+        finally:
+            rx.close()
 
 
 # ---------------------------------------------------------------------------

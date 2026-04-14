@@ -16,7 +16,7 @@ bash run_tests.sh
 This will:
 1. Generate configs and `docker-compose.test.yml` from `topology.py`
 2. Build and start the 3-reflector mesh
-3. Run 17 automated tests
+3. Run 27 automated tests
 4. Enter an interactive prompt to manually test any TG number
 5. Tear down the mesh on exit (or Ctrl-C)
 
@@ -125,6 +125,36 @@ Simulates a V2 SvxLink client. Performs the full TCP authentication handshake (P
 | # | Test | What it verifies |
 |---|------|-----------------|
 | 17 | Bidirectional trunk conversation | Client-A on reflector-a talks on a TG owned by reflector-b, Client-B on reflector-b receives it; Client-B replies, Client-A receives the return audio (peer interest tracking) |
+
+### MQTT Publishing
+
+| # | Test | What it verifies |
+|---|------|-----------------|
+| 18 | MQTT talker event | Talker start/stop on a trunk publishes to `<prefix>/talker/<tg>/(start|stop)` |
+| 26 | `MQTT_NAME` in topic | Reflector with `MQTT_NAME=mqname-c` publishes node-list under `<prefix>/c/mqname-c/nodes/local` |
+
+### Per-Trunk Filters and Mapping (jayReflector additions)
+
+A third test peer `TRUNK_TEST_FILTER` (prefix `7`, secret `test_secret_filter`)
+is configured with `PEER_ID=filter-peer`, `BLACKLIST_TGS=12345`,
+`ALLOW_TGS=7*,1220`, and `TG_MAP=7000:1220` so these tests can verify
+each filter independently of the other trunk fixtures.
+
+| # | Test | What it verifies |
+|---|------|-----------------|
+| 19 | `PEER_ID` in hello | Reflector advertises the configured `PEER_ID` (not the section name) in `MsgTrunkHello` |
+| 20 | `BLACKLIST_TGS` drops TG | TalkerStart on a blacklisted TG is dropped (not in `/status` active talkers) |
+| 21 | `ALLOW_TGS` whitelist | TG matching the whitelist passes; TG outside is dropped |
+| 22 | `TG_MAP` remap | TalkerStart on wire TG `7000` is remapped and tracked as local TG `1220` |
+| 23 | PTY `TRUNK STATUS` | Command is accepted; `TRUNK_TEST_FILTER` is loaded by the reflector |
+| 24 | PTY `TRUNK MUTE` | Audio from a muted callsign is dropped before reaching local clients |
+| 25 | PTY `TRUNK RELOAD` | After live `CFG` update of `BLACKLIST_TGS`, `TRUNK RELOAD` re-reads it and the formerly-allowed TG is now blocked |
+
+### Trunk Node-List Exchange
+
+| # | Test | What it verifies |
+|---|------|-----------------|
+| 27 | `MsgTrunkNodeList` emission | Connecting a V2 client triggers a debounced node-list send to trunk peers; the harness receives a `MsgTrunkNodeList` (type 121) containing the new client |
 
 ## Interactive Mode
 
