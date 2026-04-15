@@ -2,7 +2,7 @@
 
 GeuReflector can optionally use a Redis server as the source of truth for user
 credentials, password groups, cluster TGs, and per-trunk dynamic settings
-(blacklists, allow-lists, TG maps, mute lists). This lets a web dashboard push
+(blacklists, allow-lists, TG maps). This lets a web dashboard push
 config changes to a running reflector without file edits or restarts.
 
 Everything else — ports, certificates, `LOCAL_PREFIX`, trunk peer addresses and
@@ -74,7 +74,6 @@ When `[REDIS]` is present, Redis **fully overrides** the following:
 - `[PASSWORDS]` — password-group → plaintext password
 - `CLUSTER_TGS` in `[GLOBAL]`
 - Per-trunk `BLACKLIST_TGS`, `ALLOW_TGS`, `TG_MAP`
-- Per-trunk mute lists
 
 There is no merging. Entries in `.conf` for these sections are silently ignored.
 The reflector logs a warning for each overridden section at startup:
@@ -104,7 +103,6 @@ set.
 | `trunk:<section>:blacklist` | SET | TG patterns: exact (`666`), prefix (`24*`), range (`100-199`) |
 | `trunk:<section>:allow` | SET | Same syntax as blacklist |
 | `trunk:<section>:tgmap` | HASH | `{ peer_tg: local_tg }` decimal string pairs |
-| `trunk:<section>:mutes` | SET | Callsigns currently muted on this trunk |
 
 `<section>` is the `[TRUNK_x]` section name from `svxreflector.conf` (e.g.
 `TRUNK_1_2`).
@@ -278,26 +276,15 @@ redis-cli PUBLISH config.changed trunk:TRUNK_1_2
 redis-cli SMEMBERS trunk:TRUNK_1_2:blacklist
 redis-cli SMEMBERS trunk:TRUNK_1_2:allow
 redis-cli HGETALL  trunk:TRUNK_1_2:tgmap
-redis-cli SMEMBERS trunk:TRUNK_1_2:mutes
 ```
 
-### Per-trunk mute lists
+### Mute management (not in Redis)
 
-**Mute a callsign on a trunk:**
-```bash
-redis-cli SADD trunk:TRUNK_1_2:mutes ON4ABC
-redis-cli PUBLISH config.changed trunk:TRUNK_1_2
-```
-
-**Unmute:**
-```bash
-redis-cli SREM trunk:TRUNK_1_2:mutes ON4ABC
-redis-cli PUBLISH config.changed trunk:TRUNK_1_2
-```
-
-Note: the PTY command `TRUNK MUTE TRUNK_1_2 ON4ABC` also persists to
-`trunk:TRUNK_1_2:mutes` and publishes `config.changed trunk:TRUNK_1_2`
-automatically. Either channel (dashboard or PTY) keeps the other in sync.
+Mutes are managed via the reflector's command PTY (`/dev/shm/reflector_ctrl`),
+not through Redis. A dashboard issues mute commands by writing directly to
+the PTY (e.g., `TRUNK MUTE TRUNK_1_2 ON4ABC`). Current mute state is exposed
+in the `/status` JSON under each trunk's `muted` array — poll that endpoint
+from the dashboard UI if you need to display current mute state.
 
 ---
 
@@ -375,7 +362,6 @@ the `[USERS]`, `[PASSWORDS]`, and `CLUSTER_TGS` entries from `.conf`.
 | Mid-flight Redis disconnect | Keep running on last-known in-memory config. Async context reconnects with exponential backoff (1 s → 30 s cap). On reconnect: re-subscribe to `config.changed`, trigger an internal `all` reload. |
 | Bad pub/sub payload | Log and continue. The handler never propagates exceptions. |
 | Live-state queue full | Drop oldest entry, increment `dropped_live_writes`, log once per minute. Audio is unaffected. |
-| Sync PTY write fails (e.g. mute persistence) | Report error to the operator via PTY. In-memory state is not changed; the PTY command is rejected. |
 | Dangling group reference (`user.group` → missing `group:*`) | User cannot authenticate. Warning logged at reload time. |
 
 **Mid-flight outage summary:** the reflector continues to serve clients and
@@ -415,10 +401,10 @@ capacity that is too small for the load. The audio path is never affected.
 
 ## Minimal working example
 
-The following transcript sets up one user, mutes them on a trunk, adds a
-cluster TG, and confirms live state. Assumes the reflector is running with
-`[REDIS]` pointing at `127.0.0.1:6379`, no `KEY_PREFIX`, and at least one
-trunk section named `TRUNK_1_2`.
+The following transcript sets up one user, adds a cluster TG, and confirms
+live state. Assumes the reflector is running with `[REDIS]` pointing at
+`127.0.0.1:6379`, no `KEY_PREFIX`, and at least one trunk section named
+`TRUNK_1_2`.
 
 ```bash
 # 1. Create a password group and a user
@@ -430,21 +416,12 @@ redis-cli PUBLISH config.changed users
 # 2. Verify the user can now authenticate
 #    (connect a SvxLink node as ON4ABC with password "s3cur3p@ss" — it should succeed)
 
-# 3. Mute ON4ABC on the trunk link
-redis-cli SADD trunk:TRUNK_1_2:mutes ON4ABC
-redis-cli PUBLISH config.changed trunk:TRUNK_1_2
-# → (integer) 1
-
-# 4. Confirm the mute is stored
-redis-cli SMEMBERS trunk:TRUNK_1_2:mutes
-# 1) "ON4ABC"
-
-# 5. Add a cluster TG
+# 3. Add a cluster TG
 redis-cli SADD cluster:tgs 9990
 redis-cli PUBLISH config.changed cluster
 # → (integer) 1
 
-# 6. Start a transmission on TG 9990 from any connected node, then check
+# 4. Start a transmission on TG 9990 from any connected node, then check
 #    live state (within ~100 ms of TX start):
 redis-cli HGETALL live:talker:9990
 # 1) "callsign"
@@ -454,14 +431,10 @@ redis-cli HGETALL live:talker:9990
 # 5) "source"
 # 6) "local"
 
-# 7. Check /status for Redis metrics
+# 5. Check /status for Redis metrics
 curl -s http://localhost:8080/status | python3 -m json.tool | grep -A4 '"redis"'
 # "redis": {
 #     "live_queue_size": 0,
 #     "dropped_live_writes": 0
 # }
-
-# 8. Unmute and clean up (optional)
-redis-cli SREM trunk:TRUNK_1_2:mutes ON4ABC
-redis-cli PUBLISH config.changed trunk:TRUNK_1_2
 ```
