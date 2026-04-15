@@ -81,6 +81,8 @@ class RedisStore : public sigc::trackable
     uint64_t droppedLiveWrites(void) const { return m_dropped_live_writes; }
     size_t   liveQueueSize(void) const;
 
+    void onAsyncDisconnect(int status);
+
   private:
     Config              m_cfg;
     redisContext*       m_sync = nullptr;
@@ -97,7 +99,6 @@ class RedisStore : public sigc::trackable
     bool connectAsync(void);
     void subscribe(void);
     void scheduleReconnect(void);
-    void onAsyncDisconnect(int status);
     void onPubSubMessage(const std::string& channel, const std::string& payload);
     void drainLiveQueue(Async::Timer*);
     void refreshLiveExpire(Async::Timer*);

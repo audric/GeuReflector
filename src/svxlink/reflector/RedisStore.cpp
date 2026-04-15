@@ -1,6 +1,28 @@
 #include "RedisStore.h"
 #include <hiredis/hiredis.h>
+#include <hiredis/async.h>
+#include "RedisAsyncAdapter.h"
 #include <iostream>
+
+namespace {
+
+void onPubSubMessageThunk(redisAsyncContext* /*ac*/, void* reply, void* priv) {
+  auto* self = static_cast<RedisStore*>(priv);
+  auto* r = static_cast<redisReply*>(reply);
+  if (!r || r->type != REDIS_REPLY_ARRAY || r->elements < 3) return;
+  if (r->element[0]->type == REDIS_REPLY_STRING &&
+      std::string(r->element[0]->str, r->element[0]->len) == "message") {
+    std::string payload(r->element[2]->str, r->element[2]->len);
+    self->configChanged.emit(payload);
+  }
+}
+
+void onAsyncDisconnectThunk(const redisAsyncContext* ac, int status) {
+  auto* self = static_cast<RedisStore*>(ac->data);
+  if (self) self->onAsyncDisconnect(status);
+}
+
+} // namespace
 
 RedisStore::RedisStore(const Config& cfg) : m_cfg(cfg) {}
 RedisStore::~RedisStore() {
@@ -45,11 +67,10 @@ bool RedisStore::connectSync(void) {
 
 bool RedisStore::connect(void) {
   if (!connectSync()) return false;
-  std::cout << "RedisStore: connected (sync) to "
-            << (m_cfg.unix_socket.empty()
-                ? (m_cfg.host + ":" + std::to_string(m_cfg.port))
-                : m_cfg.unix_socket)
-            << std::endl;
+  if (!connectAsync()) return false;
+  subscribe();
+  std::cout << "RedisStore: connected sync+async, subscribed to "
+            << channelName() << std::endl;
   return true;
 }
 
@@ -197,8 +218,40 @@ void RedisStore::pushLiveTrunk(const std::string&, const std::string&,
 
 size_t RedisStore::liveQueueSize(void) const { return 0; }
 
-bool RedisStore::connectAsync(void) { return false; }
-void RedisStore::subscribe(void) {}
+bool RedisStore::connectAsync(void) {
+  if (!m_cfg.unix_socket.empty()) {
+    m_async = redisAsyncConnectUnix(m_cfg.unix_socket.c_str());
+  } else {
+    m_async = redisAsyncConnect(m_cfg.host.c_str(), m_cfg.port);
+  }
+  if (!m_async || m_async->err) {
+    std::cerr << "*** ERROR: Redis async connect failed: "
+              << (m_async ? m_async->errstr : "alloc failed") << std::endl;
+    if (m_async) { redisAsyncFree(m_async); m_async = nullptr; }
+    return false;
+  }
+  m_async->data = this;
+  if (!RedisAsyncAdapter::attach(m_async)) {
+    redisAsyncFree(m_async); m_async = nullptr;
+    return false;
+  }
+  redisAsyncSetDisconnectCallback(m_async, onAsyncDisconnectThunk);
+
+  if (!m_cfg.password.empty()) {
+    redisAsyncCommand(m_async, nullptr, nullptr, "AUTH %s", m_cfg.password.c_str());
+  }
+  if (m_cfg.db != 0) {
+    redisAsyncCommand(m_async, nullptr, nullptr, "SELECT %d", m_cfg.db);
+  }
+  return true;
+}
+
+void RedisStore::subscribe(void) {
+  if (!m_async) return;
+  std::string ch = channelName();
+  redisAsyncCommand(m_async, onPubSubMessageThunk, this,
+                    "SUBSCRIBE %s", ch.c_str());
+}
 void RedisStore::scheduleReconnect(void) {}
 void RedisStore::onAsyncDisconnect(int) {}
 void RedisStore::onPubSubMessage(const std::string&, const std::string&) {}
