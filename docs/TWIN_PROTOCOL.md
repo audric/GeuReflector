@@ -1,6 +1,6 @@
-# GeuReflector — Twin (HA-Pair) Protocol — DESIGN DRAFT
+# GeuReflector — Twin (HA-Pair) Protocol
 
-> **Status:** Implemented in v1.3.x+twin1. See §Implementation Sketch for
+> **Status:** Implemented in v1.3.x+twin1. See §Implementation for
 > what shipped and `tests/test_twin.py` for integration test coverage
 > (8 tests including an end-to-end V2-client audio-mirror path).
 
@@ -186,7 +186,7 @@ PAIRED=1
 The external peer opens TCP connections to **both** hosts and maintains
 them in parallel. This requires extending `TrunkLink` to manage a list
 of TCP endpoints instead of a single outbound + inbound pair (see
-§Implementation Sketch).
+§Implementation).
 
 ### Sticky per-frame routing
 
@@ -313,43 +313,41 @@ port so inbound validation logic stays cleanly separated.
 
 ---
 
-## Implementation Sketch (non-binding)
+## Implementation
 
-- New `TwinLink.cpp` / `TwinLink.h`, structurally similar to
-  `TrunkLink` but:
-  - no prefix filtering (`isSharedTG`/`isOwnedTG` replaced by
-    unconditional accept for the paired node),
-  - 2s TX / 5s RX heartbeat cadence (vs trunk's 10s/15s),
-  - `priority` field is used only for the simultaneous-PTT tiebreak
-    (no role election),
-  - mirrors all `TGHandler` mutations to the partner, including
-    external trunk-talker state via `MsgTwinExtTalkerStart/Stop`.
-- New twin TCP server in `Reflector`, analogous to the trunk server
-  but listening on `TWIN_LISTEN_PORT` (default 5304).
-- `TrunkLink` extension for `PAIRED=1`:
-  - Parse `HOST=h1,h2,...` into a list of endpoints.
-  - Open outbound to every endpoint in parallel (reuse
-    `TcpPrioClient` per endpoint or similar).
-  - Relax the "one inbound per section" rule to `len(HOSTS)` inbounds.
-  - Sticky selection state: track the "current sticky send socket"
-    and an ordered list of alternates; switch on TCP-level failure of
-    the current socket.
-- `TGHandler` gets a new `setTrunkTalkerForTGViaPeer(tg, callsign,
-  peer_id)` entry point so the twin link can attribute external state
-  to a specific external peer on mirror (required so disconnect
-  cleanup of one external peer doesn't clear state owned by another).
-- `MsgTwinExtTalkerStart` / `MsgTwinExtTalkerStop` added to
-  `ReflectorMsg.h` (types 123, 124).
-- Config template (`svxreflector.conf.in`) gets commented-out `[TWIN]`
-  and `PAIRED=1` examples.
-- Integration test: 4-node topology in `tests/topology.py` —
-  refA (IT, prefix 222), ref1+ref2 (DE twin pair, prefix 262), and
-  one more external reflector — exercising:
-  - normal 2-way audio through one sticky socket,
-  - socket failover mid-transmission,
-  - twin-link outage with independent continued operation,
-  - external-talker state propagation blocking local-client PTT on
-    the partner twin.
+Where the pieces live in the source tree:
+
+- **`src/svxlink/reflector/TwinLink.cpp` / `.h`** — the twin link itself.
+  Structurally similar to `TrunkLink` but with no prefix filtering
+  (accept everything from the paired node), 2s TX / 5s RX heartbeat,
+  and the `priority` nonce used only for the simultaneous-PTT
+  tiebreak. Mirrors all `TGHandler` mutations to the partner,
+  including external trunk-talker state via
+  `MsgTwinExtTalkerStart/Stop`.
+- **`Reflector`** runs a twin TCP server on `TWIN_LISTEN_PORT`
+  (default 5304), analogous to the existing trunk server. Inbound
+  hellos are validated (role, HMAC, `local_prefix`) before handoff
+  to `TwinLink::acceptInboundConnection`.
+- **`TrunkLink`** is extended for `PAIRED=1` on a normal `[TRUNK_x]`
+  section: `HOST=h1,h2,...` parses into a list of endpoints; one
+  `TcpPrioClient` is opened per endpoint; the "one inbound per
+  section" rule is relaxed to `len(HOSTS)` inbounds; sending uses
+  sticky selection (one socket per transmission, instant failover
+  to the next live one on TCP-level failure).
+- **`TGHandler`** gains `setTrunkTalkerForTGViaPeer(tg, callsign,
+  peer_id)`, `clearTrunkTalkersForPeer(peer_id)` and
+  `peerIdForTG(tg)` so external trunk-talker state mirrored across
+  the twin link can be cleaned up per-peer on disconnect without
+  clobbering other peers' claims.
+- **`ReflectorMsg.h`** adds types 123 / 124 (`MsgTwinExtTalkerStart`
+  / `Stop`) and a new `ROLE_TWIN = 2` value on `MsgTrunkHello`.
+- **`svxreflector.conf.in`** includes commented-out `[TWIN]` and
+  `PAIRED=1` examples.
+- **`tests/test_twin.py`** covers handshake, PAIRED trunk wiring,
+  no-auth-error startup, kill/restart recovery, PAIRED failover, and
+  an end-to-end audio-mirror test that uses two V2 clients (one
+  talking on ref1, one listening on ref2) to exercise the full
+  UDP→TGHandler→TwinLink→UDP path.
 
 ---
 
@@ -379,10 +377,13 @@ Artifacts that can occur while the twin link is down:
   refA's sticky choice and the `handleMsgTrunkAudio` talker check.
 
 These artifacts are bounded to the duration of the twin-link outage
-and heal automatically on reconnection: the re-established twin link
-resynchronizes `TGHandler` state via a full state dump on handshake
-(handshake-time state reconciliation is a small protocol addition
-for the implementation — see §Implementation Sketch).
+and heal automatically on reconnection: once the twin link is back,
+subsequent talker-starts, audio frames and external-trunk events
+propagate over it as normal, so state converges as soon as there is
+new activity on each affected TG. There is no bulk state-dump on
+reconnect — in-progress transmissions at the moment of disconnect
+may be truncated on the receiving twin, but nothing is left in a
+permanently inconsistent state.
 
 We explicitly accept this behavior rather than adding a quorum witness
 or a degraded-mode lockdown: the twin link is expected to be LAN-close
@@ -391,10 +392,9 @@ losing service during the outage.
 
 ---
 
-## Resolved Decisions
+## Design Rationale
 
-All open design questions from the original draft were resolved on
-2026-04-15. Summary for reference:
+Summary of the key design choices and why they were made:
 
 | Topic | Decision | Rationale |
 |-------|----------|-----------|
