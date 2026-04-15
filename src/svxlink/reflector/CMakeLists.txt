@@ -24,6 +24,11 @@ pkg_check_modules(MOSQUITTO REQUIRED libmosquitto)
 include_directories(${MOSQUITTO_INCLUDE_DIRS})
 set(LIBS ${LIBS} ${MOSQUITTO_LIBRARIES})
 
+# Find hiredis library (Redis C client)
+pkg_check_modules(HIREDIS REQUIRED hiredis)
+include_directories(${HIREDIS_INCLUDE_DIRS})
+set(LIBS ${LIBS} ${HIREDIS_LIBRARIES})
+
 # Add project libraries
 set(LIBS asynccpp asyncaudio asynccore svxmisc ${LIBS})
 
