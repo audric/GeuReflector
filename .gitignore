@@ -32,6 +32,9 @@ tests/__pycache__/
 tests/configs-redis/
 tests/docker-compose.redis.yml
 
+# Superpowers workflow artifacts (local only — not for publication)
+docs/superpowers/
+
 # Editor and IDE
 .vscode/
 .idea/
