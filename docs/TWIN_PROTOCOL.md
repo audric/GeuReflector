@@ -1,8 +1,8 @@
 # GeuReflector — Twin (HA-Pair) Protocol — DESIGN DRAFT
 
-> **Status:** design draft, not yet implemented. Open questions are flagged
-> in the final section. Reviewed by the Italian and German reflector sysops
-> before any code is written.
+> **Status:** design draft, not yet implemented. All open design questions
+> resolved on 2026-04-15 — see §Resolved Decisions at the end.
+> Implementation pending sysop review of this revision.
 
 ## Motivation
 
@@ -48,19 +48,24 @@ connect to either physical node.
 
 - Both twins declare **identical** `LOCAL_PREFIX` (e.g. `262`). This is
   now legitimate, not a hack.
-- The twin link (`[TWIN]` section) mirrors local-client activity between
-  the two nodes: talker-start/stop, audio frames, TG membership, and
-  whatever subset of `MsgTrunkNodeList` / `MsgTrunkFilter` state is
-  useful. This is semantically closer to `SatelliteLink` than to
-  `TrunkLink`, but symmetric.
-- Only **one twin at a time** initiates and serves the pair's external
-  trunks (the *primary*). The other (the *standby*) keeps its
-  `TrunkLink` instances dormant. On primary failure the standby
-  promotes. See §External-Trunk Ownership below.
+- The twin link (`[TWIN]` section) mirrors the full `TGHandler` state
+  between the two nodes — both local-client talker state *and*
+  externally-received trunk-talker state — plus node-roster and
+  audio frames. Semantically closer to `SatelliteLink` than to
+  `TrunkLink`, but symmetric and carries more state.
+- **Both twins hold external trunks simultaneously** (active/active).
+  External peers (e.g. refA) see the pair as **one logical trunk with
+  two TCP endpoints** and send each frame to one endpoint at a time
+  (sticky selection), failing over to the other endpoint on socket
+  failure. This gives zero-holdoff failover at the cost of external
+  peers needing to understand "paired hosts" in their trunk config.
 - Cross-twin talker arbitration reuses the existing priority-nonce
   tie-break: the same 32-bit `priority` field from `MsgTrunkHello`
   decides who wins when both twins' clients PTT the same TG at the same
   instant.
+- During a twin-link outage both twins keep operating fully and
+  independently. Duplicate-talker artifacts are tolerated for the
+  duration of the outage (see §Split-Brain Behavior).
 
 ---
 
@@ -72,8 +77,9 @@ connect to either physical node.
 | Prefix ownership               | Distinct per node           | N/A                              | **Identical** on both nodes       |
 | TG filtering                   | `isSharedTG` / `isOwnedTG`  | None (all TGs forwarded)         | None (full mirror within the pair) |
 | Number of peers per section    | 1                           | Many satellites per parent       | **Exactly 1** (strictly pairwise) |
-| External trunk ownership       | Each node holds its own     | Parent-only                      | Primary holds; standby dormant    |
+| External trunk ownership       | Each node holds its own     | Parent-only                      | **Both hold; external peer picks one socket per frame** |
 | Cross-node client arbitration  | Priority-nonce (inter-site) | Parent dictates                  | **Priority-nonce (intra-pair)**   |
+| Heartbeat cadence              | 10s TX / 15s RX             | 10s TX / 15s RX                  | **2s TX / 5s RX** (LAN-close)     |
 
 Key observation: a twin link is full-mirror (like a satellite) but
 symmetric (like a trunk) and strictly 1:1 (unlike either).
@@ -115,21 +121,26 @@ Mismatch on any of the three → reject with a clear log line.
 The twin link carries a superset of what the trunk carries, with no TG
 filtering:
 
-| Type | Name                  | Purpose on twin link                              |
-|------|-----------------------|---------------------------------------------------|
-| 115  | `MsgTrunkHello`       | Handshake (role=ROLE_TWIN)                        |
-| 116  | `MsgTrunkTalkerStart` | Mirror local talker start to the twin             |
-| 117  | `MsgTrunkTalkerStop`  | Mirror local talker stop                          |
-| 118  | `MsgTrunkAudio`       | Mirror local client audio                         |
-| 119  | `MsgTrunkFlush`       | Mirror end-of-stream                              |
-| 120  | `MsgTrunkHeartbeat`   | Keepalive (10s TX / 15s RX timeout, as today)     |
-| 121  | `MsgTrunkNodeList`    | Mirror node roster so `/status` is consistent     |
-| 122  | `MsgTrunkFilter`      | **Not used on twin links** — twins mirror every TG unconditionally, so there is no interest advertisement to send. Reserved for satellite use only. |
-| 123  | `MsgTwinRoleClaim`    | **NEW** — primary/standby election for external trunks |
-| 124  | `MsgTwinRoleState`    | **NEW** — current role announcement (primary / standby) |
+| Type | Name                       | Purpose on twin link                              |
+|------|----------------------------|---------------------------------------------------|
+| 115  | `MsgTrunkHello`            | Handshake (role=ROLE_TWIN)                        |
+| 116  | `MsgTrunkTalkerStart`      | Mirror local-client talker start                  |
+| 117  | `MsgTrunkTalkerStop`       | Mirror local-client talker stop                   |
+| 118  | `MsgTrunkAudio`            | Mirror local-client audio                         |
+| 119  | `MsgTrunkFlush`            | Mirror end-of-stream                              |
+| 120  | `MsgTrunkHeartbeat`        | Keepalive (**2s TX / 5s RX** on twin links)       |
+| 121  | `MsgTrunkNodeList`         | Mirror node roster so `/status` is consistent on both twins |
+| 122  | `MsgTrunkFilter`           | **Not used on twin links** — twins mirror every TG unconditionally. Reserved for satellite use. |
+| 123  | `MsgTwinExtTalkerStart`    | **NEW** — "my external trunk peer `<peer_id>` has claimed TG X with callsign Y"; receiver updates its `TGHandler` trunk-talker map so local clients on the partner twin cannot key up that TG |
+| 124  | `MsgTwinExtTalkerStop`     | **NEW** — clears the corresponding external-talker state |
 
-Reserved types 123–124 follow the jayReflector-added 121–122 without
-collision.
+No role-election messages are needed: both twins are always active, so
+there is no primary/standby state to negotiate.
+
+`MsgTwinExtTalkerStart` / `MsgTwinExtTalkerStop` carry `uint32 tg`,
+`string peer_id` (the originating external trunk section name) and, for
+`Start`, `string callsign`. This lets each twin attribute external state
+to the correct external peer on reconnect/cleanup.
 
 ### Cross-twin talker arbitration
 
@@ -151,63 +162,81 @@ trunks are only held by the primary; see below).
 
 ---
 
-## External-Trunk Ownership (Primary / Standby)
+## External-Trunk Ownership (Active/Active)
 
-**Recommendation for v1: active/standby.** Rationale: it sidesteps
-deduplication on the external peer and keeps the existing `TrunkLink`
-state machine unmodified.
+Both twins start their configured `[TRUNK_x]` sections at boot and keep
+them running continuously. There is no election, no role, no failover
+holdoff.
 
-### Election
+### External peer view
 
-At twin-link establishment, both sides exchange `MsgTwinRoleClaim`
-carrying their `priority` nonce. Lower nonce becomes primary. The
-winner announces `MsgTwinRoleState(role=PRIMARY)`, the loser responds
-with `MsgTwinRoleState(role=STANDBY)`.
+An external peer (e.g. refA) that wants to trunk with a twin pair
+declares a **single** `[TRUNK_x]` section with **multiple candidate
+hosts** — one per twin — and a `PAIRED=1` flag:
 
-- Primary: starts its configured `[TRUNK_x]` sections normally.
-- Standby: loads `[TRUNK_x]` config but does **not** start the
-  `TrunkLink` outbound connectors and rejects any inbound trunk
-  connections (reply with a log-friendly close).
+```ini
+[TRUNK_IT_DE]
+HOST=ref1.example.de,ref2.example.de
+PORT=5302
+SECRET=shared_trunk_secret
+REMOTE_PREFIX=262
+PAIRED=1
+```
 
-### Failover
+The external peer opens TCP connections to **both** hosts and maintains
+them in parallel. This requires extending `TrunkLink` to manage a list
+of TCP endpoints instead of a single outbound + inbound pair (see
+§Implementation Sketch).
 
-If the twin link dies (heartbeat RX timeout), the standby must decide:
+### Sticky per-frame routing
 
-- If an external trunk heartbeat is still healthy from the standby's
-  side → do nothing; the standby stays standby and the primary keeps
-  serving. (This is the split-brain safe case: standby sees the primary
-  is still alive via an external path.)
-- If the standby has **no evidence** the primary is still alive → wait
-  `TWIN_FAILOVER_HOLDOFF` (default 5s), then promote: start its
-  `TrunkLink` instances.
+The external peer picks **one socket at a time** for a given transmission
+and uses it for all frames of that transmission. The choice is sticky:
+whichever socket is currently healthy keeps being used until it fails.
+On failure, the peer immediately retries the next frame on the other
+socket. There is no holdoff and no in-flight audio is lost beyond the
+single TCP send buffer.
 
-On twin-link reconnect, the two nodes compare `priority` nonces again.
-If the original primary is lower, the promoted standby demotes
-gracefully (closes its external trunks once the primary confirms via
-`MsgTwinRoleState(PRIMARY)`).
+Inbound (audio from Germans to Italy): each twin independently forwards
+its own local clients' audio to refA over its own socket. Twin-mirrored
+audio is **not** re-forwarded externally (the originating twin already
+sent it directly). Which twin a given transmission arrives on depends
+only on which twin the local client is physically connected to.
 
-### Split-brain policy
+### Cross-twin external-talker state propagation
 
-If the twin link dies but both nodes believe they should be primary,
-the external peer may briefly see two trunks claiming the same section
-name + secret. Mitigations:
+When a twin receives `MsgTrunkTalkerStart(tg=262xx, callsign=IW0ABC)`
+from refA on its sticky socket, it:
 
-1. The external peer's existing "only one inbound per section" rule
-   (`TrunkLink::onInboundConnected`) will reject the second.
-2. Both twins are configured with the same external secret and section
-   name — whichever gets the outbound connection first holds it.
-3. On twin-link recovery, the higher-priority nonce's owner wins and
-   tears down its external trunks.
+1. Updates its own `TGHandler` trunk-talker state as usual.
+2. Emits `MsgTwinExtTalkerStart(tg=262xx, peer_id="TRUNK_IT_DE",
+   callsign="IW0ABC")` over the twin link.
 
-This is not perfect but it is bounded and self-healing. A stricter
-alternative (quorum with a third arbiter) is listed under open
-questions.
+The partner twin, on receipt, updates its own `TGHandler` trunk-talker
+state identically — so local clients on the partner twin are blocked
+from keying up 262xx, just as they would be if they were on the
+receiving twin. Loop suppression: a twin does not re-mirror external
+state it learned *via* the twin link.
+
+### refA-side socket selection policy
+
+Initial socket choice: whichever TCP connection succeeds first.
+Subsequent failures cause the peer to switch atomically on the next
+outbound frame. When a previously-failed socket recovers, it joins the
+pool as an alternate but does not preempt the current sticky choice
+until the next failure — avoiding flap.
 
 ---
 
 ## Configuration
 
-### On ref1 (German reflector A)
+### On ref1 and ref2 (the German twin pair)
+
+Both twins carry the identical `LOCAL_PREFIX`, a `[TWIN]` section
+pointing at the partner, and their own copy of each external trunk
+section.
+
+**ref1:**
 
 ```ini
 [GLOBAL]
@@ -215,11 +244,9 @@ LOCAL_PREFIX=262
 
 [TWIN]
 HOST=ref2.example.de
-PORT=5304                          # new default port for twin, TBD
+PORT=5304
 SECRET=shared_twin_secret
 
-# External trunks are declared as usual; they are only
-# activated on whichever twin wins primary election.
 [TRUNK_IT_DE]
 HOST=refa.example.it
 PORT=5302
@@ -227,7 +254,7 @@ SECRET=shared_trunk_secret
 REMOTE_PREFIX=222
 ```
 
-### On ref2 (German reflector B)
+**ref2:**
 
 ```ini
 [GLOBAL]
@@ -245,24 +272,39 @@ SECRET=shared_trunk_secret
 REMOTE_PREFIX=222
 ```
 
-### On refA (Italian reflector, unchanged)
+Both twins connect to refA with the same section name and secret. refA
+accepts both inbound connections as two endpoints of one paired trunk
+(see §External-Trunk Ownership).
+
+### On refA (Italian reflector)
+
+refA declares the pair as a single trunk section with multiple candidate
+hosts and `PAIRED=1`:
 
 ```ini
 [GLOBAL]
 LOCAL_PREFIX=222
 
 [TRUNK_IT_DE]
-HOST=de-anycast.example.de         # DNS round-robin or VIP pointing to
-                                   # whichever German twin is primary
+HOST=ref1.example.de,ref2.example.de
 PORT=5302
 SECRET=shared_trunk_secret
 REMOTE_PREFIX=262
+PAIRED=1
 ```
 
-Alternatively refA can list both hosts if we add a simple "try each
-host in order" option to `TcpPrioClient` (probably already supported
-via its existing priority-ordered host list — to be checked during
-implementation).
+With `PAIRED=1`, refA's `TrunkLink`:
+
+- Opens outbound TCP connections to **every** host in the list.
+- Accepts inbound TCP connections from **every** host, matching them to
+  this section by the usual handshake. The existing "one inbound per
+  section" rule is relaxed when `PAIRED=1`: up to `len(HOST)` inbounds
+  are accepted.
+- Picks one active socket for the sticky per-frame outbound selection;
+  the others are live alternates.
+
+Without `PAIRED=1` the legacy semantics (single host, outbound+inbound)
+are preserved — existing deployments are unaffected.
 
 ### New port
 
@@ -277,88 +319,109 @@ port so inbound validation logic stays cleanly separated.
   `TrunkLink` but:
   - no prefix filtering (`isSharedTG`/`isOwnedTG` replaced by
     unconditional accept for the paired node),
-  - `priority` drives primary/standby election, not per-TG arbitration
-    (except for the simultaneous-PTT tiebreak, which stays),
-  - owns a small state machine: `INIT → ELECTING → PRIMARY | STANDBY`
-    with failover transitions.
+  - 2s TX / 5s RX heartbeat cadence (vs trunk's 10s/15s),
+  - `priority` field is used only for the simultaneous-PTT tiebreak
+    (no role election),
+  - mirrors all `TGHandler` mutations to the partner, including
+    external trunk-talker state via `MsgTwinExtTalkerStart/Stop`.
 - New twin TCP server in `Reflector`, analogous to the trunk server
-  but listening on `TWIN_LISTEN_PORT`.
-- `Reflector` gains a notion of `m_twin_role` that gates
-  `initTrunkLinks()`: primary starts trunks, standby does not.
-- `TGHandler` gets one small addition: a method to let a twin yield a
-  local talker to its pair partner without also firing
-  `MsgTrunkTalkerStop` to the external trunks (since external trunks
-  are held by the primary only, this may be a no-op — confirm during
-  coding).
-- `MsgTwinRoleClaim` / `MsgTwinRoleState` added to `ReflectorMsg.h`
-  (types 123, 124).
-- Config template (`svxreflector.conf.in`) gets a commented-out
-  `[TWIN]` example.
-- Integration test: add a 4-node topology to `tests/topology.py`
-  — refA (IT, prefix 222), ref1+ref2 (DE twin pair, prefix 262), plus
-  a third external reflector — to exercise failover and split-brain.
+  but listening on `TWIN_LISTEN_PORT` (default 5304).
+- `TrunkLink` extension for `PAIRED=1`:
+  - Parse `HOST=h1,h2,...` into a list of endpoints.
+  - Open outbound to every endpoint in parallel (reuse
+    `TcpPrioClient` per endpoint or similar).
+  - Relax the "one inbound per section" rule to `len(HOSTS)` inbounds.
+  - Sticky selection state: track the "current sticky send socket"
+    and an ordered list of alternates; switch on TCP-level failure of
+    the current socket.
+- `TGHandler` gets a new `setTrunkTalkerForTGViaPeer(tg, callsign,
+  peer_id)` entry point so the twin link can attribute external state
+  to a specific external peer on mirror (required so disconnect
+  cleanup of one external peer doesn't clear state owned by another).
+- `MsgTwinExtTalkerStart` / `MsgTwinExtTalkerStop` added to
+  `ReflectorMsg.h` (types 123, 124).
+- Config template (`svxreflector.conf.in`) gets commented-out `[TWIN]`
+  and `PAIRED=1` examples.
+- Integration test: 4-node topology in `tests/topology.py` —
+  refA (IT, prefix 222), ref1+ref2 (DE twin pair, prefix 262), and
+  one more external reflector — exercising:
+  - normal 2-way audio through one sticky socket,
+  - socket failover mid-transmission,
+  - twin-link outage with independent continued operation,
+  - external-talker state propagation blocking local-client PTT on
+    the partner twin.
 
 ---
 
-## Open Design Questions
+## Split-Brain Behavior
 
-These need explicit decisions before coding starts.
+During a twin-link outage both twins continue operating fully and
+independently. No side stops serving clients or tears down external
+trunks. The external peer (refA) still has both TCP sockets open and
+keeps sending on its sticky choice.
 
-1. **Active/standby vs active/active for external trunks.**
-   Active/standby is simpler and recommended for v1. Active/active
-   would need a `twin_group_id` field in `MsgTrunkHello` so refA
-   knows "these two trunks are one logical peer — dedupe audio by
-   sequence number / TG+timestamp". Worth it for faster failover
-   (no 5s holdoff) but significantly more code and a protocol
-   extension visible to unrelated reflectors. **Proposal:** defer to v2.
+Artifacts that can occur while the twin link is down:
 
-2. **Split-brain quorum.** Should we support an optional third-party
-   witness (e.g. a simple `[TWIN_WITNESS]` endpoint the pair pings to
-   break ties) for operators who cannot tolerate even brief dual-primary?
-   **Proposal:** ship v1 without it, add later if anyone reports pain.
+- A German client on ref1 and a different German client on ref2 can
+  both PTT TG 262xx at the same time. Each twin is unaware of the
+  other's talker and both forward `MsgTrunkTalkerStart` to refA over
+  their own external sockets. refA will receive conflicting
+  talker-starts on its two endpoints for the same logical trunk.
+  Resolution: refA's sticky routing means it accepts whichever it
+  sees first and the other twin's forwarded audio lands on the
+  non-sticky socket; the non-sticky-side audio is dropped by refA's
+  "audio only from the peer that claimed the TG" check (same rule
+  already used inside `handleMsgTrunkAudio` today).
+- External-talker state set on one twin is not mirrored to the other,
+  so the partner twin may accept a local-client PTT that would
+  otherwise have been blocked. The resulting audio flows to refA and
+  may compete with the existing conversation. Outcome depends on
+  refA's sticky choice and the `handleMsgTrunkAudio` talker check.
 
-3. **Client UDP audio: TCP-relayed or UDP multicast?** The trunk
-   already relays audio over TCP (see TRUNK_PROTOCOL.md line 347).
-   Twins are typically in the same datacenter / LAN and could use
-   multicast, but that's a deployment assumption we shouldn't bake in.
-   **Proposal:** TCP-relay, same as trunk. Revisit if LAN-deployed
-   twins report CPU pressure.
+These artifacts are bounded to the duration of the twin-link outage
+and heal automatically on reconnection: the re-established twin link
+resynchronizes `TGHandler` state via a full state dump on handshake
+(handshake-time state reconciliation is a small protocol addition
+for the implementation — see §Implementation Sketch).
 
-4. **What about cross-twin `MsgTrunkNodeList` replication?**
-   Do clients on ref1 need to see ref2's node roster in
-   `MsgNodeList`, or should each twin advertise only its own clients
-   externally? **Proposal:** mirror the roster internally so `/status`
-   is identical on both twins, but have only the primary advertise
-   the union to external trunks. Needs confirmation that
-   `MsgTrunkNodeList` debouncing won't thrash during failover.
+We explicitly accept this behavior rather than adding a quorum witness
+or a degraded-mode lockdown: the twin link is expected to be LAN-close
+and highly reliable, and brief split-brain events are preferable to
+losing service during the outage.
 
-5. **Failover holdoff value.** 5s is conservative. Too short risks
-   flapping on brief network hiccups; too long means up to 5s of
-   silence on external TGs during a real failure. **Proposal:** 5s
-   default, configurable via `TWIN_FAILOVER_HOLDOFF` in the `[TWIN]`
-   section.
+---
 
-6. **Interaction with Redis-backed config store.** The current repo
-   has a Redis config-store branch merged. Twin role (primary/standby)
-   is runtime state, not config, so it should live in-process. But
-   shared config (trunk secrets, prefix) already flows through Redis
-   — twins reading the same Redis key get consistent config for free.
-   **Proposal:** no Redis changes needed beyond what already works.
+## Resolved Decisions
 
-7. **Naming.** "Twin" vs "pair" vs "mirror" vs "HA link". `[TWIN]`
-   is short, clear in the config, and unambiguous when paired with
-   the existing `[TRUNK_x]` / `[SATELLITE]` section naming.
-   **Proposal:** keep `[TWIN]`.
+All open design questions from the original draft were resolved on
+2026-04-15. Summary for reference:
+
+| Topic | Decision | Rationale |
+|-------|----------|-----------|
+| External-trunk ownership | **Active/active**, sticky per-frame socket selection | Zero-holdoff failover without requiring a primary/standby state machine |
+| External-peer config shape | **Single `[TRUNK_x]` section with multiple hosts** + `PAIRED=1` | The pair really is one logical peer from refA's view; cleanest config |
+| Twin-link outage behavior | **Both twins keep operating fully** | Brief split-brain tolerated; simpler than degraded-mode logic |
+| External-talker state sync | **Full `TGHandler` state mirrored** via `MsgTwinExtTalkerStart/Stop` | Unified view on both twins so local PTT is blocked when external peer holds a TG |
+| Audio transport twin↔twin | **TCP relay**, same framing as trunk | Works anywhere, no new cipher/auth story, bandwidth fine for 1:1 |
+| Heartbeat cadence on twin link | **2s TX / 5s RX** | Twins LAN-close, fast `/status` convergence |
+| `MsgTrunkNodeList` | Each twin advertises **only its own local clients** externally; twin link mirrors the roster internally for consistent `/status` on both twins | Connection identity on the external peer provides origin; no additive schema change to `MsgTrunkNodeList` needed |
+| Redis config store | **No changes** | Role is runtime state, not config; shared config already syncs via Redis |
+| Naming | **`[TWIN]`** | Short, clear, orthogonal to `[TRUNK_x]` / `[SATELLITE]` |
+
+### Deferred to v2 / future
+
+- Third-party witness for quorum (no operator has asked for it yet).
+- UDP multicast for audio between same-LAN twins (only revisit if TCP
+  relay is measured to be a CPU bottleneck).
+- More than two nodes per twin group (would need a different
+  algorithm — Raft-lite or similar — and is explicitly out of scope).
 
 ---
 
 ## Not in Scope
 
-- More than two nodes per twin group. The primary/standby election is
-  pairwise; generalizing to N-way would require a different algorithm
-  (Raft-lite or similar) and is explicitly not supported.
 - Geographic distribution with asymmetric latency. Twins are expected
-  to be in the same datacenter or with a low-latency link (<50ms).
+  to be in the same datacenter or on a low-latency link (<50ms).
   Longer links should use regular trunk instead.
 - Client-facing failover protocol changes. SvxLink clients already
   handle `HOSTS=ref1,ref2` with reconnect-on-failure; the twin protocol
