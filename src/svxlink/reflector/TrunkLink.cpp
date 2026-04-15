@@ -60,6 +60,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "Reflector.h"
 #include "TGHandler.h"
 #include "ReflectorClient.h"
+#include "RedisStore.h"
 #include <json/json.h>
 
 
@@ -1098,35 +1099,58 @@ void TrunkLink::reloadConfig(void)
   m_tg_map_in.clear();
   m_tg_map_out.clear();
 
+  RedisStore* rs = m_reflector->redisStore();
+
   std::string blacklist_str;
-  if (m_cfg.getValue(m_section, "BLACKLIST_TGS", blacklist_str)
-      && !blacklist_str.empty())
+  if (rs) {
+    blacklist_str = rs->loadTrunkFilter(m_section, "blacklist");
+  } else {
+    m_cfg.getValue(m_section, "BLACKLIST_TGS", blacklist_str);
+  }
+  if (!blacklist_str.empty())
   {
     m_blacklist_filter = TgFilter::parse(blacklist_str);
   }
 
   std::string allow_str;
-  if (m_cfg.getValue(m_section, "ALLOW_TGS", allow_str) && !allow_str.empty())
+  if (rs) {
+    allow_str = rs->loadTrunkFilter(m_section, "allow");
+  } else {
+    m_cfg.getValue(m_section, "ALLOW_TGS", allow_str);
+  }
+  if (!allow_str.empty())
   {
     m_allow_filter = TgFilter::parse(allow_str);
   }
 
-  std::string tgmap_str;
-  if (m_cfg.getValue(m_section, "TG_MAP", tgmap_str) && !tgmap_str.empty())
-  {
-    std::istringstream ms(tgmap_str);
-    std::string pair;
-    while (std::getline(ms, pair, ','))
-    {
-      auto colon = pair.find(':');
-      if (colon == std::string::npos) continue;
-      try {
-        uint32_t peer_tg  = std::stoul(pair.substr(0, colon));
-        uint32_t local_tg = std::stoul(pair.substr(colon + 1));
-        m_tg_map_in[peer_tg]   = local_tg;
-        m_tg_map_out[local_tg] = peer_tg;
-      } catch (...) { /* skip malformed */ }
+  if (rs) {
+    auto tgmap = rs->loadTrunkTgMap(m_section);
+    for (auto& kv : tgmap) {
+      m_tg_map_in[kv.first]   = kv.second;
+      m_tg_map_out[kv.second] = kv.first;
     }
+  } else {
+    std::string tgmap_str;
+    if (m_cfg.getValue(m_section, "TG_MAP", tgmap_str) && !tgmap_str.empty())
+    {
+      std::istringstream ms(tgmap_str);
+      std::string pair;
+      while (std::getline(ms, pair, ','))
+      {
+        auto colon = pair.find(':');
+        if (colon == std::string::npos) continue;
+        try {
+          uint32_t peer_tg  = std::stoul(pair.substr(0, colon));
+          uint32_t local_tg = std::stoul(pair.substr(colon + 1));
+          m_tg_map_in[peer_tg]   = local_tg;
+          m_tg_map_out[local_tg] = peer_tg;
+        } catch (...) { /* skip malformed */ }
+      }
+    }
+  }
+
+  if (rs) {
+    m_muted_callsigns = rs->loadTrunkMutes(m_section);
   }
 
   cout << m_section << ": Reloaded filters"
@@ -1134,7 +1158,9 @@ void TrunkLink::reloadConfig(void)
             " blacklist=" + m_blacklist_filter.toString())
        << (m_allow_filter.empty()     ? "" :
             " allow="     + m_allow_filter.toString())
-       << " tg_map_entries=" << m_tg_map_in.size() << endl;
+       << " tg_map_entries=" << m_tg_map_in.size();
+  if (rs) cout << " mutes=" << m_muted_callsigns.size();
+  cout << endl;
 } /* TrunkLink::reloadConfig */
 
 
