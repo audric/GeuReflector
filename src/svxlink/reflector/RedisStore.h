@@ -56,12 +56,6 @@ class RedisStore : public sigc::trackable
     std::string loadTrunkFilter(const std::string& section,
                                 const std::string& field);  // "blacklist"|"allow"
     std::map<uint32_t, uint32_t> loadTrunkTgMap(const std::string& section);
-    std::set<std::string> loadTrunkMutes(const std::string& section);
-
-    // Mute set ops (sync, used by PTY persistence).
-    void addTrunkMute(const std::string& section, const std::string& callsign);
-    void removeTrunkMute(const std::string& section, const std::string& callsign);
-
     // Publish a config.changed scope token (sync).
     void publishConfigChanged(const std::string& scope);
 

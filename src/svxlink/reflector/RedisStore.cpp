@@ -194,38 +194,6 @@ std::map<uint32_t, uint32_t> RedisStore::loadTrunkTgMap(const std::string& secti
   return out;
 }
 
-std::set<std::string> RedisStore::loadTrunkMutes(const std::string& section) {
-  std::set<std::string> out;
-  if (!m_sync) return out;
-  std::string k = keyFor("trunk:" + section + ":mutes");
-  redisReply* r = (redisReply*)redisCommand(m_sync, "SMEMBERS %s", k.c_str());
-  if (r && r->type == REDIS_REPLY_ARRAY) {
-    for (size_t i = 0; i < r->elements; ++i) {
-      if (r->element[i]->type == REDIS_REPLY_STRING) {
-        out.emplace(r->element[i]->str, r->element[i]->len);
-      }
-    }
-  }
-  if (r) freeReplyObject(r);
-  return out;
-}
-
-void RedisStore::addTrunkMute(const std::string& section, const std::string& callsign) {
-  if (!m_sync) return;
-  std::string k = keyFor("trunk:" + section + ":mutes");
-  redisReply* r = (redisReply*)redisCommand(m_sync, "SADD %s %s",
-                                            k.c_str(), callsign.c_str());
-  if (r) freeReplyObject(r);
-}
-
-void RedisStore::removeTrunkMute(const std::string& section, const std::string& callsign) {
-  if (!m_sync) return;
-  std::string k = keyFor("trunk:" + section + ":mutes");
-  redisReply* r = (redisReply*)redisCommand(m_sync, "SREM %s %s",
-                                            k.c_str(), callsign.c_str());
-  if (r) freeReplyObject(r);
-}
-
 void RedisStore::publishConfigChanged(const std::string& scope) {
   if (!m_sync) return;
   std::string ch = channelName();

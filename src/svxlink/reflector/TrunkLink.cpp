@@ -384,6 +384,10 @@ Json::Value TrunkLink::statusJson(void) const
   }
   obj["active_talkers"] = talkers;
 
+  Json::Value muted_arr(Json::arrayValue);
+  for (const auto& cs : m_muted_callsigns) muted_arr.append(cs);
+  obj["muted"] = muted_arr;
+
   return obj;
 } /* TrunkLink::statusJson */
 
@@ -1149,18 +1153,13 @@ void TrunkLink::reloadConfig(void)
     }
   }
 
-  if (rs) {
-    m_muted_callsigns = rs->loadTrunkMutes(m_section);
-  }
-
   cout << m_section << ": Reloaded filters"
        << (m_blacklist_filter.empty() ? "" :
             " blacklist=" + m_blacklist_filter.toString())
        << (m_allow_filter.empty()     ? "" :
             " allow="     + m_allow_filter.toString())
-       << " tg_map_entries=" << m_tg_map_in.size();
-  if (rs) cout << " mutes=" << m_muted_callsigns.size();
-  cout << endl;
+       << " tg_map_entries=" << m_tg_map_in.size()
+       << endl;
 } /* TrunkLink::reloadConfig */
 
 

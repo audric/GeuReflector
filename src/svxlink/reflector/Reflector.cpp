@@ -2036,12 +2036,6 @@ void Reflector::ctrlPtyDataReceived(const void *buf, size_t count)
       if (subcmd == "MUTE") link->muteCallsign(callsign);
       else                  link->unmuteCallsign(callsign);
 
-      if (m_redis) {
-        if (subcmd == "MUTE") m_redis->addTrunkMute(section, callsign);
-        else                  m_redis->removeTrunkMute(section, callsign);
-        m_redis->publishConfigChanged("trunk:" + section);
-      }
-
       m_cmd_pty->write(section + ": " + subcmd + " " + callsign + "\n");
     }
     else if (subcmd == "RELOAD")

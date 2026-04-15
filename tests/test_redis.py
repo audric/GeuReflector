@@ -174,53 +174,6 @@ class RedisTrunkFilterTest(unittest.TestCase):
         self.assertIn("TRUNK_TEST", line)
 
 
-class RedisPtyMuteTest(unittest.TestCase):
-    SECTION = "TRUNK_TEST"
-
-    def setUp(self):
-        flushdb()
-
-    def _pty_send(self, command: str) -> None:
-        """Write a command line to the reflector's PTY inside the
-        container. The existing COMMAND_PTY config lives at
-        /dev/shm/reflector_ctrl."""
-        subprocess.run([
-            "docker", "compose", "-f", "docker-compose.redis.yml",
-            "exec", "-T", R1_SVC,
-            "bash", "-c",
-            f"printf '{command}\\n' > /dev/shm/reflector_ctrl"
-        ], check=True,
-           cwd=os.path.dirname(os.path.abspath(__file__)))
-
-    def _wait_for_members(self, key: str, expected_cs: str, present: bool,
-                          timeout: float = 3.0) -> None:
-        deadline = time.time() + timeout
-        last = ""
-        while time.time() < deadline:
-            last = redis_cli("SMEMBERS", key)
-            members = set(filter(None, last.splitlines()))
-            if present and expected_cs in members:
-                return
-            if (not present) and expected_cs not in members:
-                return
-            time.sleep(0.1)
-        self.fail(
-            f"Timed out waiting for {expected_cs} "
-            f"{'in' if present else 'absent from'} {key}. "
-            f"Last SMEMBERS: {last!r}")
-
-    def test_pty_mute_then_unmute_persists_to_redis(self):
-        key = k(f"trunk:{self.SECTION}:mutes")
-        # Baseline: empty
-        self.assertEqual(redis_cli("SMEMBERS", key), "")
-
-        self._pty_send(f"TRUNK MUTE {self.SECTION} SM0XYZ")
-        self._wait_for_members(key, "SM0XYZ", present=True)
-
-        self._pty_send(f"TRUNK UNMUTE {self.SECTION} SM0XYZ")
-        self._wait_for_members(key, "SM0XYZ", present=False)
-
-
 class RedisLiveStateTest(unittest.TestCase):
     """Verify live:client:<callsign> hashes appear/disappear as V2 clients
     connect and disconnect. Talker and trunk live-state are not covered here
