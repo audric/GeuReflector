@@ -31,6 +31,12 @@ def generate_reflector_conf(name: str) -> str:
         f"DB={T.redis_db_index(name)}",
         f"KEY_PREFIX={T.service_name(name)}",
         "",
+        f"[{T.TRUNK_TEST['section']}]",
+        f"HOST={T.TRUNK_TEST['host']}",
+        f"PORT={T.TRUNK_TEST['port']}",
+        f"SECRET={T.TRUNK_TEST['secret']}",
+        f"REMOTE_PREFIX={T.TRUNK_TEST['remote_prefix']}",
+        "",
     ]
     return "\n".join(lines)
 

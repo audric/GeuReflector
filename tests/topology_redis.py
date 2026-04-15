@@ -20,6 +20,17 @@ TEST_CLIENTS = [
     {"callsign": "N0OTHER", "group": "OtherGroup", "password": "otherpass"},
 ]
 
+# Placeholder trunk peer — no real peer is running, but its [TRUNK_TEST]
+# section makes the reflector instantiate a TrunkLink whose reloadConfig()
+# we can trigger via pub/sub and verify via container logs.
+TRUNK_TEST = {
+    "section":        "TRUNK_TEST",
+    "host":           "192.0.2.1",   # TEST-NET-1 — guaranteed unroutable
+    "port":           59302,
+    "secret":         "test_secret",
+    "remote_prefix":  "9",
+}
+
 # Internal container ports (same as legacy harness so the reflector
 # binary's defaults don't change).
 INTERNAL_CLIENT_PORT = 5300

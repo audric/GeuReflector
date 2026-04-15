@@ -71,6 +71,21 @@ def try_authenticate(callsign: str, password: str,
                 pass
 
 
+def docker_logs_since(service: str, since: float) -> str:
+    """Return stdout/stderr from the given compose service since `since`
+    (Unix timestamp). Used to assert on reflector log lines produced
+    after a specific test action."""
+    from datetime import datetime, timezone
+    since_iso = datetime.fromtimestamp(since, tz=timezone.utc).isoformat()
+    cmd = [
+        "docker", "compose", "-f", "docker-compose.redis.yml",
+        "logs", "--since", since_iso, service,
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True, check=True,
+                         cwd=os.path.dirname(os.path.abspath(__file__)))
+    return res.stdout + res.stderr
+
+
 class RedisUsersTest(unittest.TestCase):
     def setUp(self):
         flushdb()
@@ -101,6 +116,62 @@ class RedisUsersTest(unittest.TestCase):
         time.sleep(0.3)
         self.assertFalse(try_authenticate("N0TEST", "testpass"),
                          "expected N0TEST to be rejected after enabled=0")
+
+
+class RedisTrunkFilterTest(unittest.TestCase):
+    SECTION = "TRUNK_TEST"
+
+    def setUp(self):
+        flushdb()
+
+    def _wait_for_reload_log(self, since: float, expected_fragment: str,
+                             timeout: float = 3.0) -> str:
+        """Poll container logs until a 'Reloaded filters' line appears
+        that contains `expected_fragment`. Returns the matching line."""
+        deadline = time.time() + timeout
+        last_logs = ""
+        while time.time() < deadline:
+            last_logs = docker_logs_since(R1_SVC, since)
+            for line in last_logs.splitlines():
+                if "Reloaded filters" in line and expected_fragment in line:
+                    return line
+            time.sleep(0.1)
+        self.fail(
+            f"Timed out waiting for 'Reloaded filters' with "
+            f"'{expected_fragment}'. Last logs:\n{last_logs}")
+
+    def test_blacklist_change_triggers_reload(self):
+        # Baseline: no blacklist key → nothing in Redis for this section.
+        # Add one and verify the reload log shows it.
+        t0 = time.time()
+        redis_cli("SADD", k(f"trunk:{self.SECTION}:blacklist"), "666")
+        publish(f"trunk:{self.SECTION}")
+        line = self._wait_for_reload_log(t0, "blacklist=666")
+        self.assertIn("TRUNK_TEST", line)
+
+        # Remove it, verify blacklist goes away.
+        t1 = time.time()
+        redis_cli("SREM", k(f"trunk:{self.SECTION}:blacklist"), "666")
+        publish(f"trunk:{self.SECTION}")
+        # After SREM the set is empty — the reload log will lack
+        # "blacklist=" entirely. Poll for a reload line that mentions
+        # the section but has no blacklist tag.
+        deadline = time.time() + 3.0
+        while time.time() < deadline:
+            logs = docker_logs_since(R1_SVC, t1)
+            for ln in logs.splitlines():
+                if ("TRUNK_TEST" in ln and "Reloaded filters" in ln
+                        and "blacklist=" not in ln):
+                    return
+            time.sleep(0.1)
+        self.fail(f"Timed out waiting for reload without blacklist. Logs:\n{logs}")
+
+    def test_allow_change_triggers_reload(self):
+        t0 = time.time()
+        redis_cli("SADD", k(f"trunk:{self.SECTION}:allow"), "24*")
+        publish(f"trunk:{self.SECTION}")
+        line = self._wait_for_reload_log(t0, "allow=24*")
+        self.assertIn("TRUNK_TEST", line)
 
 
 if __name__ == "__main__":
