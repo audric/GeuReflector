@@ -32,6 +32,15 @@ class RedisStore : public sigc::trackable
       std::string tls_client_key;
     };
 
+    struct TrunkPeerConfig
+    {
+      std::string host;
+      std::string port;
+      std::string secret;
+      std::string remote_prefix;
+      std::string peer_id;
+    };
+
     explicit RedisStore(const Config& cfg);
     ~RedisStore();
 
@@ -56,6 +65,7 @@ class RedisStore : public sigc::trackable
     std::string loadTrunkFilter(const std::string& section,
                                 const std::string& field);  // "blacklist"|"allow"
     std::map<uint32_t, uint32_t> loadTrunkTgMap(const std::string& section);
+    std::map<std::string, TrunkPeerConfig> loadTrunkPeers(void);
     // Publish a config.changed scope token (sync).
     void publishConfigChanged(const std::string& scope);
 

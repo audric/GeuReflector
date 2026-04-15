@@ -2168,6 +2168,37 @@ void Reflector::initTrunkLinks(void)
     }
   }
 
+  // If Redis is configured, load trunk peer definitions from Redis and
+  // synthesize them into m_cfg so the existing trunk initialization
+  // loop picks them up. Warn if the .conf ALSO has [TRUNK_*] sections
+  // (they are ignored per the Redis-overrides rule).
+  if (m_redis != nullptr) {
+    std::list<std::string> conf_sections = m_cfg->listSections();
+    bool conf_has_trunk = false;
+    for (const std::string& s : conf_sections) {
+      if (s.size() >= 6 && s.substr(0, 6) == "TRUNK_") { conf_has_trunk = true; break; }
+    }
+    if (conf_has_trunk) {
+      std::cerr << "WARN: [TRUNK_*] sections in svxreflector.conf are "
+                   "ignored because [REDIS] is configured. Run "
+                   "--import-conf-to-redis to migrate." << std::endl;
+    }
+
+    auto peers = m_redis->loadTrunkPeers();
+    for (const auto& kv : peers) {
+      const std::string& section = kv.first;
+      const auto& p = kv.second;
+      m_cfg->setValue(section, "HOST", p.host);
+      if (!p.port.empty())   m_cfg->setValue(section, "PORT", p.port);
+      m_cfg->setValue(section, "SECRET", p.secret);
+      m_cfg->setValue(section, "REMOTE_PREFIX", p.remote_prefix);
+      if (!p.peer_id.empty())
+        m_cfg->setValue(section, "PEER_ID", p.peer_id);
+    }
+    std::cout << "Redis: loaded " << peers.size() << " trunk peer(s)"
+              << std::endl;
+  }
+
   // First pass: collect all remote prefixes so we can do longest-prefix-match
   std::vector<std::string> trunk_sections;
   for (const auto& section : m_cfg->listSections())
