@@ -1079,19 +1079,30 @@ void TrunkLink::sendMsg(const ReflectorMsg& msg)
 {
   if (m_paired)
   {
-    // In paired mode, try each outbound client in order (D4 will make sticky)
-    for (size_t i = 0; i < m_ob_cons.size(); ++i)
+    // Sticky selection: try current m_sticky_ob_idx first, then advance to
+    // the next live one on failure. Instant failover — no holdoff.
+    if (!m_ob_cons.empty())
     {
-      if (m_ob_cons[i]->isConnected() && m_ob_states[i].hello_received)
+      for (size_t tries = 0; tries < m_ob_cons.size(); ++tries)
       {
-        sendMsgOnPairedOutbound(i, msg);
-        return;
+        size_t idx = (m_sticky_ob_idx + tries) % m_ob_cons.size();
+        if (m_ob_cons[idx]->isConnected() && m_ob_states[idx].hello_received)
+        {
+          if (idx != m_sticky_ob_idx)
+          {
+            cout << m_section << ": sticky OB switched from #"
+                 << m_sticky_ob_idx << " to #" << idx << endl;
+            m_sticky_ob_idx = idx;
+          }
+          sendMsgOnPairedOutbound(idx, msg);
+          return;
+        }
       }
     }
-    // Inbound fallback: try each paired inbound connection
+    // All paired outbounds down — fall back to any inbound (same as D3)
     for (size_t i = 0; i < m_ib_cons.size(); ++i)
     {
-      if (m_ib_states[i].hello_received)
+      if (m_ib_cons[i]->isConnected() && m_ib_states[i].hello_received)
       {
         if (m_debug)
         {
@@ -1522,7 +1533,12 @@ void TrunkLink::onPairedOutboundDisconnected(FramedTcpClient* client,
   m_ob_states[idx].hb_tx_cnt = 0;
   m_ob_states[idx].hb_rx_cnt = 0;
 
-  // TcpPrioClient auto-reconnects; nothing else to do.
+  // If we were stuck on this socket, advance so next send picks a live one.
+  if (m_sticky_ob_idx == idx && !m_ob_cons.empty())
+  {
+    m_sticky_ob_idx = (idx + 1) % m_ob_cons.size();
+  }
+  // TcpPrioClient auto-reconnects; sticky may switch back here next send.
 } /* TrunkLink::onPairedOutboundDisconnected */
 
 
