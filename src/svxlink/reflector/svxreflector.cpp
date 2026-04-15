@@ -77,6 +77,8 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 #include "version/SVXREFLECTOR.h"
 #include "Reflector.h"
+#include <hiredis/hiredis.h>
+#include "RedisStore.h"
 
 
 /****************************************************************************
@@ -143,6 +145,98 @@ namespace {
   FdWatch*              stdin_watch = 0;
   LogWriter             logwriter;
 };
+
+static int import_to_redis = 0;
+static int dry_run = 0;
+
+
+/****************************************************************************
+ *
+ * Local helper: import [USERS]/[PASSWORDS] from conf into Redis
+ *
+ ****************************************************************************/
+
+static bool runImportConfToRedis(Async::Config& cfg, bool dry_run)
+{
+  RedisStore::Config rcfg;
+  cfg.getValue("REDIS", "HOST", rcfg.host);
+  std::string port_s; cfg.getValue("REDIS", "PORT", port_s);
+  if (!port_s.empty()) rcfg.port = static_cast<uint16_t>(std::stoul(port_s));
+  cfg.getValue("REDIS", "PASSWORD", rcfg.password);
+  std::string db_s; cfg.getValue("REDIS", "DB", db_s);
+  if (!db_s.empty()) rcfg.db = std::stoi(db_s);
+  cfg.getValue("REDIS", "KEY_PREFIX", rcfg.key_prefix);
+  cfg.getValue("REDIS", "UNIX_SOCKET", rcfg.unix_socket);
+  if (rcfg.host.empty() && rcfg.unix_socket.empty()) {
+    std::cerr << "*** ERROR: --import-conf-to-redis requires [REDIS] in conf"
+              << std::endl;
+    return false;
+  }
+
+  redisContext* ctx = nullptr;
+  if (!dry_run) {
+    struct timeval tv = { 5, 0 };
+    ctx = rcfg.unix_socket.empty()
+        ? redisConnectWithTimeout(rcfg.host.c_str(), rcfg.port, tv)
+        : redisConnectUnixWithTimeout(rcfg.unix_socket.c_str(), tv);
+    if (!ctx || ctx->err) {
+      std::cerr << "*** ERROR: import: Redis connect failed: "
+                << (ctx ? ctx->errstr : "alloc failed") << std::endl;
+      if (ctx) redisFree(ctx);
+      return false;
+    }
+    if (!rcfg.password.empty()) {
+      redisReply* r = (redisReply*)redisCommand(ctx, "AUTH %s", rcfg.password.c_str());
+      if (r) freeReplyObject(r);
+    }
+    if (rcfg.db != 0) {
+      redisReply* r = (redisReply*)redisCommand(ctx, "SELECT %d", rcfg.db);
+      if (r) freeReplyObject(r);
+    }
+  }
+
+  auto kf = [&](const std::string& s) {
+    return rcfg.key_prefix.empty() ? s : rcfg.key_prefix + ":" + s;
+  };
+
+  size_t users = 0, groups = 0;
+
+  for (auto& cs : cfg.listSection("USERS")) {
+    std::string group;
+    if (!cfg.getValue("USERS", cs, group) || group.empty()) continue;
+    std::string ukey = kf("user:" + cs);
+    if (dry_run) {
+      std::cout << "[dry-run] HSET " << ukey << " group " << group
+                << " enabled 1" << std::endl;
+    } else {
+      redisReply* r = (redisReply*)redisCommand(ctx,
+          "HSET %s group %s enabled 1", ukey.c_str(), group.c_str());
+      if (r) freeReplyObject(r);
+    }
+    ++users;
+  }
+
+  for (auto& g : cfg.listSection("PASSWORDS")) {
+    std::string pw;
+    if (!cfg.getValue("PASSWORDS", g, pw) || pw.empty()) continue;
+    std::string gkey = kf("group:" + g);
+    if (dry_run) {
+      std::cout << "[dry-run] HSET " << gkey << " password <REDACTED>"
+                << std::endl;
+    } else {
+      redisReply* r = (redisReply*)redisCommand(ctx,
+          "HSET %s password %s", gkey.c_str(), pw.c_str());
+      if (r) freeReplyObject(r);
+    }
+    ++groups;
+  }
+
+  std::cout << "Imported " << users << " users, " << groups << " groups."
+            << std::endl;
+
+  if (ctx) redisFree(ctx);
+  return true;
+}
 
 
 /****************************************************************************
@@ -388,6 +482,10 @@ int main(int argc, const char *argv[])
     stdin_watch->activity.connect(sigc::ptr_fun(&stdinHandler));
   }
 
+  if (import_to_redis) {
+    return runImportConfToRedis(cfg, dry_run != 0) ? 0 : 1;
+  }
+
   Reflector ref;
   if (ref.initialize(cfg))
   {
@@ -453,6 +551,10 @@ static void parse_arguments(int argc, const char **argv)
 	    "Start " PROGRAM_NAME " as a daemon", NULL},
     {"version", 0, POPT_ARG_NONE, &print_version, 0,
 	    "Print the application version string", NULL},
+    {"import-conf-to-redis", 0, POPT_ARG_NONE, &import_to_redis, 0,
+            "Import [USERS]/[PASSWORDS] from .conf into Redis, then exit", NULL},
+    {"dry-run", 0, POPT_ARG_NONE, &dry_run, 0,
+            "With --import-conf-to-redis: print commands without executing", NULL},
     {NULL, 0, 0, NULL, 0}
   };
   int err;
