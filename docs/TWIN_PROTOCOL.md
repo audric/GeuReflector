@@ -1,8 +1,10 @@
 # GeuReflector — Twin (HA-Pair) Protocol — DESIGN DRAFT
 
-> **Status:** design draft, not yet implemented. All open design questions
-> resolved on 2026-04-15 — see §Resolved Decisions at the end.
-> Implementation pending sysop review of this revision.
+> **Status:** Implemented in v1.3.x+twin1. See §Implementation Sketch for
+> what shipped and `tests/test_twin.py` for integration test coverage.
+> Known limitation: audio-mirror path (local talker on twin A → broadcast
+> to local clients on twin B) is wired and code-reviewed but not yet
+> exercised by integration tests (requires mock SvxLink clients).
 
 ## Motivation
 
