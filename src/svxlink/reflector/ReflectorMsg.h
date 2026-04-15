@@ -1417,6 +1417,7 @@ class MsgTrunkHello : public ReflectorMsgBase<115>
 
     static const uint8_t ROLE_PEER      = 0;
     static const uint8_t ROLE_SATELLITE = 1;
+    static const uint8_t ROLE_TWIN      = 2;   // HA-pair partner
 
     MsgTrunkHello(void) : m_priority(0), m_role(ROLE_PEER) {}
 
@@ -1906,6 +1907,56 @@ class MsgTrunkFilter : public ReflectorMsgBase<122>
   private:
     std::string m_filter;
 }; /* MsgTrunkFilter */
+
+
+/**
+ * @brief   Twin-link message: mirror an external trunk's talker-start
+ *
+ * Sent over the [TWIN] link when this reflector receives a
+ * MsgTrunkTalkerStart from one of its external trunk peers, so that the
+ * partner twin can update its own TGHandler state and block local clients
+ * from keying up the TG.
+ */
+class MsgTwinExtTalkerStart : public ReflectorMsgBase<123>
+{
+  public:
+    MsgTwinExtTalkerStart(void) : m_tg(0) {}
+    MsgTwinExtTalkerStart(uint32_t tg, const std::string& peer_id,
+                          const std::string& callsign)
+      : m_tg(tg), m_peer_id(peer_id), m_callsign(callsign) {}
+
+    uint32_t tg(void) const { return m_tg; }
+    const std::string& peerId(void) const { return m_peer_id; }
+    const std::string& callsign(void) const { return m_callsign; }
+
+    ASYNC_MSG_MEMBERS(m_tg, m_peer_id, m_callsign)
+
+  private:
+    uint32_t    m_tg;
+    std::string m_peer_id;
+    std::string m_callsign;
+}; /* MsgTwinExtTalkerStart */
+
+
+/**
+ * @brief   Twin-link message: mirror an external trunk's talker-stop
+ */
+class MsgTwinExtTalkerStop : public ReflectorMsgBase<124>
+{
+  public:
+    MsgTwinExtTalkerStop(void) : m_tg(0) {}
+    MsgTwinExtTalkerStop(uint32_t tg, const std::string& peer_id)
+      : m_tg(tg), m_peer_id(peer_id) {}
+
+    uint32_t tg(void) const { return m_tg; }
+    const std::string& peerId(void) const { return m_peer_id; }
+
+    ASYNC_MSG_MEMBERS(m_tg, m_peer_id)
+
+  private:
+    uint32_t    m_tg;
+    std::string m_peer_id;
+}; /* MsgTwinExtTalkerStop */
 
 
 #endif /* REFLECTOR_MSG_INCLUDED */

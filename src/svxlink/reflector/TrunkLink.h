@@ -119,6 +119,12 @@ class TrunkLink : public sigc::trackable
       return m_remote_prefix;
     }
 
+    bool isPaired(void) const { return m_paired; }
+    bool hasInboundConnection(void) const
+    {
+      return m_paired ? !m_ib_cons.empty() : (m_inbound_con != nullptr);
+    }
+
     // Accept an inbound connection from a peer that has already sent a hello
     void acceptInboundConnection(Async::FramedTcpConnection* con,
                                   const MsgTrunkHello& hello);
@@ -204,6 +210,13 @@ class TrunkLink : public sigc::trackable
     static const time_t PEER_INTEREST_TIMEOUT_S = 600;  // 10 minutes
     std::map<uint32_t, time_t> m_peer_interested_tgs;
 
+    // PAIRED mode: one logical peer backed by multiple physical hosts
+    bool                                          m_paired = false;
+    std::vector<std::string>                      m_peer_hosts;  // HOST=h1,h2,...
+    std::vector<FramedTcpClient*>                 m_ob_cons;     // per-host outbound (D2)
+    std::vector<Async::FramedTcpConnection*>      m_ib_cons;     // per-host inbound (D3)
+    size_t                                        m_sticky_ob_idx = 0;  // sticky send socket (D4)
+
     // Per-connection state
     bool                m_ob_hello_received = false;
     unsigned            m_ob_hb_tx_cnt = 0;
@@ -252,6 +265,43 @@ class TrunkLink : public sigc::trackable
     void sendMsgOnInbound(const ReflectorMsg& msg);
     void heartbeatTick(Async::Timer* t);
     void clearPeerTalkerState(void);
+
+    // PAIRED mode: per-host outbound client handlers (D2)
+    void onPairedOutboundConnected(FramedTcpClient* client);
+    void onPairedOutboundDisconnected(FramedTcpClient* client,
+                                      Async::TcpConnection* con,
+                                      Async::TcpConnection::DisconnectReason reason);
+    void onPairedOutboundFrame(FramedTcpClient* client,
+                               Async::FramedTcpConnection* con,
+                               std::vector<uint8_t>& data);
+    size_t pairedClientIndex(FramedTcpClient* client) const;
+    void sendMsgOnPairedOutbound(size_t idx, const ReflectorMsg& msg);
+
+    // PAIRED mode: per-host inbound connection handlers (D3)
+    void onPairedInboundFrame(Async::FramedTcpConnection* con,
+                               std::vector<uint8_t>& data);
+    void onPairedInboundDisconnected(Async::FramedTcpConnection* con,
+        Async::FramedTcpConnection::DisconnectReason reason);
+    size_t pairedInboundIndex(Async::FramedTcpConnection* con) const;
+    void sendMsgOnPairedInbound(size_t idx, const ReflectorMsg& msg);
+
+    // Per-client handshake/heartbeat state for paired outbound connections
+    struct PairedClientState
+    {
+      bool     hello_received = false;
+      unsigned hb_tx_cnt      = 0;
+      unsigned hb_rx_cnt      = 0;
+    };
+    std::vector<PairedClientState> m_ob_states;  // parallel to m_ob_cons
+
+    // Per-inbound handshake/heartbeat state for paired inbound connections
+    struct PairedInboundState
+    {
+      bool     hello_received = false;
+      unsigned hb_tx_cnt      = 0;
+      unsigned hb_rx_cnt      = 0;
+    };
+    std::vector<PairedInboundState> m_ib_states;  // parallel to m_ib_cons
 
 };  /* class TrunkLink */
 
