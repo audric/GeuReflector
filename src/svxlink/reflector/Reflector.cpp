@@ -4023,7 +4023,25 @@ void Reflector::twinPendingFrameReceived(Async::FramedTcpConnection* con,
     return;
   }
 
-  // Secret/prefix validation lives inside TwinLink::acceptInboundConnection.
+  // Verify HMAC (shared secret proof) before leaking any other info.
+  if (!msg.verify(m_twin_link->secret()))
+  {
+    std::cerr << "*** ERROR: TWIN inbound: authentication failed "
+              << "(wrong secret)" << std::endl;
+    rejectPending();
+    return;
+  }
+
+  // Twins must share the same LOCAL_PREFIX.
+  if (msg.localPrefix() != m_twin_link->localPrefix())
+  {
+    std::cerr << "*** ERROR: TWIN inbound: local_prefix mismatch: "
+              << "ours='" << m_twin_link->localPrefix()
+              << "' theirs='" << msg.localPrefix() << "'" << std::endl;
+    rejectPending();
+    return;
+  }
+
   // Clean up our pending entry and hand off.
   delete pit->second;  // timer
   m_twin_pending_cons.erase(pit);
