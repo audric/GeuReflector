@@ -174,6 +174,11 @@ TWIN_TRUNKS = [
 # Cluster TGs for the twin topology
 TWIN_CLUSTER_TGS = [222000, 999]
 
+# Which twin-topology reflector accepts satellite connections. Picking one of
+# the twin pair lets tests verify that audio mirrored via the [TWIN] link is
+# also forwarded out to satellites attached to the partner.
+TWIN_SATELLITE_PARENT = "ref1"
+
 # Shared secret for a trunk link (twin topology uses link name)
 def twin_trunk_secret(link_name: str) -> str:
     return f"secret_{link_name.lower()}"
@@ -228,6 +233,10 @@ def twin_mapped_client_port(name: str) -> int:
 def twin_mapped_twin_port(name: str) -> int:
     """Host-mapped port for the [TWIN] listen port."""
     return TWIN_REFLECTORS[name]["trunk_port_base"] + 304
+
+def twin_mapped_satellite_port(name: str) -> int:
+    """Host-mapped port for the [SATELLITE] listen port in twin topology."""
+    return TWIN_REFLECTORS[name]["trunk_port_base"] + 303
 
 def twin_trunks_for(name: str) -> list:
     """Return all TWIN_TRUNKS entries that involve this reflector."""

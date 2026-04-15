@@ -322,6 +322,16 @@ def generate_twin_reflector_conf(name: str) -> str:
                     f"REMOTE_PREFIX={remote_prefix}",
                 ]
 
+    # Satellite server section — only on the designated twin member so
+    # integration tests can verify satellite delivery via the TWIN link.
+    if name == T.TWIN_SATELLITE_PARENT:
+        lines += [
+            "",
+            "[SATELLITE]",
+            f"LISTEN_PORT={T.SATELLITE['listen_port']}",
+            f"SECRET={T.SATELLITE['secret']}",
+        ]
+
     # MQTT publishing section
     lines += [
         "",
@@ -368,6 +378,13 @@ def generate_twin_docker_compose() -> str:
             twin_port = T.twin_mapped_twin_port(name)
             twin_port_line = f'\n      - "{twin_port}:{T.INTERNAL_TWIN_PORT}/tcp"'
 
+        # Satellite listen port mapping — only on the designated twin parent
+        sat_port_line = ""
+        if name == T.TWIN_SATELLITE_PARENT:
+            sat_port = T.twin_mapped_satellite_port(name)
+            sat_port_line = (
+                f'\n      - "{sat_port}:{T.SATELLITE["listen_port"]}/tcp"')
+
         depends_on_line = ""
         if r.get("redis"):
             depends_on_line = """
@@ -386,7 +403,7 @@ def generate_twin_docker_compose() -> str:
       - "{client_port}:{T.INTERNAL_CLIENT_PORT}/tcp"
       - "{client_port}:{T.INTERNAL_CLIENT_PORT}/udp"
       - "{trunk_port}:{T.INTERNAL_TRUNK_PORT}/tcp"
-      - "{http_port}:{T.INTERNAL_HTTP_PORT}/tcp"{twin_port_line}
+      - "{http_port}:{T.INTERNAL_HTTP_PORT}/tcp"{twin_port_line}{sat_port_line}
     healthcheck:
       test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/{T.INTERNAL_HTTP_PORT}) 2>/dev/null'"]
       interval: 2s

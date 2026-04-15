@@ -32,9 +32,13 @@ import json
 # Reuse the V2 mock client from test_trunk.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_trunk import (  # noqa: E402
-    ClientPeer, UDP_AUDIO, UDP_FLUSH,
+    ClientPeer, SatellitePeer, UDP_AUDIO, UDP_FLUSH,
     CLIENT_CALLSIGN, CLIENT_PASSWORD,
+    MSG_TRUNK_TALKER_START, MSG_TRUNK_TALKER_STOP,
+    MSG_TRUNK_AUDIO, MSG_TRUNK_FLUSH, MSG_TRUNK_HEARTBEAT,
+    SAT_ID, recv_frame, parse_msg,
 )
+import socket  # noqa: E402
 
 # Ensure tests/ is on the path so topology can be imported
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -499,6 +503,130 @@ class TestTwinIntegration(unittest.TestCase):
         finally:
             sender.close()
             receiver.close()
+
+    # ------------------------------------------------------------------
+    # Test 9: Satellite handshake with a twin pair member
+    # ------------------------------------------------------------------
+    def test_09_satellite_handshake_with_twin_member(self):
+        """A satellite connects to the twin-parent reflector and appears
+        in its /status.satellites listing after the two-way hello.
+        """
+        parent = T.TWIN_SATELLITE_PARENT
+        sat_port = T.twin_mapped_satellite_port(parent)
+
+        sat = SatellitePeer()
+        try:
+            sat.connect_satellite(port=sat_port)
+            sat.handshake()
+
+            def satellite_registered():
+                status = get_status(*_http(parent))
+                return SAT_ID in status.get("satellites", {})
+
+            wait_until(
+                satellite_registered,
+                timeout=8.0,
+                msg=f"satellite {SAT_ID} not visible in /status.satellites "
+                    f"on reflector-{parent} after handshake",
+            )
+        finally:
+            sat.close()
+
+    # ------------------------------------------------------------------
+    # Test 10: Satellite receives twin-mirrored audio
+    # ------------------------------------------------------------------
+    def test_10_satellite_receives_twin_mirrored_audio(self):
+        """Audio sent by a client on ref2 reaches a satellite on ref1.
+
+        Exercises the end-to-end path:
+          ref2 local client -> TGHandler.talkerUpdated -> TwinLink.onLocalAudio
+          -> MsgTrunkAudio over [TWIN] -> ref1.handleMsgTrunkAudio
+          -> forwardAudioToSatellitesExcept -> satellite socket.
+
+        Verifies that satellites attached to a twin member see audio that
+        originated on the other twin — talker-state mirroring alone is not
+        enough; the audio frames must be forwarded too.
+        """
+        # TG 26201: prefix "262", owned locally by both twins.
+        tg = 26201
+        parent = T.TWIN_SATELLITE_PARENT  # "ref1"
+        other_twin = T.TWIN_REFLECTORS[parent]["twin_of"]  # "ref2"
+        sat_port = T.twin_mapped_satellite_port(parent)
+
+        sat = SatellitePeer()
+        sender = ClientPeer()
+        try:
+            # Satellite first so it's registered before audio flows
+            sat.connect_satellite(port=sat_port)
+            sat.handshake()
+
+            other_client_port = T.twin_mapped_client_port(other_twin)
+            sender.connect(HOST, other_client_port)
+            sender.authenticate(callsign=CLIENT_CALLSIGN,
+                                password=CLIENT_PASSWORD)
+            sender.setup_udp(udp_port=other_client_port)
+            sender.select_tg(tg)
+            time.sleep(0.5)  # let TG selection + twin handshake settle
+
+            audio_payload = b"\xBE\xEF" * 80
+            for _ in range(4):
+                sender.send_udp_audio(audio_payload)
+                time.sleep(0.02)
+            sender.send_udp_flush()
+
+            # Drain everything the satellite receives within a short window
+            got_talker_start = False
+            got_audio = False
+            got_flush = False
+            got_talker_stop = False
+            deadline = time.monotonic() + 4.0
+            sat.sock.settimeout(0.5)
+            while time.monotonic() < deadline:
+                try:
+                    data = recv_frame(sat.sock)
+                except (socket.timeout, OSError):
+                    if got_audio and got_talker_start:
+                        break
+                    continue
+                except ConnectionError:
+                    break
+                msg_type, fields = parse_msg(data)
+                if msg_type == MSG_TRUNK_TALKER_START and fields.get("tg") == tg:
+                    got_talker_start = True
+                elif msg_type == MSG_TRUNK_AUDIO and fields.get("tg") == tg:
+                    got_audio = True
+                elif msg_type == MSG_TRUNK_FLUSH and fields.get("tg") == tg:
+                    got_flush = True
+                elif msg_type == MSG_TRUNK_TALKER_STOP and fields.get("tg") == tg:
+                    got_talker_stop = True
+                elif msg_type == MSG_TRUNK_HEARTBEAT:
+                    continue
+
+            self.assertTrue(
+                got_talker_start,
+                f"satellite on {parent} did not receive TalkerStart for TG "
+                f"{tg} from {other_twin} via TWIN mirror",
+            )
+            self.assertTrue(
+                got_audio,
+                f"satellite on {parent} did not receive any audio frames for "
+                f"TG {tg} from {other_twin}; "
+                f"TwinLink::handleMsgTrunkAudio may not be forwarding to "
+                f"satellites",
+            )
+            # Flush + TalkerStop are nice-to-have; we log but don't fail
+            # hard if timing swallowed them.
+            if not got_flush:
+                sys.stderr.write(
+                    "  (note: satellite did not receive Flush frame — "
+                    "may indicate TwinLink flush-to-satellite gap)\n")
+            if not got_talker_stop:
+                # Talker stop only fires when the sender releases the TG,
+                # which depends on server-side talker timeouts. Not asserted.
+                pass
+        finally:
+            sender.close()
+            sat.close()
 
 
 def docker_compose_output(*args) -> str:

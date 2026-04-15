@@ -477,6 +477,7 @@ void TwinLink::handleMsgTrunkAudio(std::istream& is)
   if (msg.audio().empty()) return;
   MsgUdpAudio udp_msg(msg.audio());
   m_reflector->broadcastUdpMsg(udp_msg, ReflectorClient::TgFilter(msg.tg()));
+  m_reflector->forwardAudioToSatellitesExcept(nullptr, msg.tg(), msg.audio());
 } /* TwinLink::handleMsgTrunkAudio */
 
 
@@ -490,6 +491,7 @@ void TwinLink::handleMsgTrunkFlush(std::istream& is)
   }
   m_reflector->broadcastUdpMsg(MsgUdpFlushSamples(),
       ReflectorClient::TgFilter(msg.tg()));
+  m_reflector->forwardFlushToSatellitesExcept(nullptr, msg.tg());
 } /* TwinLink::handleMsgTrunkFlush */
 
 

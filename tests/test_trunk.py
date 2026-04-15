@@ -296,12 +296,18 @@ class TrunkPeer:
 class SatellitePeer(TrunkPeer):
     """Satellite peer — same wire format as TrunkPeer but role=SATELLITE."""
 
-    def connect_satellite(self, name=None):
-        """Connect to the satellite port of a reflector."""
-        if name is None:
-            name = sorted(T.REFLECTORS)[0]
+    def connect_satellite(self, name=None, port=None):
+        """Connect to the satellite port of a reflector.
+
+        If `port` is provided it overrides the default-topology lookup, so
+        the twin-topology tests can point at a different host port without
+        duplicating this class.
+        """
         host = HOST
-        port = T.mapped_satellite_port(name)
+        if port is None:
+            if name is None:
+                name = sorted(T.REFLECTORS)[0]
+            port = T.mapped_satellite_port(name)
         self.connect(host, port)
 
     def handshake(self, sat_id=SAT_ID, secret=SAT_SECRET, priority=None,
