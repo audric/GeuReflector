@@ -95,6 +95,8 @@ class TwinLink
     bool isActive(void) const;
     const std::string& partnerHost(void) const { return m_peer_host; }
     uint16_t partnerPort(void) const { return m_peer_port; }
+    const std::string& secret(void) const { return m_secret; }
+    const std::string& localPrefix(void) const { return m_local_prefix; }
 
   private:
     using FramedTcpClient =
