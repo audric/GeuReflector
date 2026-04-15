@@ -116,10 +116,72 @@ def first_prefix(prefixes) -> str:
 # Derived constants used by test_trunk.py and generate_configs.py
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Twin topology — used by E3 integration tests.
+# Add TOPOLOGY=twin env var or --topology twin CLI flag to generate_configs.py
+# to select this topology without touching the default above.
+# ---------------------------------------------------------------------------
+
+# 4-reflector mesh: refA (Italy), ref1+ref2 (Germany twin pair), refC (extra)
+#
+# Keys:
+#   prefix          : list of owned prefixes
+#   trunk_port_base : base for host-mapped port offsets
+#   twin_of         : name of the twin partner (only present on twin pair members)
+#   redis           : enable Redis config store (optional)
+TWIN_REFLECTORS = {
+    #  name       prefixes     port-base   notes
+    "refA": {"prefix": ["222"], "trunk_port_base": 60000},               # Italy
+    "ref1": {"prefix": ["262"], "trunk_port_base": 61000, "twin_of": "ref2"},  # DE twin 1
+    "ref2": {"prefix": ["262"], "trunk_port_base": 62000, "twin_of": "ref1"},  # DE twin 2
+    "refC": {"prefix": ["333"], "trunk_port_base": 63000},               # extra peer
+}
+
+# Explicit trunk list for the twin topology.
+# Each entry describes one logical link:
+#   name          : used as section name base (TRUNK_<NAME>)
+#   peers         : list of reflector names involved
+#   paired        : if True, the non-pair side emits PAIRED=1 + multi-host HOST=
+#   pair_members  : the subset of peers that form the twin pair (needed to split sides)
+#
+# For a paired trunk the rule is:
+#   - non-pair side (refA): [TRUNK_IT_DE] HOST=ref1,ref2 PAIRED=1
+#   - pair members (ref1, ref2): [TRUNK_IT_DE] HOST=refA (normal, no PAIRED)
+TWIN_TRUNKS = [
+    {
+        "name":         "IT_DE",
+        "peers":        ["refA", "ref1", "ref2"],
+        "paired":       True,
+        "pair_members": ["ref1", "ref2"],
+    },
+    {
+        "name":         "IT_C",
+        "peers":        ["refA", "refC"],
+        "paired":       False,
+        "pair_members": [],
+    },
+    {
+        "name":         "DE_C",
+        "peers":        ["ref1", "ref2", "refC"],
+        "paired":       True,
+        "pair_members": ["ref1", "ref2"],
+    },
+]
+
+# Cluster TGs for the twin topology
+TWIN_CLUSTER_TGS = [222000, 999]
+
+# Shared secret for a trunk link (twin topology uses link name)
+def twin_trunk_secret(link_name: str) -> str:
+    return f"secret_{link_name.lower()}"
+
+# ---------------------------------------------------------------------------
 # Internal ports inside Docker (fixed)
+# ---------------------------------------------------------------------------
 INTERNAL_CLIENT_PORT = 5300
 INTERNAL_TRUNK_PORT = 5302
 INTERNAL_HTTP_PORT = 8080
+INTERNAL_TWIN_PORT = 5304
 
 def mapped_trunk_port(name: str) -> int:
     return REFLECTORS[name]["trunk_port_base"] + 302
@@ -146,3 +208,24 @@ def trunk_section_name(name_a: str, name_b: str = "") -> str:
         return f"TRUNK_{name_a.upper()}"
     pair = tuple(sorted([name_a, name_b]))
     return f"TRUNK_{pair[0].upper()}_{pair[1].upper()}"
+
+# ---------------------------------------------------------------------------
+# Twin topology helpers
+# ---------------------------------------------------------------------------
+
+def twin_mapped_trunk_port(name: str) -> int:
+    return TWIN_REFLECTORS[name]["trunk_port_base"] + 302
+
+def twin_mapped_http_port(name: str) -> int:
+    return TWIN_REFLECTORS[name]["trunk_port_base"] + 3080
+
+def twin_mapped_client_port(name: str) -> int:
+    return TWIN_REFLECTORS[name]["trunk_port_base"] + 300
+
+def twin_mapped_twin_port(name: str) -> int:
+    """Host-mapped port for the [TWIN] listen port."""
+    return TWIN_REFLECTORS[name]["trunk_port_base"] + 304
+
+def twin_trunks_for(name: str) -> list:
+    """Return all TWIN_TRUNKS entries that involve this reflector."""
+    return [t for t in TWIN_TRUNKS if name in t["peers"]]
