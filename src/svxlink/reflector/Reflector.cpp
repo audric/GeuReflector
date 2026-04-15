@@ -504,6 +504,8 @@ bool Reflector::initialize(Async::Config &cfg)
 
   initTrunkLinks();
   initTrunkServer();
+  initTwinLink();
+  initTwinServer();
   initSatelliteServer();
 
   // Initialize MQTT publisher if [MQTT] section is configured
@@ -3870,6 +3872,53 @@ std::string Reflector::formatCerts(bool signedCerts, bool pendingCerts)
   ss << "-----------------------------------------------\n";
   return ss.str();
 } /* Reflector::formatCerts */
+
+
+void Reflector::initTwinLink(void)
+{
+  bool found = false;
+  for (const auto& section : m_cfg->listSections())
+  {
+    if (section == "TWIN")
+    {
+      found = true;
+      break;
+    }
+  }
+  if (!found)
+  {
+    return;
+  }
+  std::cout << "TWIN: section present in config (parser stub, no link yet)"
+            << std::endl;
+  // Actual TwinLink creation lands in Task B2.
+} /* Reflector::initTwinLink */
+
+
+void Reflector::initTwinServer(void)
+{
+  bool found = false;
+  for (const auto& section : m_cfg->listSections())
+  {
+    if (section == "TWIN")
+    {
+      found = true;
+      break;
+    }
+  }
+  if (!found)
+  {
+    return;
+  }
+  std::string port_str;
+  if (m_cfg->getValue("GLOBAL", "TWIN_LISTEN_PORT", port_str)
+      && !port_str.empty())
+  {
+    m_twin_listen_port = static_cast<uint16_t>(std::atoi(port_str.c_str()));
+  }
+  std::cout << "TWIN: listen port = " << m_twin_listen_port
+            << " (server stub, not bound yet)" << std::endl;
+} /* Reflector::initTwinServer */
 
 
 /*
