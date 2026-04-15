@@ -70,6 +70,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "ReflectorClient.h"
 #include "TGHandler.h"
 #include "TrunkLink.h"
+#include "TwinLink.h"
 #include "RedisStore.h"
 #include <version/SVXREFLECTOR.h>
 
@@ -324,6 +325,8 @@ Reflector::~Reflector(void)
   m_sat_srv = nullptr;
   delete m_satellite_client;
   m_satellite_client = nullptr;
+  delete m_twin_link;
+  m_twin_link = nullptr;
   m_client_con_map.clear();
   ReflectorClient::cleanup();
   delete TGHandler::instance();
@@ -3889,9 +3892,14 @@ void Reflector::initTwinLink(void)
   {
     return;
   }
-  std::cout << "TWIN: section present in config (parser stub, no link yet)"
-            << std::endl;
-  // Actual TwinLink creation lands in Task B2.
+
+  m_twin_link = new TwinLink(this, *m_cfg);
+  if (!m_twin_link->initialize())
+  {
+    delete m_twin_link;
+    m_twin_link = nullptr;
+    cerr << "*** ERROR: TwinLink initialization failed" << endl;
+  }
 } /* Reflector::initTwinLink */
 
 
