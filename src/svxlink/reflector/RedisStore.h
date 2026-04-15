@@ -93,6 +93,7 @@ class RedisStore : public sigc::trackable
     Async::Timer*       m_reconnect_timer = nullptr;
     Async::Timer*       m_heartbeat_timer = nullptr;
     int                 m_reconnect_backoff_s = 1;
+    bool                m_shutting_down = false;
     uint64_t            m_dropped_live_writes = 0;
     std::set<std::string> m_live_keys;
 

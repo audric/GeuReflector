@@ -29,6 +29,8 @@ void onAsyncDisconnectThunk(const redisAsyncContext* ac, int status) {
 
 RedisStore::RedisStore(const Config& cfg) : m_cfg(cfg) {}
 RedisStore::~RedisStore() {
+  m_shutting_down = true;
+  delete m_reconnect_timer; m_reconnect_timer = nullptr;
   delete m_heartbeat_timer; m_heartbeat_timer = nullptr;
   delete m_drain_timer;    m_drain_timer = nullptr;
   delete m_live_queue;     m_live_queue  = nullptr;
@@ -333,8 +335,42 @@ void RedisStore::subscribe(void) {
   redisAsyncCommand(m_async, onPubSubMessageThunk, this,
                     "SUBSCRIBE %s", ch.c_str());
 }
-void RedisStore::scheduleReconnect(void) {}
-void RedisStore::onAsyncDisconnect(int) {}
+void RedisStore::onAsyncDisconnect(int /*status*/) {
+  if (m_shutting_down) return;
+  std::cerr << "*** WARN: Redis async disconnect" << std::endl;
+  // hiredis will free the context after this returns — just null out.
+  m_async = nullptr;
+  scheduleReconnect();
+}
+
+void RedisStore::scheduleReconnect(void) {
+  if (m_shutting_down) return;
+  delete m_reconnect_timer;
+  m_reconnect_timer = new Async::Timer(m_reconnect_backoff_s * 1000,
+                                       Async::Timer::TYPE_ONESHOT);
+  m_reconnect_timer->expired.connect([this](Async::Timer*) {
+    if (m_shutting_down) return;
+    if (connectAsync()) {
+      subscribe();
+      // Rebuild sync context too — its TCP socket is likely dead.
+      if (m_sync) { redisFree(m_sync); m_sync = nullptr; }
+      if (!connectSync()) {
+        std::cerr << "*** WARN: Redis sync reconnect failed" << std::endl;
+        // async is up but sync isn't — schedule another retry so we fix sync.
+        m_reconnect_backoff_s = std::min(m_reconnect_backoff_s * 2, 30);
+        scheduleReconnect();
+        return;
+      }
+      std::cout << "RedisStore: reconnected, re-subscribing and requesting "
+                   "full reload" << std::endl;
+      m_reconnect_backoff_s = 1;
+      configChanged.emit("all");
+    } else {
+      m_reconnect_backoff_s = std::min(m_reconnect_backoff_s * 2, 30);
+      scheduleReconnect();
+    }
+  });
+}
 void RedisStore::onPubSubMessage(const std::string&, const std::string&) {}
 void RedisStore::drainLiveQueue(Async::Timer*) {
   if (!m_async || !m_live_queue) return;
