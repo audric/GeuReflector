@@ -124,6 +124,7 @@ filtering:
 | 119  | `MsgTrunkFlush`       | Mirror end-of-stream                              |
 | 120  | `MsgTrunkHeartbeat`   | Keepalive (10s TX / 15s RX timeout, as today)     |
 | 121  | `MsgTrunkNodeList`    | Mirror node roster so `/status` is consistent     |
+| 122  | `MsgTrunkFilter`      | **Not used on twin links** — twins mirror every TG unconditionally, so there is no interest advertisement to send. Reserved for satellite use only. |
 | 123  | `MsgTwinRoleClaim`    | **NEW** — primary/standby election for external trunks |
 | 124  | `MsgTwinRoleState`    | **NEW** — current role announcement (primary / standby) |
 
