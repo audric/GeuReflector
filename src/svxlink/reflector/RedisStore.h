@@ -82,11 +82,13 @@ class RedisStore : public sigc::trackable
     size_t   liveQueueSize(void) const;
 
     void onAsyncDisconnect(int status);
+    void onAsyncWriteDisconnect(int status);
 
   private:
     Config              m_cfg;
     redisContext*       m_sync = nullptr;
-    redisAsyncContext*  m_async = nullptr;
+    redisAsyncContext*  m_async = nullptr;       // pub/sub subscriber only
+    redisAsyncContext*  m_async_write = nullptr; // live-state writes (HSET/DEL)
     RedisAsyncAdapter*  m_adapter = nullptr;
     RedisLiveQueue*     m_live_queue = nullptr;
     Async::Timer*       m_drain_timer = nullptr;
@@ -99,6 +101,7 @@ class RedisStore : public sigc::trackable
 
     bool connectSync(void);
     bool connectAsync(void);
+    bool connectAsyncWrite(void);
     void subscribe(void);
     void scheduleReconnect(void);
     void onPubSubMessage(const std::string& channel, const std::string& payload);

@@ -221,5 +221,74 @@ class RedisPtyMuteTest(unittest.TestCase):
         self._wait_for_members(key, "SM0XYZ", present=False)
 
 
+class RedisLiveStateTest(unittest.TestCase):
+    """Verify live:client:<callsign> hashes appear/disappear as V2 clients
+    connect and disconnect. Talker and trunk live-state are not covered here
+    (require UDP/trunk-peer scaffolding; deferred)."""
+
+    def setUp(self):
+        flushdb()
+        # Populate the user so authentication succeeds.
+        redis_cli("HSET", k("user:N0TEST"), "group", "TestGroup", "enabled", "1")
+        redis_cli("HSET", k("group:TestGroup"), "password", "testpass")
+        publish("users")
+        time.sleep(0.3)
+
+    def _wait_for_hash(self, key: str, present: bool,
+                       timeout: float = 3.0):
+        """Poll HGETALL until the key has/lacks fields. Redis TYPE is
+        checked via EXISTS — empty hashes don't exist."""
+        deadline = time.time() + timeout
+        last = ""
+        while time.time() < deadline:
+            exists = redis_cli("EXISTS", key).strip() == "1"
+            if present and exists:
+                last = redis_cli("HGETALL", key)
+                return last
+            if (not present) and (not exists):
+                return ""
+            time.sleep(0.1)
+        self.fail(
+            f"Timed out waiting for {key} "
+            f"{'to exist' if present else 'to be absent'}. Last: {last!r}")
+
+    def test_live_client_hash_appears_on_auth(self):
+        peer = ClientPeer()
+        peer.connect(HOST, R1_CLIENT_PORT)
+        try:
+            peer.authenticate(callsign="N0TEST", password="testpass")
+            raw = self._wait_for_hash(k("live:client:N0TEST"), present=True)
+            # HGETALL returns alternating field\nvalue\nfield\nvalue\n
+            fields = raw.splitlines()
+            mapping = dict(zip(fields[0::2], fields[1::2]))
+            self.assertIn("connected_at", mapping)
+            self.assertIn("ip", mapping)
+            self.assertIn("tg", mapping)
+            # codecs may be "" — just verify the field exists
+            self.assertIn("codecs", mapping)
+            # connected_at is a unix timestamp; sanity-check it's a
+            # reasonable value (positive, within last minute).
+            ts = int(mapping["connected_at"])
+            self.assertGreater(ts, 0)
+            self.assertLess(abs(ts - time.time()), 60)
+        finally:
+            try:
+                peer.tcp.close()
+            except Exception:
+                pass
+
+    def test_live_client_hash_disappears_on_disconnect(self):
+        peer = ClientPeer()
+        peer.connect(HOST, R1_CLIENT_PORT)
+        peer.authenticate(callsign="N0TEST", password="testpass")
+        self._wait_for_hash(k("live:client:N0TEST"), present=True)
+
+        # Forceful close — reflector should see disconnect quickly.
+        peer.tcp.close()
+
+        # Drain queue + Redis publish should take <100ms. Give more for slack.
+        self._wait_for_hash(k("live:client:N0TEST"), present=False, timeout=5.0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

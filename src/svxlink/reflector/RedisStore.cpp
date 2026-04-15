@@ -25,6 +25,11 @@ void onAsyncDisconnectThunk(const redisAsyncContext* ac, int status) {
   if (self) self->onAsyncDisconnect(status);
 }
 
+void onAsyncWriteDisconnectThunk(const redisAsyncContext* ac, int status) {
+  auto* self = static_cast<RedisStore*>(ac->data);
+  if (self) self->onAsyncWriteDisconnect(status);
+}
+
 } // namespace
 
 RedisStore::RedisStore(const Config& cfg) : m_cfg(cfg) {}
@@ -34,6 +39,7 @@ RedisStore::~RedisStore() {
   delete m_heartbeat_timer; m_heartbeat_timer = nullptr;
   delete m_drain_timer;    m_drain_timer = nullptr;
   delete m_live_queue;     m_live_queue  = nullptr;
+  if (m_async_write) { redisAsyncFree(m_async_write); m_async_write = nullptr; }
   if (m_async) { redisAsyncFree(m_async); m_async = nullptr; }
   if (m_sync)  { redisFree(m_sync);       m_sync  = nullptr; }
 }
@@ -78,6 +84,7 @@ bool RedisStore::connect(void) {
   if (!connectSync()) return false;
   if (!connectAsync()) return false;
   subscribe();
+  if (!connectAsyncWrite()) return false;
 
   m_live_queue = new RedisLiveQueue(4096);
   m_drain_timer = new Async::Timer(75, Async::Timer::TYPE_PERIODIC);
@@ -329,6 +336,35 @@ bool RedisStore::connectAsync(void) {
   return true;
 }
 
+bool RedisStore::connectAsyncWrite(void) {
+  if (!m_cfg.unix_socket.empty()) {
+    m_async_write = redisAsyncConnectUnix(m_cfg.unix_socket.c_str());
+  } else {
+    m_async_write = redisAsyncConnect(m_cfg.host.c_str(), m_cfg.port);
+  }
+  if (!m_async_write || m_async_write->err) {
+    std::cerr << "*** ERROR: Redis async-write connect failed: "
+              << (m_async_write ? m_async_write->errstr : "alloc failed")
+              << std::endl;
+    if (m_async_write) { redisAsyncFree(m_async_write); m_async_write = nullptr; }
+    return false;
+  }
+  m_async_write->data = this;
+  if (!RedisAsyncAdapter::attach(m_async_write)) {
+    redisAsyncFree(m_async_write); m_async_write = nullptr;
+    return false;
+  }
+  redisAsyncSetDisconnectCallback(m_async_write, onAsyncWriteDisconnectThunk);
+
+  if (!m_cfg.password.empty()) {
+    redisAsyncCommand(m_async_write, nullptr, nullptr, "AUTH %s", m_cfg.password.c_str());
+  }
+  if (m_cfg.db != 0) {
+    redisAsyncCommand(m_async_write, nullptr, nullptr, "SELECT %d", m_cfg.db);
+  }
+  return true;
+}
+
 void RedisStore::subscribe(void) {
   if (!m_async) return;
   std::string ch = channelName();
@@ -343,6 +379,13 @@ void RedisStore::onAsyncDisconnect(int /*status*/) {
   scheduleReconnect();
 }
 
+void RedisStore::onAsyncWriteDisconnect(int /*status*/) {
+  if (m_shutting_down) return;
+  std::cerr << "*** WARN: Redis async-write disconnect" << std::endl;
+  m_async_write = nullptr;
+  scheduleReconnect();
+}
+
 void RedisStore::scheduleReconnect(void) {
   if (m_shutting_down) return;
   delete m_reconnect_timer;
@@ -350,30 +393,37 @@ void RedisStore::scheduleReconnect(void) {
                                        Async::Timer::TYPE_ONESHOT);
   m_reconnect_timer->expired.connect([this](Async::Timer*) {
     if (m_shutting_down) return;
-    if (connectAsync()) {
-      subscribe();
-      // Rebuild sync context too — its TCP socket is likely dead.
-      if (m_sync) { redisFree(m_sync); m_sync = nullptr; }
-      if (!connectSync()) {
-        std::cerr << "*** WARN: Redis sync reconnect failed" << std::endl;
-        // async is up but sync isn't — schedule another retry so we fix sync.
-        m_reconnect_backoff_s = std::min(m_reconnect_backoff_s * 2, 30);
-        scheduleReconnect();
-        return;
-      }
-      std::cout << "RedisStore: reconnected, re-subscribing and requesting "
-                   "full reload" << std::endl;
-      m_reconnect_backoff_s = 1;
-      configChanged.emit("all");
-    } else {
+    // Reconnect sub context if needed.
+    if (!m_async && !connectAsync()) {
       m_reconnect_backoff_s = std::min(m_reconnect_backoff_s * 2, 30);
       scheduleReconnect();
+      return;
     }
+    if (!m_async_write && !connectAsyncWrite()) {
+      m_reconnect_backoff_s = std::min(m_reconnect_backoff_s * 2, 30);
+      scheduleReconnect();
+      return;
+    }
+    // If sub was freshly reconnected, re-subscribe.
+    subscribe();
+    // Rebuild sync context too — its TCP socket is likely dead.
+    if (m_sync) { redisFree(m_sync); m_sync = nullptr; }
+    if (!connectSync()) {
+      std::cerr << "*** WARN: Redis sync reconnect failed" << std::endl;
+      // async is up but sync isn't — schedule another retry so we fix sync.
+      m_reconnect_backoff_s = std::min(m_reconnect_backoff_s * 2, 30);
+      scheduleReconnect();
+      return;
+    }
+    std::cout << "RedisStore: reconnected, re-subscribing and requesting "
+                 "full reload" << std::endl;
+    m_reconnect_backoff_s = 1;
+    configChanged.emit("all");
   });
 }
 void RedisStore::onPubSubMessage(const std::string&, const std::string&) {}
 void RedisStore::drainLiveQueue(Async::Timer*) {
-  if (!m_async || !m_live_queue) return;
+  if (!m_async_write || !m_live_queue) return;
   std::vector<RedisLiveQueue::Op> ops;
   m_live_queue->drain(ops);
   if (ops.empty()) return;
@@ -389,21 +439,21 @@ void RedisStore::drainLiveQueue(Async::Timer*) {
           argv.push_back(kv.first.c_str());  argl.push_back(kv.first.size());
           argv.push_back(kv.second.c_str()); argl.push_back(kv.second.size());
         }
-        redisAsyncCommandArgv(m_async, nullptr, nullptr,
+        redisAsyncCommandArgv(m_async_write, nullptr, nullptr,
                               static_cast<int>(argv.size()),
                               argv.data(), argl.data());
         if (op.ttl_s > 0) {
-          redisAsyncCommand(m_async, nullptr, nullptr,
+          redisAsyncCommand(m_async_write, nullptr, nullptr,
                             "EXPIRE %s %d", op.key.c_str(), op.ttl_s);
         }
         break;
       }
       case RedisLiveQueue::OpType::DEL:
-        redisAsyncCommand(m_async, nullptr, nullptr,
+        redisAsyncCommand(m_async_write, nullptr, nullptr,
                           "DEL %s", op.key.c_str());
         break;
       case RedisLiveQueue::OpType::EXPIRE:
-        redisAsyncCommand(m_async, nullptr, nullptr,
+        redisAsyncCommand(m_async_write, nullptr, nullptr,
                           "EXPIRE %s %d", op.key.c_str(), op.ttl_s);
         break;
     }
@@ -411,7 +461,7 @@ void RedisStore::drainLiveQueue(Async::Timer*) {
 
   // Notify dashboards once per drain cycle.
   std::string ch = keyFor("live.changed");
-  redisAsyncCommand(m_async, nullptr, nullptr,
+  redisAsyncCommand(m_async_write, nullptr, nullptr,
                     "PUBLISH %s tick", ch.c_str());
 }
 void RedisStore::refreshLiveExpire(Async::Timer*) {
