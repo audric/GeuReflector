@@ -74,6 +74,7 @@ When `[REDIS]` is present, Redis **fully overrides** the following:
 - `[PASSWORDS]` — password-group → plaintext password
 - `CLUSTER_TGS` in `[GLOBAL]`
 - Per-trunk `BLACKLIST_TGS`, `ALLOW_TGS`, `TG_MAP`
+- Trunk peer definitions (host, port, secret, remote_prefix, peer_id) — can be added/removed at runtime without restarting
 
 There is no merging. Entries in `.conf` for these sections are silently ignored.
 The reflector logs a warning for each overridden section at startup:
@@ -100,6 +101,7 @@ set.
 | `user:<callsign>` | HASH | `{ group, enabled }` |
 | `group:<name>` | HASH | `{ password }` |
 | `cluster:tgs` | SET | TG numbers as decimal strings |
+| `trunk:<section>:peer` | HASH | `{ host, port, secret, remote_prefix, peer_id }` — runtime-addable trunk peer definition |
 | `trunk:<section>:blacklist` | SET | TG patterns: exact (`666`), prefix (`24*`), range (`100-199`) |
 | `trunk:<section>:allow` | SET | Same syntax as blacklist |
 | `trunk:<section>:tgmap` | HASH | `{ peer_tg: local_tg }` decimal string pairs |
@@ -278,6 +280,38 @@ redis-cli SMEMBERS trunk:TRUNK_1_2:allow
 redis-cli HGETALL  trunk:TRUNK_1_2:tgmap
 ```
 
+### Add a trunk peer at runtime
+
+```bash
+redis-cli HSET trunk:TRUNK_AB:peer \
+    host reflector-b.example.com \
+    port 5302 \
+    secret shared_trunk_secret \
+    remote_prefix 2 \
+    peer_id my-peer-id
+redis-cli PUBLISH config.changed trunk:TRUNK_AB
+```
+
+The reflector creates a new `TrunkLink` and starts the outbound handshake.
+
+Fields:
+- `host` (required)
+- `port` (optional, default `5302`)
+- `secret` (required) — the pre-shared trunk secret, identical on both ends
+- `remote_prefix` (required) — comma-separated TG prefix(es) owned by the peer
+- `peer_id` (optional, default: section name)
+
+### Remove a trunk peer at runtime
+
+```bash
+redis-cli DEL trunk:TRUNK_AB:peer
+redis-cli PUBLISH config.changed trunk:TRUNK_AB
+```
+
+The reflector tears down the TrunkLink cleanly, clearing any trunk
+talker state it held. Only Redis-managed trunks can be removed this
+way; peers defined statically in svxreflector.conf survive.
+
 ### Mute management (not in Redis)
 
 Mutes are managed via the reflector's command PTY (`/dev/shm/reflector_ctrl`),
@@ -351,6 +385,16 @@ will add them without removing existing Redis-only records.
 
 After the import succeeds, remove (or leave in place — they will be ignored)
 the `[USERS]`, `[PASSWORDS]`, and `CLUSTER_TGS` entries from `.conf`.
+
+---
+
+## Static vs Redis-managed trunks
+
+Trunk peers defined in `svxreflector.conf` as `[TRUNK_*]` sections are
+treated as immutable at runtime — a `config.changed trunk:<section>`
+event with no matching Redis peer hash is treated as a filter-reload
+only (the existing behavior), never as a remove. Only trunks that were
+added from Redis hashes can be dynamically destroyed.
 
 ---
 
