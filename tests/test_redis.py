@@ -381,5 +381,129 @@ class RedisOutageTest(unittest.TestCase):
                 pass
 
 
+class RedisImportIdempotenceTest(unittest.TestCase):
+    """Verify --import-conf-to-redis is idempotent: running twice against
+    an unchanged .conf produces identical Redis state."""
+
+    TEST_DB = 5  # isolated from reflector's DB=0 and other tests
+    TEST_PREFIX = "import-test"
+
+    def _redis_cli_db(self, *args) -> str:
+        cmd = [
+            "docker", "compose", "-f", "docker-compose.redis.yml",
+            "exec", "-T", "redis",
+            "redis-cli", "-n", str(self.TEST_DB),
+        ] + list(args)
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True,
+                             cwd=os.path.dirname(os.path.abspath(__file__)))
+        return res.stdout.strip()
+
+    def _dump_keyspace(self) -> dict:
+        """Dump every key's type + content into a dict for comparison."""
+        keys = self._redis_cli_db("KEYS", "*").splitlines()
+        keys = sorted(k for k in keys if k)
+        dump = {}
+        for key in keys:
+            t = self._redis_cli_db("TYPE", key)
+            if t == "hash":
+                raw = self._redis_cli_db("HGETALL", key).splitlines()
+                dump[key] = ("hash", dict(zip(raw[0::2], raw[1::2])))
+            elif t == "set":
+                members = sorted(self._redis_cli_db("SMEMBERS", key).splitlines())
+                dump[key] = ("set", members)
+            elif t == "string":
+                dump[key] = ("string", self._redis_cli_db("GET", key))
+            else:
+                dump[key] = (t, None)
+        return dump
+
+    def setUp(self):
+        self._redis_cli_db("FLUSHDB")
+        # Write the test .conf inside the reflector container using a
+        # bash heredoc via docker compose exec.
+        conf = f"""[GLOBAL]
+LISTEN_PORT=5300
+CLUSTER_TGS=222,91,2221
+
+[REDIS]
+HOST=redis
+PORT=6379
+DB={self.TEST_DB}
+KEY_PREFIX={self.TEST_PREFIX}
+
+[USERS]
+SM0ABC=MyNodes
+SM0ABC-1=MyNodes
+SM3XYZ=SM3XYZ
+
+[PASSWORDS]
+MyNodes=change_me
+SM3XYZ=strong_password
+
+[TRUNK_AB]
+HOST=peer.example.com
+PORT=5302
+SECRET=shared_secret
+REMOTE_PREFIX=2
+BLACKLIST_TGS=666,777*
+ALLOW_TGS=24*,2624123
+TG_MAP=1:2624123,2:2624124
+"""
+        # Write via a heredoc in the container.
+        subprocess.run([
+            "docker", "compose", "-f", "docker-compose.redis.yml",
+            "exec", "-T", R1_SVC,
+            "bash", "-c",
+            "cat > /tmp/import-test.conf"
+        ], input=conf, text=True, check=True,
+           cwd=os.path.dirname(os.path.abspath(__file__)))
+
+    def _run_importer(self):
+        """Invoke --import-conf-to-redis against the test conf."""
+        # Path to the binary — discover it dynamically in case the base
+        # image places it elsewhere.
+        res = subprocess.run([
+            "docker", "compose", "-f", "docker-compose.redis.yml",
+            "exec", "-T", R1_SVC,
+            "bash", "-c",
+            "command -v svxreflector"
+        ], capture_output=True, text=True, check=True,
+           cwd=os.path.dirname(os.path.abspath(__file__)))
+        binary = res.stdout.strip()
+        self.assertTrue(binary, "svxreflector binary not found in container")
+
+        subprocess.run([
+            "docker", "compose", "-f", "docker-compose.redis.yml",
+            "exec", "-T", R1_SVC,
+            binary, "--config", "/tmp/import-test.conf", "--import-conf-to-redis",
+        ], capture_output=True, text=True, check=True,
+           cwd=os.path.dirname(os.path.abspath(__file__)))
+
+    def test_import_is_idempotent(self):
+        self._run_importer()
+        snapshot1 = self._dump_keyspace()
+
+        # Expected key shape — sanity check.
+        expected_keys_subset = {
+            f"{self.TEST_PREFIX}:user:SM0ABC",
+            f"{self.TEST_PREFIX}:user:SM0ABC-1",
+            f"{self.TEST_PREFIX}:user:SM3XYZ",
+            f"{self.TEST_PREFIX}:group:MyNodes",
+            f"{self.TEST_PREFIX}:group:SM3XYZ",
+            f"{self.TEST_PREFIX}:cluster:tgs",
+            f"{self.TEST_PREFIX}:trunk:AB:blacklist",
+            f"{self.TEST_PREFIX}:trunk:AB:allow",
+            f"{self.TEST_PREFIX}:trunk:AB:tgmap",
+        }
+        missing = expected_keys_subset - set(snapshot1.keys())
+        self.assertFalse(missing, f"first import missing keys: {missing}")
+
+        self._run_importer()
+        snapshot2 = self._dump_keyspace()
+
+        self.assertEqual(snapshot1, snapshot2,
+                         "second import produced different Redis state")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
