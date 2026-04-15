@@ -366,6 +366,8 @@ class Reflector : public sigc::trackable
     void cfgUpdated(const std::string& section, const std::string& tag);
     void onTrunkTalkerUpdated(uint32_t tg, std::string old_cs,
                               std::string new_cs);
+    void onRedisConfigChanged(std::string scope);
+    void reloadClusterTgs(void);
     void refreshStatus(void);
     void initTrunkLinks(void);
     void initTrunkServer(void);

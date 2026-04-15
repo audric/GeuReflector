@@ -461,6 +461,8 @@ bool Reflector::initialize(Async::Config &cfg)
       };
       warn_if_nonempty("USERS");
       warn_if_nonempty("PASSWORDS");
+      m_redis->configChanged.connect(
+          sigc::mem_fun(*this, &Reflector::onRedisConfigChanged));
     }
   }
 
@@ -2726,6 +2728,32 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
     }
   }
 } /* Reflector::onTrunkTalkerUpdated */
+
+
+void Reflector::reloadClusterTgs(void)
+{
+  // Stub — populated by Task C2 (Cluster TGs from Redis).
+}
+
+
+void Reflector::onRedisConfigChanged(std::string scope)
+{
+  std::cout << "Redis config.changed: " << scope << std::endl;
+  if (scope == "users" || scope == "all") {
+    // Auth lookups are stateless (per-connect). Nothing to invalidate on
+    // existing connections — they are already authenticated. New
+    // connections will re-query Redis automatically.
+  }
+  if (scope == "cluster" || scope == "all") {
+    reloadClusterTgs();
+  }
+  if (scope.rfind("trunk:", 0) == 0 || scope == "all") {
+    std::string section = (scope == "all") ? "" : scope.substr(6);
+    for (auto* link : m_trunk_links) {
+      if (section.empty() || link->section() == section) link->reloadConfig();
+    }
+  }
+}
 
 
 void Reflector::publishRxUpdate(ReflectorClient* client)
