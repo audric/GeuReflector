@@ -29,6 +29,13 @@ from urllib.request import urlopen
 from urllib.error import URLError
 import json
 
+# Reuse the V2 mock client from test_trunk.py
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from test_trunk import (  # noqa: E402
+    ClientPeer, UDP_AUDIO, UDP_FLUSH,
+    CLIENT_CALLSIGN, CLIENT_PASSWORD,
+)
+
 # Ensure tests/ is on the path so topology can be imported
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import topology as T
@@ -418,6 +425,87 @@ class TestTwinIntegration(unittest.TestCase):
                                          timeout=30.0)
             except AssertionError:
                 pass
+
+    # ------------------------------------------------------------------
+    # Test 8: Audio mirror across TWIN link (real V2 clients)
+    # ------------------------------------------------------------------
+    def test_08_audio_mirror_between_twins(self):
+        """A client on ref1 transmits; a client on ref2 receives the audio.
+
+        Exercises the Phase C1 path end-to-end:
+          ref1 local client -> TGHandler.talkerUpdated -> TwinLink.onLocalAudio
+          -> MsgTrunkAudio over [TWIN] -> ref2.handleMsgTrunkAudio
+          -> broadcastUdpMsg -> ref2 local client's UDP socket.
+        """
+        # TG 26201 has prefix "262", owned locally by both twins.
+        tg = 26201
+
+        # Wait for the twin link to be authenticated on both sides before
+        # we assume mirroring is armed. (After previous failover tests
+        # ref1 may have just restarted.)
+        wait_until(
+            lambda: any(
+                "TWIN: hello from partner" in docker_compose_output(
+                    "logs", "reflector-ref1")
+                for _ in [0]
+            ),
+            timeout=20.0,
+            msg="twin link not re-established on ref1 after prior tests",
+        )
+
+        sender = ClientPeer()
+        receiver = ClientPeer()
+        try:
+            ref1_client_port = T.twin_mapped_client_port("ref1")
+            ref2_client_port = T.twin_mapped_client_port("ref2")
+
+            sender.connect(HOST, ref1_client_port)
+            sender.authenticate(callsign=CLIENT_CALLSIGN,
+                                password=CLIENT_PASSWORD)
+            sender.setup_udp(udp_port=ref1_client_port)
+
+            receiver.connect(HOST, ref2_client_port)
+            receiver.authenticate(callsign="N0SEND",  # different callsign
+                                   password=CLIENT_PASSWORD)
+            receiver.setup_udp(udp_port=ref2_client_port)
+
+            sender.select_tg(tg)
+            receiver.select_tg(tg)
+            time.sleep(0.5)  # let TG selection propagate
+
+            # Drain any pre-test UDP noise on the receiver
+            receiver.recv_udp_all(timeout=0.5)
+
+            audio_payload = b"\xBE\xEF" * 80  # 160 bytes, distinctive
+            for _ in range(4):
+                sender.send_udp_audio(audio_payload)
+                time.sleep(0.02)
+            sender.send_udp_flush()
+
+            msgs = receiver.recv_udp_all(timeout=3.0)
+            audio_count = sum(1 for t, _ in msgs if t == UDP_AUDIO)
+            flush_count = sum(1 for t, _ in msgs if t == UDP_FLUSH)
+
+            self.assertGreater(
+                audio_count, 0,
+                "receiver on ref2 did not get any audio frames from ref1 "
+                "sender (twin audio-mirror path broken)",
+            )
+            self.assertGreater(
+                flush_count, 0,
+                "receiver on ref2 did not get flush marker from ref1 sender",
+            )
+
+        finally:
+            sender.close()
+            receiver.close()
+
+
+def docker_compose_output(*args) -> str:
+    """Return the stdout+stderr of a docker-compose command as text."""
+    cmd = ["docker", "compose", "-f", COMPOSE_FILE, *args]
+    res = subprocess.run(cmd, cwd=TESTS_DIR, capture_output=True, text=True)
+    return (res.stdout or "") + (res.stderr or "")
 
 
 # ---------------------------------------------------------------------------

@@ -166,10 +166,23 @@ void TwinLink::acceptInboundConnection(Async::FramedTcpConnection* con,
 {
   if (m_inbound_con != nullptr)
   {
-    cerr << "*** WARNING[TWIN]: Already have an inbound connection, "
-            "rejecting new one" << endl;
-    con->disconnect();
-    return;
+    // If the existing inbound's socket is already closed, drop our
+    // reference to it and accept the new connection — the old one's
+    // disconnect signal may not have fired yet (e.g. partner crashed
+    // without a clean FIN).
+    if (!m_inbound_con->isConnected())
+    {
+      cout << "TWIN: replacing stale inbound connection" << endl;
+      m_inbound_con = nullptr;
+      m_ib_hello_received = false;
+    }
+    else
+    {
+      cerr << "*** WARNING[TWIN]: Already have an inbound connection, "
+              "rejecting new one" << endl;
+      con->disconnect();
+      return;
+    }
   }
 
   m_inbound_con = con;
@@ -181,6 +194,20 @@ void TwinLink::acceptInboundConnection(Async::FramedTcpConnection* con,
 
   // Wire inbound frame handler to our message dispatcher
   con->frameReceived.connect(mem_fun(*this, &TwinLink::onFrameReceived));
+  // Wire disconnect handler so we clear m_inbound_con when the remote
+  // end goes away, otherwise the next reconnect is rejected above.
+  con->disconnected.connect(
+      [this](Async::TcpConnection* c,
+             Async::TcpConnection::DisconnectReason /*reason*/) {
+        if (m_inbound_con == c)
+        {
+          cout << "TWIN: inbound disconnected" << endl;
+          m_inbound_con = nullptr;
+          m_ib_hello_received = false;
+          m_ib_hb_tx_cnt = 0;
+          m_ib_hb_rx_cnt = 0;
+        }
+      });
 
   m_peer_id_received = hello.id();
   cout << "TWIN: Accepted inbound from " << con->remoteHost() << ":"
