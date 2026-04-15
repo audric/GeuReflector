@@ -224,18 +224,20 @@ void TwinLink::onLocalFlush(uint32_t tg)
 } /* TwinLink::onLocalFlush */
 
 
-void TwinLink::onExternalTrunkTalkerStart(uint32_t /*tg*/,
-                                          const std::string& /*peer_id*/,
-                                          const std::string& /*callsign*/)
+void TwinLink::onExternalTrunkTalkerStart(uint32_t tg,
+                                          const std::string& peer_id,
+                                          const std::string& callsign)
 {
-  // Phase C2
+  if (!isActive()) return;
+  sendMsg(MsgTwinExtTalkerStart(tg, peer_id, callsign));
 } /* TwinLink::onExternalTrunkTalkerStart */
 
 
-void TwinLink::onExternalTrunkTalkerStop(uint32_t /*tg*/,
-                                          const std::string& /*peer_id*/)
+void TwinLink::onExternalTrunkTalkerStop(uint32_t tg,
+                                          const std::string& peer_id)
 {
-  // Phase C2
+  if (!isActive()) return;
+  sendMsg(MsgTwinExtTalkerStop(tg, peer_id));
 } /* TwinLink::onExternalTrunkTalkerStop */
 
 
@@ -470,15 +472,34 @@ void TwinLink::handleMsgTrunkHeartbeat(void)
 } /* TwinLink::handleMsgTrunkHeartbeat */
 
 
-void TwinLink::handleMsgTwinExtTalkerStart(std::istream& /*is*/)
+void TwinLink::handleMsgTwinExtTalkerStart(std::istream& is)
 {
-  // Phase C2
+  MsgTwinExtTalkerStart msg;
+  if (!msg.unpack(is))
+  {
+    cerr << "*** ERROR[TWIN]: Failed to unpack MsgTwinExtTalkerStart" << endl;
+    return;
+  }
+  // setTrunkTalkerForTGViaPeer records peer attribution and fires
+  // trunkTalkerUpdated → Reflector::onTrunkTalkerUpdated, which broadcasts
+  // MsgTalkerStart to local clients.  That handler does NOT call back into
+  // TwinLink, so there is no echo loop.
+  TGHandler::instance()->setTrunkTalkerForTGViaPeer(
+      msg.tg(), msg.callsign(), msg.peerId());
 } /* TwinLink::handleMsgTwinExtTalkerStart */
 
 
-void TwinLink::handleMsgTwinExtTalkerStop(std::istream& /*is*/)
+void TwinLink::handleMsgTwinExtTalkerStop(std::istream& is)
 {
-  // Phase C2
+  MsgTwinExtTalkerStop msg;
+  if (!msg.unpack(is)) return;
+  // Only clear if this peer still holds the TG — avoids racing a newer talker
+  // that took over after the stop was queued on the wire.
+  if (TGHandler::instance()->peerIdForTG(msg.tg()) == msg.peerId())
+  {
+    TGHandler::instance()->setTrunkTalkerForTGViaPeer(
+        msg.tg(), "", msg.peerId());
+  }
 } /* TwinLink::handleMsgTwinExtTalkerStop */
 
 

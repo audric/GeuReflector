@@ -832,6 +832,7 @@ void TrunkLink::handleMsgTrunkTalkerStart(std::istream& is)
   m_peer_active_tgs.insert(local_tg);
   m_peer_interested_tgs[local_tg] = std::time(nullptr);
   TGHandler::instance()->setTrunkTalkerForTG(local_tg, msg.callsign());
+  m_reflector->notifyExternalTrunkTalkerStart(local_tg, m_section, msg.callsign());
 } /* TrunkLink::handleMsgTrunkTalkerStart */
 
 
@@ -860,6 +861,7 @@ void TrunkLink::handleMsgTrunkTalkerStop(std::istream& is)
   m_yielded_tgs.erase(local_tg);
   m_peer_active_tgs.erase(local_tg);
   TGHandler::instance()->clearTrunkTalkerForTG(local_tg);
+  m_reflector->notifyExternalTrunkTalkerStop(local_tg, m_section);
 } /* TrunkLink::handleMsgTrunkTalkerStop */
 
 
@@ -1093,6 +1095,7 @@ void TrunkLink::clearPeerTalkerState(void)
   for (uint32_t tg : m_peer_active_tgs)
   {
     TGHandler::instance()->clearTrunkTalkerForTG(tg);
+    m_reflector->notifyExternalTrunkTalkerStop(tg, m_section);
   }
   m_peer_active_tgs.clear();
   m_yielded_tgs.clear();

@@ -262,6 +262,11 @@ class Reflector : public sigc::trackable
     void publishRxUpdate(ReflectorClient* client);
     void onClientAuthenticated(const std::string& callsign, uint32_t tg,
                                const std::string& ip);
+    void notifyExternalTrunkTalkerStart(uint32_t tg,
+                                         const std::string& peer_id,
+                                         const std::string& callsign);
+    void notifyExternalTrunkTalkerStop(uint32_t tg,
+                                        const std::string& peer_id);
     void onTrunkStateChanged(const std::string& section,
                              const std::string& peer_id,
                              const std::string& direction, bool up,

@@ -2979,6 +2979,20 @@ void Reflector::onClientAuthenticated(const std::string& callsign,
 } /* Reflector::onClientAuthenticated */
 
 
+void Reflector::notifyExternalTrunkTalkerStart(uint32_t tg,
+    const std::string& peer_id, const std::string& callsign)
+{
+  if (m_twin_link) m_twin_link->onExternalTrunkTalkerStart(tg, peer_id, callsign);
+} /* Reflector::notifyExternalTrunkTalkerStart */
+
+
+void Reflector::notifyExternalTrunkTalkerStop(uint32_t tg,
+    const std::string& peer_id)
+{
+  if (m_twin_link) m_twin_link->onExternalTrunkTalkerStop(tg, peer_id);
+} /* Reflector::notifyExternalTrunkTalkerStop */
+
+
 void Reflector::scheduleNodeListUpdate(void)
 {
   // Debounce — multiple rapid login/TG-change events coalesce into one send
