@@ -18,6 +18,7 @@ def generate_reflector_conf(name: str) -> str:
         "TG_FOR_V1_CLIENTS=999",
         f"LOCAL_PREFIX={','.join(r['prefix'])}",
         f"HTTP_SRV_PORT={T.INTERNAL_HTTP_PORT}",
+        "COMMAND_PTY=/dev/shm/reflector_ctrl",
         "",
         "[SERVER_CERT]",
         f"COMMON_NAME={T.service_name(name)}",
