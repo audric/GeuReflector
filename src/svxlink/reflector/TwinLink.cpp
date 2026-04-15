@@ -194,23 +194,33 @@ void TwinLink::acceptInboundConnection(Async::FramedTcpConnection* con,
 } /* TwinLink::acceptInboundConnection */
 
 
-void TwinLink::onLocalTalkerUpdated(uint32_t /*tg*/,
-                                    const std::string& /*callsign*/)
+void TwinLink::onLocalTalkerUpdated(uint32_t tg,
+                                    const std::string& callsign)
 {
-  // Phase C1
+  if (!isActive()) return;
+  if (callsign.empty())
+  {
+    sendMsg(MsgTrunkTalkerStop(tg));
+  }
+  else
+  {
+    sendMsg(MsgTrunkTalkerStart(tg, callsign));
+  }
 } /* TwinLink::onLocalTalkerUpdated */
 
 
-void TwinLink::onLocalAudio(uint32_t /*tg*/,
-                            const std::vector<uint8_t>& /*audio*/)
+void TwinLink::onLocalAudio(uint32_t tg,
+                            const std::vector<uint8_t>& audio)
 {
-  // Phase C1
+  if (!isActive()) return;
+  sendMsg(MsgTrunkAudio(tg, audio));
 } /* TwinLink::onLocalAudio */
 
 
-void TwinLink::onLocalFlush(uint32_t /*tg*/)
+void TwinLink::onLocalFlush(uint32_t tg)
 {
-  // Phase C1
+  if (!isActive()) return;
+  sendMsg(MsgTrunkFlush(tg));
 } /* TwinLink::onLocalFlush */
 
 
@@ -399,27 +409,58 @@ void TwinLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
 } /* TwinLink::handleMsgTrunkHello */
 
 
-void TwinLink::handleMsgTrunkTalkerStart(std::istream& /*is*/)
+void TwinLink::handleMsgTrunkTalkerStart(std::istream& is)
 {
-  // Phase C1
+  MsgTrunkTalkerStart msg;
+  if (!msg.unpack(is))
+  {
+    cerr << "*** ERROR[TWIN]: Failed to unpack MsgTrunkTalkerStart" << endl;
+    return;
+  }
+  // setTrunkTalkerForTG fires trunkTalkerUpdated → onTrunkTalkerUpdated in
+  // Reflector, which broadcasts MsgTalkerStart to all local clients on this TG.
+  TGHandler::instance()->setTrunkTalkerForTG(msg.tg(), msg.callsign());
 } /* TwinLink::handleMsgTrunkTalkerStart */
 
 
-void TwinLink::handleMsgTrunkTalkerStop(std::istream& /*is*/)
+void TwinLink::handleMsgTrunkTalkerStop(std::istream& is)
 {
-  // Phase C1
+  MsgTrunkTalkerStop msg;
+  if (!msg.unpack(is))
+  {
+    cerr << "*** ERROR[TWIN]: Failed to unpack MsgTrunkTalkerStop" << endl;
+    return;
+  }
+  // clearTrunkTalkerForTG fires trunkTalkerUpdated → onTrunkTalkerUpdated,
+  // which broadcasts MsgTalkerStop and MsgUdpFlushSamples to local clients.
+  TGHandler::instance()->clearTrunkTalkerForTG(msg.tg());
 } /* TwinLink::handleMsgTrunkTalkerStop */
 
 
-void TwinLink::handleMsgTrunkAudio(std::istream& /*is*/)
+void TwinLink::handleMsgTrunkAudio(std::istream& is)
 {
-  // Phase C1
+  MsgTrunkAudio msg;
+  if (!msg.unpack(is))
+  {
+    cerr << "*** ERROR[TWIN]: Failed to unpack MsgTrunkAudio" << endl;
+    return;
+  }
+  if (msg.audio().empty()) return;
+  MsgUdpAudio udp_msg(msg.audio());
+  m_reflector->broadcastUdpMsg(udp_msg, ReflectorClient::TgFilter(msg.tg()));
 } /* TwinLink::handleMsgTrunkAudio */
 
 
-void TwinLink::handleMsgTrunkFlush(std::istream& /*is*/)
+void TwinLink::handleMsgTrunkFlush(std::istream& is)
 {
-  // Phase C1
+  MsgTrunkFlush msg;
+  if (!msg.unpack(is))
+  {
+    cerr << "*** ERROR[TWIN]: Failed to unpack MsgTrunkFlush" << endl;
+    return;
+  }
+  m_reflector->broadcastUdpMsg(MsgUdpFlushSamples(),
+      ReflectorClient::TgFilter(msg.tg()));
 } /* TwinLink::handleMsgTrunkFlush */
 
 

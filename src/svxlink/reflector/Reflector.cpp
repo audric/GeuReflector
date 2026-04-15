@@ -1415,6 +1415,10 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
               {
                 kv.second->onParentAudio(tg, msg.audioData());
               }
+              if (m_twin_link != nullptr)
+              {
+                m_twin_link->onLocalAudio(tg, msg.audioData());
+              }
             }
           }
         }
@@ -1476,6 +1480,10 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
           for (auto& kv : m_satellite_con_map)
           {
             kv.second->onParentFlush(tg);
+          }
+          if (m_twin_link != nullptr)
+          {
+            m_twin_link->onLocalFlush(tg);
           }
         }
       }
@@ -1628,6 +1636,13 @@ void Reflector::onTalkerUpdated(uint32_t tg, ReflectorClient* old_talker,
       {
         kv.second->onParentTalkerStop(tg);
       }
+    }
+    // Notify twin partner about local talker changes.
+    if (m_twin_link != nullptr)
+    {
+      std::string callsign = (new_talker != nullptr) ? new_talker->callsign()
+                                                     : "";
+      m_twin_link->onLocalTalkerUpdated(tg, callsign);
     }
   }
 } /* Reflector::onTalkerUpdated */
