@@ -70,6 +70,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "ReflectorClient.h"
 #include "TGHandler.h"
 #include "TrunkLink.h"
+#include "TwinLink.h"
 #include "RedisStore.h"
 #include <version/SVXREFLECTOR.h>
 
@@ -324,6 +325,15 @@ Reflector::~Reflector(void)
   m_sat_srv = nullptr;
   delete m_satellite_client;
   m_satellite_client = nullptr;
+  delete m_twin_link;
+  m_twin_link = nullptr;
+  for (auto& kv : m_twin_pending_cons)
+  {
+    delete kv.second;
+  }
+  m_twin_pending_cons.clear();
+  delete m_twin_srv;
+  m_twin_srv = nullptr;
   m_client_con_map.clear();
   ReflectorClient::cleanup();
   delete TGHandler::instance();
@@ -504,6 +514,8 @@ bool Reflector::initialize(Async::Config &cfg)
 
   initTrunkLinks();
   initTrunkServer();
+  initTwinLink();
+  initTwinServer();
   initSatelliteServer();
 
   // Initialize MQTT publisher if [MQTT] section is configured
@@ -1403,6 +1415,10 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
               {
                 kv.second->onParentAudio(tg, msg.audioData());
               }
+              if (m_twin_link != nullptr)
+              {
+                m_twin_link->onLocalAudio(tg, msg.audioData());
+              }
             }
           }
         }
@@ -1464,6 +1480,10 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
           for (auto& kv : m_satellite_con_map)
           {
             kv.second->onParentFlush(tg);
+          }
+          if (m_twin_link != nullptr)
+          {
+            m_twin_link->onLocalFlush(tg);
           }
         }
       }
@@ -1616,6 +1636,13 @@ void Reflector::onTalkerUpdated(uint32_t tg, ReflectorClient* old_talker,
       {
         kv.second->onParentTalkerStop(tg);
       }
+    }
+    // Notify twin partner about local talker changes.
+    if (m_twin_link != nullptr)
+    {
+      std::string callsign = (new_talker != nullptr) ? new_talker->callsign()
+                                                     : "";
+      m_twin_link->onLocalTalkerUpdated(tg, callsign);
     }
   }
 } /* Reflector::onTalkerUpdated */
@@ -2952,6 +2979,20 @@ void Reflector::onClientAuthenticated(const std::string& callsign,
 } /* Reflector::onClientAuthenticated */
 
 
+void Reflector::notifyExternalTrunkTalkerStart(uint32_t tg,
+    const std::string& peer_id, const std::string& callsign)
+{
+  if (m_twin_link) m_twin_link->onExternalTrunkTalkerStart(tg, peer_id, callsign);
+} /* Reflector::notifyExternalTrunkTalkerStart */
+
+
+void Reflector::notifyExternalTrunkTalkerStop(uint32_t tg,
+    const std::string& peer_id)
+{
+  if (m_twin_link) m_twin_link->onExternalTrunkTalkerStop(tg, peer_id);
+} /* Reflector::notifyExternalTrunkTalkerStop */
+
+
 void Reflector::scheduleNodeListUpdate(void)
 {
   // Debounce — multiple rapid login/TG-change events coalesce into one send
@@ -3870,6 +3911,195 @@ std::string Reflector::formatCerts(bool signedCerts, bool pendingCerts)
   ss << "-----------------------------------------------\n";
   return ss.str();
 } /* Reflector::formatCerts */
+
+
+void Reflector::initTwinLink(void)
+{
+  bool found = false;
+  for (const auto& section : m_cfg->listSections())
+  {
+    if (section == "TWIN")
+    {
+      found = true;
+      break;
+    }
+  }
+  if (!found)
+  {
+    return;
+  }
+
+  m_twin_link = new TwinLink(this, *m_cfg);
+  if (!m_twin_link->initialize())
+  {
+    delete m_twin_link;
+    m_twin_link = nullptr;
+    cerr << "*** ERROR: TwinLink initialization failed" << endl;
+  }
+} /* Reflector::initTwinLink */
+
+
+void Reflector::initTwinServer(void)
+{
+  if (m_twin_link == nullptr) return;  // no [TWIN] section — no server needed
+
+  std::string port_str;
+  if (m_cfg->getValue("GLOBAL", "TWIN_LISTEN_PORT", port_str)
+      && !port_str.empty())
+  {
+    m_twin_listen_port = static_cast<uint16_t>(std::atoi(port_str.c_str()));
+  }
+
+  m_twin_srv = new TcpServer<FramedTcpConnection>(
+      std::to_string(m_twin_listen_port));
+  m_twin_srv->clientConnected.connect(
+      sigc::mem_fun(*this, &Reflector::twinClientConnected));
+  m_twin_srv->clientDisconnected.connect(
+      sigc::mem_fun(*this, &Reflector::twinClientDisconnected));
+
+  std::cout << "TWIN: server listening on port " << m_twin_listen_port
+            << std::endl;
+} /* Reflector::initTwinServer */
+
+
+void Reflector::twinClientConnected(Async::FramedTcpConnection* con)
+{
+  std::cout << "TWIN: inbound connection from "
+            << con->remoteHost() << ":" << con->remotePort()
+            << " (awaiting hello)" << std::endl;
+
+  auto* timer = new Async::Timer(10000, Async::Timer::TYPE_ONESHOT);
+  timer->expired.connect(
+      sigc::mem_fun(*this, &Reflector::twinPendingTimeout));
+  m_twin_pending_cons[con] = timer;
+
+  con->setMaxFrameSize(ReflectorMsg::MAX_SSL_SETUP_FRAME_SIZE);
+  con->frameReceived.connect(
+      sigc::mem_fun(*this, &Reflector::twinPendingFrameReceived));
+} /* Reflector::twinClientConnected */
+
+
+void Reflector::twinClientDisconnected(Async::FramedTcpConnection* con,
+    Async::FramedTcpConnection::DisconnectReason /*reason*/)
+{
+  auto pit = m_twin_pending_cons.find(con);
+  if (pit != m_twin_pending_cons.end())
+  {
+    delete pit->second;  // timer
+    m_twin_pending_cons.erase(pit);
+    std::cout << "TWIN: pending inbound from "
+              << con->remoteHost() << " disconnected" << std::endl;
+  }
+  // If already handed off to m_twin_link, TwinLink owns the connection.
+} /* Reflector::twinClientDisconnected */
+
+
+void Reflector::twinPendingFrameReceived(Async::FramedTcpConnection* con,
+                                          std::vector<uint8_t>& data)
+{
+  auto pit = m_twin_pending_cons.find(con);
+  if (pit == m_twin_pending_cons.end())
+  {
+    return;  // Already handed off — TwinLink handles frames now
+  }
+
+  auto buf = reinterpret_cast<const char*>(data.data());
+  std::stringstream ss;
+  ss.write(buf, data.size());
+
+  // Helper: clean up pending entry and disconnect.
+  // TcpConnection::disconnect() does NOT emit the disconnected signal,
+  // so twinClientDisconnected would not fire — we clean up here explicitly.
+  auto rejectPending = [&]()
+  {
+    delete pit->second;  // timer
+    m_twin_pending_cons.erase(pit);
+    con->disconnect();
+  };
+
+  ReflectorMsg header;
+  if (!header.unpack(ss))
+  {
+    std::cerr << "*** ERROR: TWIN inbound: failed to unpack message header"
+              << std::endl;
+    rejectPending();
+    return;
+  }
+
+  if (header.type() != MsgTrunkHello::TYPE)
+  {
+    std::cerr << "*** WARNING: TWIN inbound: expected MsgTrunkHello, got type="
+              << header.type() << std::endl;
+    rejectPending();
+    return;
+  }
+
+  MsgTrunkHello msg;
+  if (!msg.unpack(ss))
+  {
+    std::cerr << "*** ERROR: TWIN inbound: failed to unpack MsgTrunkHello"
+              << std::endl;
+    rejectPending();
+    return;
+  }
+
+  if (msg.role() != MsgTrunkHello::ROLE_TWIN)
+  {
+    std::cerr << "*** ERROR: TWIN inbound: peer sent role=" << int(msg.role())
+              << ", expected ROLE_TWIN (" << int(MsgTrunkHello::ROLE_TWIN)
+              << ")" << std::endl;
+    rejectPending();
+    return;
+  }
+
+  // Verify HMAC (shared secret proof) before leaking any other info.
+  if (!msg.verify(m_twin_link->secret()))
+  {
+    std::cerr << "*** ERROR: TWIN inbound: authentication failed "
+              << "(wrong secret)" << std::endl;
+    rejectPending();
+    return;
+  }
+
+  // Twins must share the same LOCAL_PREFIX.
+  if (msg.localPrefix() != m_twin_link->localPrefix())
+  {
+    std::cerr << "*** ERROR: TWIN inbound: local_prefix mismatch: "
+              << "ours='" << m_twin_link->localPrefix()
+              << "' theirs='" << msg.localPrefix() << "'" << std::endl;
+    rejectPending();
+    return;
+  }
+
+  // Clean up our pending entry and hand off.
+  delete pit->second;  // timer
+  m_twin_pending_cons.erase(pit);
+
+  con->frameReceived.clear();
+  con->setMaxFrameSize(ReflectorMsg::MAX_POSTAUTH_FRAME_SIZE);
+
+  m_twin_link->acceptInboundConnection(con, msg);
+} /* Reflector::twinPendingFrameReceived */
+
+
+void Reflector::twinPendingTimeout(Async::Timer* t)
+{
+  for (auto it = m_twin_pending_cons.begin();
+       it != m_twin_pending_cons.end(); ++it)
+  {
+    if (it->second == t)
+    {
+      std::cerr << "*** WARNING: TWIN inbound from "
+                << it->first->remoteHost()
+                << ": hello timeout — disconnecting" << std::endl;
+      auto* con = it->first;
+      delete it->second;  // timer
+      m_twin_pending_cons.erase(it);
+      con->disconnect();
+      return;
+    }
+  }
+} /* Reflector::twinPendingTimeout */
 
 
 /*

@@ -49,6 +49,10 @@ automatically.
   claims
 - **Cluster TGs** — BrandMeister-style nationwide talk groups that are broadcast
   to all trunk peers regardless of prefix ownership
+- **Twin (HA-pair) protocol** — two reflectors can share `LOCAL_PREFIX` and
+  appear as one logical peer to external trunks, with sticky per-transmission
+  socket selection and instant failover on socket failure. See
+  `docs/TWIN_PROTOCOL.md`.
 - **Satellite reflectors** — lightweight relay instances that connect to a parent
   reflector instead of joining the full mesh, reducing configuration overhead for
   large deployments

@@ -116,6 +116,38 @@ CERT_CA_HOOK=@SVX_SHARE_INSTALL_DIR@/ca-hook.py
 # Mapped TGs bypass the prefix routing check on this link.
 #TG_MAP=1:2624123,2:2624124
 
+###############################################################################
+# Twin (HA-pair) link — see docs/TWIN_PROTOCOL.md
+###############################################################################
+# Uncomment to pair this reflector with a partner that shares its LOCAL_PREFIX.
+# Both reflectors declare an IDENTICAL LOCAL_PREFIX and a [TWIN] section
+# pointing at each other.  Clients can connect to either node and external
+# trunk peers see the pair as a single logical peer (with PAIRED=1 on their
+# side — see below).
+#
+#[TWIN]
+#HOST=ref2.example.de
+#PORT=5304
+#SECRET=shared_twin_secret
+
+# Twin server listen port (default 5304)
+#TWIN_LISTEN_PORT=5304
+
+###############################################################################
+# Paired external trunk — consume a remote HA-pair as a single logical peer
+###############################################################################
+# When the remote side is a twin pair (two reflectors with the same
+# LOCAL_PREFIX linked via [TWIN]), set PAIRED=1 and list both their hosts
+# in HOST=.  This reflector opens TCP connections to both, accepts inbound
+# from both, and uses sticky per-transmission selection with instant failover.
+#
+#[TRUNK_IT_DE]
+#HOST=ref1.example.de,ref2.example.de
+#PORT=5302
+#SECRET=shared_trunk_secret
+#REMOTE_PREFIX=262
+#PAIRED=1
+
 # --- Satellite reflectors ---
 # A satellite is a lightweight reflector that connects to a parent
 # reflector instead of joining the trunk mesh. Clients connect to the

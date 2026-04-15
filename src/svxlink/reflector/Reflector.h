@@ -87,6 +87,7 @@ namespace Async
 class ReflectorMsg;
 class ReflectorUdpMsg;
 class RedisStore;
+class TwinLink;
 
 
 /****************************************************************************
@@ -261,6 +262,11 @@ class Reflector : public sigc::trackable
     void publishRxUpdate(ReflectorClient* client);
     void onClientAuthenticated(const std::string& callsign, uint32_t tg,
                                const std::string& ip);
+    void notifyExternalTrunkTalkerStart(uint32_t tg,
+                                         const std::string& peer_id,
+                                         const std::string& callsign);
+    void notifyExternalTrunkTalkerStop(uint32_t tg,
+                                        const std::string& peer_id);
     void onTrunkStateChanged(const std::string& section,
                              const std::string& peer_id,
                              const std::string& direction, bool up,
@@ -331,6 +337,13 @@ class Reflector : public sigc::trackable
     // Handed-off inbound trunk connections mapped to their TrunkLink
     std::map<Async::FramedTcpConnection*, TrunkLink*>    m_trunk_inbound_map;
 
+    // Twin HA-pair support
+    TwinLink*                                            m_twin_link = nullptr;
+    Async::TcpServer<Async::FramedTcpConnection>*        m_twin_srv = nullptr;
+    uint16_t                                             m_twin_listen_port = 5304;
+    // Pending inbound twin connections awaiting MsgTrunkHello
+    std::map<Async::FramedTcpConnection*, Async::Timer*> m_twin_pending_cons;
+
     // Satellite support
     bool                        m_is_satellite = false;
     SatelliteClient*            m_satellite_client = nullptr;
@@ -375,6 +388,14 @@ class Reflector : public sigc::trackable
     void refreshStatus(void);
     void initTrunkLinks(void);
     void initTrunkServer(void);
+    void initTwinLink(void);
+    void initTwinServer(void);
+    void twinClientConnected(Async::FramedTcpConnection* con);
+    void twinClientDisconnected(Async::FramedTcpConnection* con,
+        Async::FramedTcpConnection::DisconnectReason reason);
+    void twinPendingFrameReceived(Async::FramedTcpConnection* con,
+                                   std::vector<uint8_t>& data);
+    void twinPendingTimeout(Async::Timer* t);
     void trunkClientConnected(Async::FramedTcpConnection* con);
     void trunkClientDisconnected(Async::FramedTcpConnection* con,
         Async::FramedTcpConnection::DisconnectReason reason);
