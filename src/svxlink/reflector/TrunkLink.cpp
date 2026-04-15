@@ -143,11 +143,41 @@ TrunkLink::~TrunkLink(void)
 
 bool TrunkLink::initialize(void)
 {
+  // PAIRED — if set, HOST is a comma-separated list of twin partner hosts
+  std::string paired_str;
+  m_cfg.getValue(m_section, "PAIRED", paired_str);
+  m_paired = (paired_str == "1" || paired_str == "true");
+
   // HOST
-  if (!m_cfg.getValue(m_section, "HOST", m_peer_host) || m_peer_host.empty())
+  std::string host_str;
+  if (!m_cfg.getValue(m_section, "HOST", host_str) || host_str.empty())
   {
     cerr << "*** ERROR[" << m_section << "]: Missing HOST" << endl;
     return false;
+  }
+
+  if (m_paired)
+  {
+    // Comma-separated host list — one per twin partner.
+    std::istringstream iss(host_str);
+    std::string h;
+    while (std::getline(iss, h, ','))
+    {
+      h.erase(0, h.find_first_not_of(" \t"));
+      h.erase(h.find_last_not_of(" \t") + 1);
+      if (!h.empty()) m_peer_hosts.push_back(h);
+    }
+    if (m_peer_hosts.size() < 2)
+    {
+      cerr << "*** ERROR[" << m_section
+           << "]: PAIRED=1 requires HOST to list at least 2 hosts, got '"
+           << host_str << "'" << endl;
+      return false;
+    }
+  }
+  else
+  {
+    m_peer_host = host_str;
   }
 
   // PORT (optional, default 5302)
@@ -245,6 +275,25 @@ bool TrunkLink::initialize(void)
         cout << " " << kv.first << "<->" << kv.second;
       cout << endl;
     }
+  }
+
+  if (m_paired)
+  {
+    cout << m_section << ": PAIRED=1, " << m_peer_hosts.size()
+         << " partner hosts:";
+    for (const auto& x : m_peer_hosts) cout << " " << x;
+    cout << " port=" << m_peer_port
+         << " local_prefix=" << joinPrefixes(m_local_prefix)
+         << " remote_prefix=" << joinPrefixes(m_remote_prefix)
+         << (m_debug ? " [debug on]" : "")
+         << (m_blacklist_filter.empty() ? "" : " [blacklist]")
+         << (m_allow_filter.empty()     ? "" : " [whitelist]")
+         << (m_tg_map_in.empty()        ? "" : " [tg_map]")
+         << " [outbound deferred to D2]"
+         << endl;
+    // Outbound connections for PAIRED mode are created in D2.
+    // For now, leave m_con unconnected and return successfully.
+    return true;
   }
 
   cout << m_section << ": Trunk to " << m_peer_host << ":" << m_peer_port

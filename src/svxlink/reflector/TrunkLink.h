@@ -119,6 +119,12 @@ class TrunkLink : public sigc::trackable
       return m_remote_prefix;
     }
 
+    bool isPaired(void) const { return m_paired; }
+    bool hasInboundConnection(void) const
+    {
+      return m_paired ? !m_ib_cons.empty() : (m_inbound_con != nullptr);
+    }
+
     // Accept an inbound connection from a peer that has already sent a hello
     void acceptInboundConnection(Async::FramedTcpConnection* con,
                                   const MsgTrunkHello& hello);
@@ -203,6 +209,13 @@ class TrunkLink : public sigc::trackable
     // PEER_INTEREST_TIMEOUT_S seconds of inactivity.
     static const time_t PEER_INTEREST_TIMEOUT_S = 600;  // 10 minutes
     std::map<uint32_t, time_t> m_peer_interested_tgs;
+
+    // PAIRED mode: one logical peer backed by multiple physical hosts
+    bool                                          m_paired = false;
+    std::vector<std::string>                      m_peer_hosts;  // HOST=h1,h2,...
+    std::vector<FramedTcpClient*>                 m_ob_cons;     // per-host outbound (D2)
+    std::vector<Async::FramedTcpConnection*>      m_ib_cons;     // per-host inbound (D3)
+    size_t                                        m_sticky_ob_idx = 0;  // sticky send socket (D4)
 
     // Per-connection state
     bool                m_ob_hello_received = false;
