@@ -2,11 +2,13 @@
 
 ## Overview
 
-The integration tests verify the trunk protocol, satellite links, twin (HA-pair) protocol, and end-to-end audio routing by spinning up reflector meshes in Docker Compose and connecting fake peers and clients from a Python test harness.
+The integration tests verify the trunk protocol, satellite links, twin (HA-pair) protocol, Redis-backed config store, and end-to-end audio routing by spinning up reflector meshes in Docker Compose and connecting fake peers and clients from a Python test harness.
 
-The suite runs in **two phases**:
+`run_tests.sh` runs in **two phases**:
 1. A 3-reflector trunk mesh exercising `test_trunk.py` (27 tests).
-2. A 4-reflector twin topology exercising `test_twin.py` (8 tests).
+2. A 4-reflector twin topology exercising `test_twin.py` (10 tests).
+
+A separate harness (`run_redis_tests.sh`) runs `test_redis.py` (10 tests) against a single-reflector + Redis stack. See [Redis Integration Tests](#redis-integration-tests) below.
 
 **Requirements:** Docker, Docker Compose, Python 3.7+ (stdlib only, no pip packages).
 
@@ -24,7 +26,7 @@ This will:
 4. Enter an interactive prompt to manually test any TG number
 5. Tear down the default mesh
 6. Regenerate with `--topology twin` (4-reflector twin topology)
-7. Rebuild the mesh and run 8 automated twin-protocol tests (`test_twin.py`)
+7. Rebuild the mesh and run 10 automated twin-protocol tests (`test_twin.py`)
 8. Restore the default topology files and tear everything down
 
 To regenerate configs without running tests:
@@ -75,6 +77,9 @@ Internal ports inside Docker are always 5300, 5302, 8080, 5303.
 The twin topology (`--topology twin`) exercises the TWIN HA-pair protocol and `PAIRED=1` external trunks. See `docs/TWIN_PROTOCOL.md` for the protocol specification.
 
 ```
+           satellite (ref1 only)
+                │
+                ▼
 refa (prefix 222)
   │
   │  [TRUNK_IT_DE] PAIRED=1  (one section, both hosts)
@@ -83,23 +88,24 @@ refa (prefix 222)
  ref1 ◄── [TWIN] ──► ref2       (both LOCAL_PREFIX=262)
   │                    │
   └─── refc ───────────┘
-       (prefix 333)
+       (prefix 333, [TRUNK_DE_C] PAIRED=1 to the pair)
 ```
 
 - **refa** (IT, `LOCAL_PREFIX=222`) — the non-pair side; its single `[TRUNK_IT_DE]` lists both German hosts and uses sticky per-transmission selection with instant failover.
 - **ref1, ref2** (DE, `LOCAL_PREFIX=262` on **both**) — the twin pair, linked by a `[TWIN]` section on port 5304 and sharing `TGHandler` state.
-- **refc** (`LOCAL_PREFIX=333`) — extra peer so the twin pair also has a normal (non-paired) trunk.
+- **refc** (`LOCAL_PREFIX=333`) — extra peer. Its `[TRUNK_DE_C]` is also `PAIRED=1` so refc treats the twin pair as a single logical peer, and its `[TRUNK_IT_C]` to refa is a normal (non-paired) trunk.
+- **satellite on ref1** (`TWIN_SATELLITE_PARENT="ref1"`) — a satellite server is enabled on ref1 so tests 9 and 10 can verify that audio mirrored over the `[TWIN]` link is re-forwarded out to satellites attached to the partner.
 
 ### Twin Port Mapping
 
-| Reflector | Client (TCP+UDP) | Trunk (TCP) | Twin (TCP) | HTTP  |
-|-----------|-------------------|-------------|------------|-------|
-| refa      | 45300             | 45302       | —          | 48080 |
-| ref1      | 46300             | 46302       | 46304      | 49080 |
-| ref2      | 47300             | 47302       | 47304      | 50080 |
-| refc      | 48300             | 48302       | —          | 51080 |
+| Reflector | Client (TCP+UDP) | Trunk (TCP) | Twin (TCP) | Satellite | HTTP  |
+|-----------|-------------------|-------------|------------|-----------|-------|
+| refa      | 45300             | 45302       | —          | —         | 48080 |
+| ref1      | 46300             | 46302       | 46304      | 46303     | 49080 |
+| ref2      | 47300             | 47302       | 47304      | —         | 50080 |
+| refc      | 48300             | 48302       | —          | —         | 51080 |
 
-Internal port for `[TWIN]` is always 5304.
+Internal port for `[TWIN]` is always 5304; satellite is 5303.
 
 ## File Structure
 
@@ -108,10 +114,16 @@ Internal port for `[TWIN]` is always 5304.
 | `topology.py` | Single source of truth — prefixes, ports, secrets, cluster TGs, test clients. Contains both the default mesh (`REFLECTORS`) and the `TWIN_REFLECTORS` / `TWIN_TRUNKS` definitions. |
 | `generate_configs.py` | Generates `configs/*.conf` and `docker-compose.test.yml` from topology. Supports `--topology default` (implicit) and `--topology twin`. |
 | `test_trunk.py` | Test harness: fake trunk peers, satellite peer, V2 client, 27 test cases, interactive loop. |
-| `test_twin.py` | TWIN-protocol tests (8 cases) using the twin topology. Reuses `ClientPeer` from `test_trunk.py` for the audio-mirror test. |
+| `test_twin.py` | TWIN-protocol tests (10 cases) using the twin topology. Reuses `ClientPeer` and `SatellitePeer` from `test_trunk.py`. |
 | `run_tests.sh` | Orchestrator: generate → build → trunk tests → teardown → regenerate twin → build → twin tests → teardown. |
 | `configs/` | Generated reflector config files (do not edit manually) |
 | `docker-compose.test.yml` | Generated compose file (do not edit manually) |
+| `topology_redis.py` | Topology for the Redis test harness (single reflector + Redis). |
+| `generate_redis_configs.py` | Generates `configs-redis/*.conf` and `docker-compose.redis.yml`. |
+| `test_redis.py` | Redis-backed config-store tests (10 cases): users, trunk filters, live-state hashes, outage/resync, import idempotence, dynamic trunk add/remove. |
+| `run_redis_tests.sh` | Redis test orchestrator with `up`/`test`/`down`/`all` subcommands. |
+| `configs-redis/` | Generated Redis-harness configs (do not edit manually) |
+| `docker-compose.redis.yml` | Generated Redis compose file (do not edit manually) |
 
 ## Test Harness Components
 
@@ -210,6 +222,35 @@ Run separately on the twin topology (`test_twin.py`). See `docs/TWIN_PROTOCOL.md
 | 6 | Twin disconnect recovery | Killing ref2 triggers an RX timeout on ref1; restarting ref2 re-handshakes cleanly |
 | 7 | PAIRED trunk failover | Killing ref1 does **not** disconnect refa's `[TRUNK_IT_DE]` — sticky selection fails over to ref2 without holdoff |
 | 8 | Audio mirror end-to-end | A V2 client on ref1 transmits on TG 26201; a V2 client on ref2 receives UDP audio and a flush marker, exercising the full `TGHandler.talkerUpdated` → `TwinLink.onLocalAudio` → `MsgTrunkAudio` → `broadcastUdpMsg` path |
+| 9 | Satellite + twin handshake | A satellite connects to ref1 (the `TWIN_SATELLITE_PARENT`) and is listed in `/status.satellites` after the two-way hello |
+| 10 | Satellite sees twin-mirrored audio | A V2 client on ref2 transmits on TG 26201; the satellite attached to ref1 receives `TalkerStart` and `MsgTrunkAudio` — verifies `TwinLink::handleMsgTrunkAudio` re-forwards to satellites, not just talker state |
+
+## Redis Integration Tests
+
+Run independently with `run_redis_tests.sh`. These exercise the Redis-backed config store against a single reflector (`r1`) plus a Redis container, generated from `topology_redis.py`.
+
+```bash
+cd tests
+bash run_redis_tests.sh            # full cycle: up → test → down
+bash run_redis_tests.sh up         # start stack and leave it running
+bash run_redis_tests.sh test       # run test_redis.py against running stack
+bash run_redis_tests.sh down       # tear down
+```
+
+Each test writes directly to Redis via `redis-cli` inside the container, publishes on the `<key-prefix>:config.changed` channel, and asserts either on reflector behavior (V2 auth accept/reject, trunk filter reload, trunk link add/remove) or on Redis state (`live:client:<callsign>` hashes).
+
+| # | Test | What it verifies |
+|---|------|-----------------|
+| 1 | User add + authenticate | `HSET user:…` + publish `users` lets a new V2 client authenticate within ~1 s |
+| 2 | User disable rejects auth | Setting `enabled=0` and republishing causes subsequent auth to fail |
+| 3 | Blacklist change triggers reload | Adding/removing a `trunk:<SECTION>:blacklist` member logs `Reloaded filters` with the expected fragment |
+| 4 | Allow change triggers reload | Adding an allow-list entry produces a matching `Reloaded filters` line |
+| 5 | `live:client` appears on auth | On V2 authentication, `live:client:<callsign>` hash is populated with `connected_at`, `ip`, `tg`, `codecs` |
+| 6 | `live:client` disappears on disconnect | After forceful TCP close the hash is removed within ~5 s |
+| 7 | Outage + resync | Stopping Redis keeps existing clients connected; on restart the reflector logs `config.changed: all` and accepts newly-written users |
+| 8 | `--import-conf-to-redis` idempotent | Running the importer twice against the same `.conf` produces identical keyspace dumps |
+| 9 | Dynamic trunk add/remove | Writing a `trunk:<SECTION>:peer` hash + publish logs `Added trunk link: …`; deleting it logs `Removed trunk link: …` |
+| 10 | Incomplete peer skipped | A peer hash missing `secret`/`remote_prefix` is ignored (no link created, reflector does not crash) |
 
 ## Interactive Mode
 
