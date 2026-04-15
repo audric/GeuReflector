@@ -231,7 +231,91 @@ static bool runImportConfToRedis(Async::Config& cfg, bool dry_run)
     ++groups;
   }
 
-  std::cout << "Imported " << users << " users, " << groups << " groups."
+  size_t cluster_n = 0;
+  std::string cluster_str;
+  if (cfg.getValue("GLOBAL", "CLUSTER_TGS", cluster_str))
+  {
+    std::istringstream ss(cluster_str);
+    std::string tok;
+    std::string ck = kf("cluster:tgs");
+    while (std::getline(ss, tok, ','))
+    {
+      tok.erase(0, tok.find_first_not_of(" \t"));
+      tok.erase(tok.find_last_not_of(" \t") + 1);
+      if (tok.empty()) continue;
+      if (dry_run) {
+        std::cout << "[dry-run] SADD " << ck << " " << tok << std::endl;
+      } else {
+        redisReply* r = (redisReply*)redisCommand(ctx, "SADD %s %s",
+                                                  ck.c_str(), tok.c_str());
+        if (r) freeReplyObject(r);
+      }
+      ++cluster_n;
+    }
+  }
+
+  size_t trunks_n = 0;
+  std::list<std::string> sections = cfg.listSections();
+  for (auto& sec : sections)
+  {
+    if (sec.rfind("TRUNK_", 0) != 0) continue;
+    ++trunks_n;
+    std::string trunk_label = sec.substr(6);  // "TRUNK_AB" → "AB"
+
+    auto importSet = [&](const std::string& field, const std::string& subkey) {
+      std::string s;
+      if (!cfg.getValue(sec, field, s) || s.empty()) return;
+      std::string k = kf("trunk:" + trunk_label + ":" + subkey);
+      std::istringstream ss(s);
+      std::string tok;
+      while (std::getline(ss, tok, ','))
+      {
+        tok.erase(0, tok.find_first_not_of(" \t"));
+        tok.erase(tok.find_last_not_of(" \t") + 1);
+        if (tok.empty()) continue;
+        if (dry_run) {
+          std::cout << "[dry-run] SADD " << k << " " << tok << std::endl;
+        } else {
+          redisReply* r = (redisReply*)redisCommand(ctx, "SADD %s %s",
+                                                    k.c_str(), tok.c_str());
+          if (r) freeReplyObject(r);
+        }
+      }
+    };
+    importSet("BLACKLIST_TGS", "blacklist");
+    importSet("ALLOW_TGS",     "allow");
+
+    std::string tgmap_str;
+    if (cfg.getValue(sec, "TG_MAP", tgmap_str) && !tgmap_str.empty())
+    {
+      std::string k = kf("trunk:" + trunk_label + ":tgmap");
+      std::istringstream ss(tgmap_str);
+      std::string pair;
+      while (std::getline(ss, pair, ','))
+      {
+        auto colon = pair.find(':');
+        if (colon == std::string::npos) continue;
+        std::string peer  = pair.substr(0, colon);
+        std::string local = pair.substr(colon + 1);
+        // Trim whitespace
+        peer.erase(0, peer.find_first_not_of(" \t"));
+        peer.erase(peer.find_last_not_of(" \t") + 1);
+        local.erase(0, local.find_first_not_of(" \t"));
+        local.erase(local.find_last_not_of(" \t") + 1);
+        if (dry_run) {
+          std::cout << "[dry-run] HSET " << k << " " << peer
+                    << " " << local << std::endl;
+        } else {
+          redisReply* r = (redisReply*)redisCommand(ctx, "HSET %s %s %s",
+              k.c_str(), peer.c_str(), local.c_str());
+          if (r) freeReplyObject(r);
+        }
+      }
+    }
+  }
+
+  std::cout << "Imported " << users << " users, " << groups << " groups, "
+            << cluster_n << " cluster TGs, " << trunks_n << " trunks."
             << std::endl;
 
   if (ctx) redisFree(ctx);
