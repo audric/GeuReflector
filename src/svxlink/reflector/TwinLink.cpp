@@ -566,6 +566,7 @@ bool TwinLink::sendMsg(const ReflectorMsg& msg)
 
 void TwinLink::sendMsgOnOutbound(const ReflectorMsg& msg)
 {
+  if (!m_con.isConnected()) return;
   ostringstream ss;
   ReflectorMsg header(msg.type());
   if (!header.pack(ss) || !msg.pack(ss))
@@ -581,7 +582,7 @@ void TwinLink::sendMsgOnOutbound(const ReflectorMsg& msg)
 
 void TwinLink::sendMsgOnInbound(const ReflectorMsg& msg)
 {
-  if (m_inbound_con == nullptr) return;
+  if (m_inbound_con == nullptr || !m_inbound_con->isConnected()) return;
   ostringstream ss;
   ReflectorMsg header(msg.type());
   if (!header.pack(ss) || !msg.pack(ss))

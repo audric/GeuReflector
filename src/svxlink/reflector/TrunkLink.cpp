@@ -1378,6 +1378,7 @@ size_t TrunkLink::pairedClientIndex(FramedTcpClient* client) const
 void TrunkLink::sendMsgOnPairedOutbound(size_t idx, const ReflectorMsg& msg)
 {
   if (idx >= m_ob_cons.size()) return;
+  if (!m_ob_cons[idx]->isConnected()) return;
   ostringstream ss;
   ReflectorMsg header(msg.type());
   if (!header.pack(ss) || !msg.pack(ss))
@@ -1405,6 +1406,7 @@ size_t TrunkLink::pairedInboundIndex(Async::FramedTcpConnection* con) const
 void TrunkLink::sendMsgOnPairedInbound(size_t idx, const ReflectorMsg& msg)
 {
   if (idx >= m_ib_cons.size()) return;
+  if (!m_ib_cons[idx]->isConnected()) return;
   ostringstream ss;
   ReflectorMsg header(msg.type());
   if (!header.pack(ss) || !msg.pack(ss))

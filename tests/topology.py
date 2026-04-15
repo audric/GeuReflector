@@ -122,7 +122,7 @@ def first_prefix(prefixes) -> str:
 # to select this topology without touching the default above.
 # ---------------------------------------------------------------------------
 
-# 4-reflector mesh: refA (Italy), ref1+ref2 (Germany twin pair), refC (extra)
+# 4-reflector mesh: refa (Italy), ref1+ref2 (Germany twin pair), refc (extra)
 #
 # Keys:
 #   prefix          : list of owned prefixes
@@ -131,10 +131,13 @@ def first_prefix(prefixes) -> str:
 #   redis           : enable Redis config store (optional)
 TWIN_REFLECTORS = {
     #  name       prefixes     port-base   notes
-    "refA": {"prefix": ["222"], "trunk_port_base": 60000},               # Italy
-    "ref1": {"prefix": ["262"], "trunk_port_base": 61000, "twin_of": "ref2"},  # DE twin 1
-    "ref2": {"prefix": ["262"], "trunk_port_base": 62000, "twin_of": "ref1"},  # DE twin 2
-    "refC": {"prefix": ["333"], "trunk_port_base": 63000},               # extra peer
+    # Port layout: client=base+300, trunk=base+302, twin=base+304, http=base+3080
+    # Must keep http port <= 65535, so base <= ~62000.
+    # Names must be lowercase (Docker image tag constraint).
+    "refa": {"prefix": ["222"], "trunk_port_base": 45000},               # Italy
+    "ref1": {"prefix": ["262"], "trunk_port_base": 46000, "twin_of": "ref2"},  # DE twin 1
+    "ref2": {"prefix": ["262"], "trunk_port_base": 47000, "twin_of": "ref1"},  # DE twin 2
+    "refc": {"prefix": ["333"], "trunk_port_base": 48000},               # extra peer
 }
 
 # Explicit trunk list for the twin topology.
@@ -145,24 +148,24 @@ TWIN_REFLECTORS = {
 #   pair_members  : the subset of peers that form the twin pair (needed to split sides)
 #
 # For a paired trunk the rule is:
-#   - non-pair side (refA): [TRUNK_IT_DE] HOST=ref1,ref2 PAIRED=1
-#   - pair members (ref1, ref2): [TRUNK_IT_DE] HOST=refA (normal, no PAIRED)
+#   - non-pair side (refa): [TRUNK_IT_DE] HOST=ref1,ref2 PAIRED=1
+#   - pair members (ref1, ref2): [TRUNK_IT_DE] HOST=refa (normal, no PAIRED)
 TWIN_TRUNKS = [
     {
         "name":         "IT_DE",
-        "peers":        ["refA", "ref1", "ref2"],
+        "peers":        ["refa", "ref1", "ref2"],
         "paired":       True,
         "pair_members": ["ref1", "ref2"],
     },
     {
         "name":         "IT_C",
-        "peers":        ["refA", "refC"],
+        "peers":        ["refa", "refc"],
         "paired":       False,
         "pair_members": [],
     },
     {
         "name":         "DE_C",
-        "peers":        ["ref1", "ref2", "refC"],
+        "peers":        ["ref1", "ref2", "refc"],
         "paired":       True,
         "pair_members": ["ref1", "ref2"],
     },
