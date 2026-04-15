@@ -385,6 +385,12 @@ class Reflector : public sigc::trackable
     void initTrunkServer(void);
     void initTwinLink(void);
     void initTwinServer(void);
+    void twinClientConnected(Async::FramedTcpConnection* con);
+    void twinClientDisconnected(Async::FramedTcpConnection* con,
+        Async::FramedTcpConnection::DisconnectReason reason);
+    void twinPendingFrameReceived(Async::FramedTcpConnection* con,
+                                   std::vector<uint8_t>& data);
+    void twinPendingTimeout(Async::Timer* t);
     void trunkClientConnected(Async::FramedTcpConnection* con);
     void trunkClientDisconnected(Async::FramedTcpConnection* con,
         Async::FramedTcpConnection::DisconnectReason reason);
