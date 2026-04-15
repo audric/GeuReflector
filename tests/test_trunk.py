@@ -205,8 +205,10 @@ def parse_msg(data: bytes):
     elif msg_type == MSG_TRUNK_NODE_LIST:
         # vec<string> callsigns, vec<u32> tgs, vec<float> lat, vec<float> lon,
         # vec<string> qth_names. Each vector is u32-prefixed length.
+        # Vector length prefixes are u16 (MsgPacker<std::vector> in
+        # AsyncMsg.h uses uint16_t for element counts).
         def read_vec_str(off):
-            n = struct.unpack_from("!I", data, off)[0]; off += 4
+            n = struct.unpack_from("!H", data, off)[0]; off += 2
             out = []
             for _ in range(n):
                 s, off = unpack_string(data, off)
@@ -214,13 +216,13 @@ def parse_msg(data: bytes):
             return out, off
 
         def read_vec_u32(off):
-            n = struct.unpack_from("!I", data, off)[0]; off += 4
+            n = struct.unpack_from("!H", data, off)[0]; off += 2
             out = list(struct.unpack_from(f"!{n}I", data, off))
             off += 4 * n
             return out, off
 
         def read_vec_f32(off):
-            n = struct.unpack_from("!I", data, off)[0]; off += 4
+            n = struct.unpack_from("!H", data, off)[0]; off += 2
             out = list(struct.unpack_from(f"!{n}f", data, off))
             off += 4 * n
             return out, off

@@ -24,6 +24,7 @@ def generate_reflector_conf(name: str) -> str:
         f"CLUSTER_TGS={cluster_str}",
         f"TRUNK_LISTEN_PORT={T.INTERNAL_TRUNK_PORT}",
         f"HTTP_SRV_PORT={T.INTERNAL_HTTP_PORT}",
+        "COMMAND_PTY=/dev/shm/reflector_ctrl",
         "TRUNK_DEBUG=1",
         "",
         "[SERVER_CERT]",

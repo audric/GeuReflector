@@ -372,14 +372,18 @@ Json::Value TrunkLink::statusJson(void) const
   for (const auto& p : m_remote_prefix) remote_arr.append(p);
   obj["remote_prefix"] = remote_arr;
 
-  // active_talkers: TGs held by trunk that match remote prefix or are cluster TGs
+  // active_talkers: per-peer active TGs (already post-TG_MAP remap).
+  // We use m_peer_active_tgs directly instead of filtering the global
+  // trunk-talker map by isSharedTG, because a TG_MAP entry can remap a
+  // peer-owned wire TG to a local-owned TG that no longer matches the
+  // peer's remote prefix — that TG must still appear in this peer's view.
   Json::Value talkers(Json::objectValue);
-  const auto& trunk_map = TGHandler::instance()->trunkTalkersSnapshot();
-  for (auto& kv : trunk_map)
+  for (uint32_t tg : m_peer_active_tgs)
   {
-    if (isSharedTG(kv.first) || m_reflector->isClusterTG(kv.first))
+    const std::string cs = TGHandler::instance()->trunkTalkerForTG(tg);
+    if (!cs.empty())
     {
-      talkers[std::to_string(kv.first)] = kv.second;
+      talkers[std::to_string(tg)] = cs;
     }
   }
   obj["active_talkers"] = talkers;
