@@ -458,5 +458,76 @@ TG_MAP=1:2624123,2:2624124
                          "second import produced different Redis state")
 
 
+class RedisTrunkAddRemoveTest(unittest.TestCase):
+    """Verify dashboard-style add/remove of trunk peers at runtime via
+    pub/sub. Uses a dedicated section name so we don't collide with the
+    static TRUNK_TEST section from the generated .conf."""
+
+    SECTION = "TRUNK_DYNAMIC_ADD"
+    PEER_KEY_SUFFIX = f"trunk:{SECTION}:peer"
+
+    def setUp(self):
+        # Redis may still have the key from a previous run — be tidy.
+        redis_cli("DEL", k(self.PEER_KEY_SUFFIX))
+        # Also publish so any prior dynamic link gets torn down if still
+        # around from a previous test run that crashed mid-test.
+        publish(f"trunk:{self.SECTION}")
+        time.sleep(0.5)
+
+    def _wait_for_log(self, since: float, expected_fragment: str,
+                      timeout: float = 3.0) -> str:
+        deadline = time.time() + timeout
+        last_logs = ""
+        while time.time() < deadline:
+            last_logs = docker_logs_since(R1_SVC, since)
+            for line in last_logs.splitlines():
+                if expected_fragment in line:
+                    return line
+            time.sleep(0.1)
+        self.fail(
+            f"Timed out waiting for log containing '{expected_fragment}'. "
+            f"Last logs:\n{last_logs[-3000:]}")
+
+    def test_add_then_remove_via_pubsub(self):
+        # --- add ---
+        t0 = time.time()
+        redis_cli("HSET", k(self.PEER_KEY_SUFFIX),
+                  "host", "192.0.2.77",
+                  "port", "5302",
+                  "secret", "dyn_secret",
+                  "remote_prefix", "8")
+        publish(f"trunk:{self.SECTION}")
+        line = self._wait_for_log(t0, f"Added trunk link: {self.SECTION}")
+        self.assertIn("192.0.2.77", line)
+
+        # --- remove ---
+        t1 = time.time()
+        redis_cli("DEL", k(self.PEER_KEY_SUFFIX))
+        publish(f"trunk:{self.SECTION}")
+        self._wait_for_log(t1, f"Removed trunk link: {self.SECTION}")
+
+    def test_add_missing_fields_skipped(self):
+        """Peer hash with missing required fields is skipped (no link
+        created, no crash)."""
+        t0 = time.time()
+        # Missing secret and remote_prefix.
+        redis_cli("HSET", k(self.PEER_KEY_SUFFIX),
+                  "host", "192.0.2.88",
+                  "port", "5302")
+        publish(f"trunk:{self.SECTION}")
+        # Give the reflector time to react.
+        time.sleep(1.0)
+        logs = docker_logs_since(R1_SVC, t0)
+        self.assertNotIn(f"Added trunk link: {self.SECTION}", logs,
+                         "Incomplete peer should NOT have been added")
+        # And the reflector should not have crashed — check compose ps
+        res = subprocess.run([
+            "docker", "compose", "-f", "docker-compose.redis.yml",
+            "ps", "--status=running", "--services"
+        ], capture_output=True, text=True, check=True,
+           cwd=os.path.dirname(os.path.abspath(__file__)))
+        self.assertIn("reflector-r1", res.stdout)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
