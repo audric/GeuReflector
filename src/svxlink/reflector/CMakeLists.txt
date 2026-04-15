@@ -35,7 +35,7 @@ set(LIBS asynccpp asyncaudio asynccore svxmisc ${LIBS})
 # Build the executable
 add_executable(svxreflector
   svxreflector.cpp Reflector.cpp ReflectorClient.cpp TGHandler.cpp TrunkLink.cpp
-  SatelliteLink.cpp SatelliteClient.cpp MqttPublisher.cpp
+  SatelliteLink.cpp SatelliteClient.cpp MqttPublisher.cpp RedisStore.cpp
 )
 target_link_libraries(svxreflector ${LIBS})
 set_target_properties(svxreflector PROPERTIES
