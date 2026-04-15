@@ -1,10 +1,8 @@
 # GeuReflector — Twin (HA-Pair) Protocol — DESIGN DRAFT
 
 > **Status:** Implemented in v1.3.x+twin1. See §Implementation Sketch for
-> what shipped and `tests/test_twin.py` for integration test coverage.
-> Known limitation: audio-mirror path (local talker on twin A → broadcast
-> to local clients on twin B) is wired and code-reviewed but not yet
-> exercised by integration tests (requires mock SvxLink clients).
+> what shipped and `tests/test_twin.py` for integration test coverage
+> (8 tests including an end-to-end V2-client audio-mirror path).
 
 ## Motivation
 
