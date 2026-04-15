@@ -450,6 +450,8 @@ The PTY path is set by `COMMAND_PTY` in `[GLOBAL]` (default
   example (25 countries, full mesh, DMR MCC-based TG numbering)
 - [`docs/MQTT.md`](docs/MQTT.md) — MQTT publishing: topic structure, payload
   format, configuration reference, and TLS setup
+- [`docs/REDIS.md`](docs/REDIS.md) — Redis-backed config store: schema,
+  dashboard operations, pub/sub, migration from .conf
 - [`docs/MESSAGING_IDEAS.md`](docs/MESSAGING_IDEAS.md) — ideas for consuming
   MQTT events via Telegram, SMS, Discord, webhooks, dashboards, and more
 - [`docs/DESIGN_SATELLITE_AND_CLUSTER.md`](docs/DESIGN_SATELLITE_AND_CLUSTER.md) — design

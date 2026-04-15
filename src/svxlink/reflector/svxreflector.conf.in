@@ -157,3 +157,22 @@ CERT_CA_HOOK=@SVX_SHARE_INSTALL_DIR@/ca-hook.py
 #TLS_CLIENT_CERT=/path/to/client.crt
 #TLS_CLIENT_KEY=/path/to/client.key
 
+#
+# Redis-backed config store. Optional — omit this section to use the
+# config-file-only behavior. When this section is present, [USERS],
+# [PASSWORDS], CLUSTER_TGS, and per-trunk BLACKLIST_TGS / ALLOW_TGS /
+# TG_MAP / mute lists are read from Redis instead of this file. Use
+# `svxreflector --import-conf-to-redis` once to migrate existing entries.
+#
+#[REDIS]
+#HOST=127.0.0.1
+#PORT=6379
+#PASSWORD=
+#DB=0
+#KEY_PREFIX=
+#UNIX_SOCKET=             # if set, takes precedence over HOST/PORT
+#TLS_ENABLED=0
+#TLS_CA_CERT=
+#TLS_CLIENT_CERT=
+#TLS_CLIENT_KEY=
+
