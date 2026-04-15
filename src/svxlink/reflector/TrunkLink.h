@@ -277,6 +277,14 @@ class TrunkLink : public sigc::trackable
     size_t pairedClientIndex(FramedTcpClient* client) const;
     void sendMsgOnPairedOutbound(size_t idx, const ReflectorMsg& msg);
 
+    // PAIRED mode: per-host inbound connection handlers (D3)
+    void onPairedInboundFrame(Async::FramedTcpConnection* con,
+                               std::vector<uint8_t>& data);
+    void onPairedInboundDisconnected(Async::FramedTcpConnection* con,
+        Async::FramedTcpConnection::DisconnectReason reason);
+    size_t pairedInboundIndex(Async::FramedTcpConnection* con) const;
+    void sendMsgOnPairedInbound(size_t idx, const ReflectorMsg& msg);
+
     // Per-client handshake/heartbeat state for paired outbound connections
     struct PairedClientState
     {
@@ -285,6 +293,15 @@ class TrunkLink : public sigc::trackable
       unsigned hb_rx_cnt      = 0;
     };
     std::vector<PairedClientState> m_ob_states;  // parallel to m_ob_cons
+
+    // Per-inbound handshake/heartbeat state for paired inbound connections
+    struct PairedInboundState
+    {
+      bool     hello_received = false;
+      unsigned hb_tx_cnt      = 0;
+      unsigned hb_rx_cnt      = 0;
+    };
+    std::vector<PairedInboundState> m_ib_states;  // parallel to m_ib_cons
 
 };  /* class TrunkLink */
 

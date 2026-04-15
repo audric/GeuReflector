@@ -146,6 +146,11 @@ TrunkLink::~TrunkLink(void)
     delete c;
   }
   m_ob_cons.clear();
+
+  // PAIRED mode: inbound connections are owned by Reflector's trunk server;
+  // just clear our tracking vectors without deleting the objects.
+  m_ib_cons.clear();
+  m_ib_states.clear();
 } /* TrunkLink::~TrunkLink */
 
 
@@ -483,6 +488,43 @@ Json::Value TrunkLink::statusJson(void) const
 void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
                                          const MsgTrunkHello& hello)
 {
+  if (m_paired)
+  {
+    // Paired mode: accept multiple simultaneous inbound connections (D3)
+    PairedInboundState st;
+    st.hello_received = true;  // Reflector already validated hello
+    st.hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
+    st.hb_rx_cnt = HEARTBEAT_RX_CNT_RESET;
+    m_ib_cons.push_back(con);
+    m_ib_states.push_back(st);
+
+    con->frameReceived.connect(
+        [this, con](Async::FramedTcpConnection* /*c*/,
+                    std::vector<uint8_t>& data) {
+          onPairedInboundFrame(con, data);
+        });
+
+    // Use priority/id from whichever inbound completes the handshake first
+    // (all twins share same priority; last-writer wins is fine)
+    m_peer_priority = hello.priority();
+    if (m_peer_id_received.empty())
+      m_peer_id_received = hello.id();
+
+    cout << m_section << ": paired inbound accepted from peer '"
+         << hello.id() << "' " << con->remoteHost() << ":"
+         << con->remotePort() << " priority=" << hello.priority()
+         << " total_inbound=" << m_ib_cons.size() << endl;
+
+    m_heartbeat_timer.setEnable(true);
+
+    // Send our hello back on this inbound connection
+    sendMsgOnPairedInbound(m_ib_cons.size() - 1,
+        MsgTrunkHello(m_peer_id_config, joinPrefixes(m_local_prefix),
+                      m_priority, m_secret));
+    return;
+  }
+
+  // Non-paired mode: only one inbound allowed
   if (m_inbound_con != nullptr)
   {
     cerr << "*** WARNING[" << m_section
@@ -540,6 +582,12 @@ void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
 void TrunkLink::onInboundDisconnected(Async::FramedTcpConnection* con,
     Async::FramedTcpConnection::DisconnectReason reason)
 {
+  if (m_paired)
+  {
+    onPairedInboundDisconnected(con, reason);
+    return;
+  }
+
   if (con != m_inbound_con)
   {
     if (m_debug)
@@ -1040,17 +1088,21 @@ void TrunkLink::sendMsg(const ReflectorMsg& msg)
         return;
       }
     }
-    // Inbound fallback (D3 will expand this)
-    if (isInboundReady())
+    // Inbound fallback: try each paired inbound connection
+    for (size_t i = 0; i < m_ib_cons.size(); ++i)
     {
-      if (m_debug)
+      if (m_ib_states[i].hello_received)
       {
-        cout << m_section << " [DEBUG]: paired tx fallback to IB type="
-             << msg.type() << endl;
+        if (m_debug)
+        {
+          cout << m_section << " [DEBUG]: paired tx fallback to IB#" << i
+               << " type=" << msg.type() << endl;
+        }
+        sendMsgOnPairedInbound(i, msg);
+        return;
       }
-      sendMsgOnInbound(msg);
     }
-    else if (m_debug)
+    if (m_debug)
     {
       cerr << m_section << " [DEBUG]: paired tx dropped type=" << msg.type()
            << " (no active connection)" << endl;
@@ -1143,28 +1195,32 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
       }
     }
 
-    // Inbound heartbeat (same as non-paired path)
-    if (m_inbound_con != nullptr && m_ib_hb_rx_cnt > 0)
+    // Per-host paired inbound heartbeat (D3)
+    bool any_ib_connected = false;
+    for (size_t i = 0; i < m_ib_cons.size(); ++i)
     {
-      if (--m_ib_hb_tx_cnt == 0)
+      if (m_ib_states[i].hb_rx_cnt == 0)
+        continue;
+      any_ib_connected = true;
+      if (--m_ib_states[i].hb_tx_cnt == 0)
       {
         if (m_debug)
         {
-          cout << m_section << " [DEBUG]: IB heartbeat tx"
-               << " ib_hb_rx=" << m_ib_hb_rx_cnt << endl;
+          cout << m_section << " [DEBUG]: paired IB#" << i << " heartbeat tx"
+               << " hb_rx=" << m_ib_states[i].hb_rx_cnt << endl;
         }
-        sendMsgOnInbound(MsgTrunkHeartbeat());
+        sendMsgOnPairedInbound(i, MsgTrunkHeartbeat());
       }
-      if (--m_ib_hb_rx_cnt == 0)
+      if (--m_ib_states[i].hb_rx_cnt == 0)
       {
         cerr << "*** ERROR[" << m_section
-             << "]: Inbound heartbeat timeout" << endl;
-        m_inbound_con->disconnect();
+             << "]: Paired inbound #" << i << " heartbeat timeout" << endl;
+        m_ib_cons[i]->disconnect();
       }
-      else if (m_debug && m_ib_hb_rx_cnt <= 5)
+      else if (m_debug && m_ib_states[i].hb_rx_cnt <= 5)
       {
-        cerr << m_section << " [DEBUG]: IB heartbeat rx countdown: "
-             << m_ib_hb_rx_cnt << endl;
+        cerr << m_section << " [DEBUG]: paired IB#" << i
+             << " heartbeat rx countdown: " << m_ib_states[i].hb_rx_cnt << endl;
       }
     }
 
@@ -1179,8 +1235,8 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
         ++it;
     }
 
-    // Disable timer only when all paired outbounds AND inbound are down
-    if (!any_ob_connected && m_inbound_con == nullptr)
+    // Disable timer only when all paired outbounds AND all paired inbounds are down
+    if (!any_ob_connected && !any_ib_connected)
     {
       m_heartbeat_timer.setEnable(false);
     }
@@ -1284,6 +1340,15 @@ bool TrunkLink::isOutboundReady(void) const
 
 bool TrunkLink::isInboundReady(void) const
 {
+  if (m_paired)
+  {
+    for (size_t i = 0; i < m_ib_cons.size(); ++i)
+    {
+      if (m_ib_states[i].hello_received)
+        return true;
+    }
+    return false;
+  }
   return m_inbound_con != nullptr && m_ib_hello_received;
 } /* TrunkLink::isInboundReady */
 
@@ -1313,6 +1378,108 @@ void TrunkLink::sendMsgOnPairedOutbound(size_t idx, const ReflectorMsg& msg)
   m_ob_states[idx].hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
   m_ob_cons[idx]->write(ss.str().data(), ss.str().size());
 } /* TrunkLink::sendMsgOnPairedOutbound */
+
+
+size_t TrunkLink::pairedInboundIndex(Async::FramedTcpConnection* con) const
+{
+  for (size_t i = 0; i < m_ib_cons.size(); ++i)
+  {
+    if (m_ib_cons[i] == con)
+      return i;
+  }
+  return SIZE_MAX;
+} /* TrunkLink::pairedInboundIndex */
+
+
+void TrunkLink::sendMsgOnPairedInbound(size_t idx, const ReflectorMsg& msg)
+{
+  if (idx >= m_ib_cons.size()) return;
+  ostringstream ss;
+  ReflectorMsg header(msg.type());
+  if (!header.pack(ss) || !msg.pack(ss))
+  {
+    cerr << "*** ERROR[" << m_section << "]: Failed to pack trunk message "
+            "type=" << msg.type() << " for paired inbound #" << idx << endl;
+    return;
+  }
+  m_ib_states[idx].hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
+  m_ib_cons[idx]->write(ss.str().data(), ss.str().size());
+} /* TrunkLink::sendMsgOnPairedInbound */
+
+
+void TrunkLink::onPairedInboundFrame(Async::FramedTcpConnection* con,
+                                      std::vector<uint8_t>& data)
+{
+  size_t idx = pairedInboundIndex(con);
+  if (idx == SIZE_MAX) return;
+
+  // Reset RX heartbeat counter for this inbound connection
+  m_ib_states[idx].hb_rx_cnt = HEARTBEAT_RX_CNT_RESET;
+
+  auto buf = reinterpret_cast<const char*>(data.data());
+  stringstream ss;
+  ss.write(buf, data.size());
+
+  ReflectorMsg header;
+  if (!header.unpack(ss))
+  {
+    cerr << "*** ERROR[" << m_section
+         << "]: Failed to unpack frame on paired inbound #" << idx << endl;
+    return;
+  }
+
+  switch (header.type())
+  {
+    case MsgTrunkHello::TYPE:
+      // Duplicate hello — the hello was already processed by Reflector's
+      // acceptInboundConnection path; ignore silently.
+      break;
+
+    case MsgTrunkHeartbeat::TYPE:
+      // hb_rx_cnt already reset above; nothing else needed
+      break;
+
+    default:
+      // Dispatch data messages to shared handlers
+      switch (header.type())
+      {
+        case MsgTrunkTalkerStart::TYPE:
+          handleMsgTrunkTalkerStart(ss);
+          break;
+        case MsgTrunkTalkerStop::TYPE:
+          handleMsgTrunkTalkerStop(ss);
+          break;
+        case MsgTrunkAudio::TYPE:
+          handleMsgTrunkAudio(ss);
+          break;
+        case MsgTrunkFlush::TYPE:
+          handleMsgTrunkFlush(ss);
+          break;
+        case MsgTrunkNodeList::TYPE:
+          handleMsgTrunkNodeList(ss);
+          break;
+        default:
+          cerr << "*** WARNING[" << m_section
+               << "]: Unknown trunk message type=" << header.type()
+               << " on paired ib#" << idx << endl;
+          break;
+      }
+      break;
+  }
+} /* TrunkLink::onPairedInboundFrame */
+
+
+void TrunkLink::onPairedInboundDisconnected(Async::FramedTcpConnection* con,
+    Async::FramedTcpConnection::DisconnectReason /*reason*/)
+{
+  size_t idx = pairedInboundIndex(con);
+  if (idx == SIZE_MAX) return;
+  cout << m_section << ": paired inbound #" << idx << " disconnected"
+       << " remaining=" << (m_ib_cons.size() - 1) << endl;
+  m_ib_cons.erase(m_ib_cons.begin() + idx);
+  m_ib_states.erase(m_ib_states.begin() + idx);
+  // Reflector owns the connection object — do NOT delete it here.
+} /* TrunkLink::onPairedInboundDisconnected */
 
 
 void TrunkLink::onPairedOutboundConnected(FramedTcpClient* client)
