@@ -290,5 +290,96 @@ class RedisLiveStateTest(unittest.TestCase):
         self._wait_for_hash(k("live:client:N0TEST"), present=False, timeout=5.0)
 
 
+class RedisOutageTest(unittest.TestCase):
+    """Verify reflector tolerates Redis going down and resyncs on resume."""
+
+    def setUp(self):
+        flushdb()
+        # Populate a baseline user.
+        redis_cli("HSET", k("user:N0TEST"), "group", "TestGroup", "enabled", "1")
+        redis_cli("HSET", k("group:TestGroup"), "password", "testpass")
+        publish("users")
+        time.sleep(0.3)
+
+    def _compose(self, *args, check=True):
+        cmd = ["docker", "compose", "-f", "docker-compose.redis.yml"] + list(args)
+        return subprocess.run(cmd, capture_output=True, text=True, check=check,
+                              cwd=os.path.dirname(os.path.abspath(__file__)))
+
+    def test_reflector_survives_outage_and_resyncs(self):
+        # Step 1: V2 client connected and authenticated.
+        peer = ClientPeer()
+        peer.connect(HOST, R1_CLIENT_PORT)
+        peer.authenticate(callsign="N0TEST", password="testpass")
+
+        try:
+            # Step 2: stop redis container, wait a couple seconds.
+            self._compose("stop", "redis")
+            time.sleep(2.0)
+
+            # Reflector must still be up (healthcheck is HTTP on port 8080).
+            # Connection to existing TCP client should NOT be dropped by the
+            # reflector just because Redis went away.
+            peer.tcp.settimeout(1.0)
+            # Send nothing — just verify the socket isn't RST'd.
+            try:
+                peer.tcp.send(b"")
+            except Exception as e:
+                self.fail(f"existing client connection dropped during outage: {e}")
+
+            # Step 3: start redis back up.
+            self._compose("start", "redis")
+
+            # Wait for Redis container to become healthy, then for the
+            # reflector's exponential backoff to reconnect. Worst case the
+            # reflector's backoff was at the 30s cap; typical is 1-4s. Give
+            # 60s to accommodate both the container start and a few backoff
+            # cycles.
+            t_restart = time.time()
+            # Wait for redis-cli to succeed first.
+            deadline = time.time() + 30.0
+            while time.time() < deadline:
+                res = self._compose("exec", "-T", "redis",
+                                    "redis-cli", "ping", check=False)
+                if res.returncode == 0 and "PONG" in res.stdout:
+                    break
+                time.sleep(0.5)
+            else:
+                self.fail("redis container did not come back up in 30s")
+
+            # Wait for the reflector to log the full-reload that signals
+            # reconnect.
+            deadline = time.time() + 60.0
+            found = False
+            last_logs = ""
+            while time.time() < deadline:
+                last_logs = docker_logs_since(R1_SVC, t_restart)
+                if "config.changed: all" in last_logs:
+                    found = True
+                    break
+                time.sleep(1.0)
+            if not found:
+                self.fail(
+                    "Reflector did not log 'config.changed: all' after "
+                    f"Redis resumed. Logs since restart:\n{last_logs[-4000:]}")
+
+            # Step 4: verify post-recovery writes still take effect.
+            # N0OTHR is a valid ham-callsign-format string that satisfies the
+            # reflector's default ACCEPT_CALLSIGN regex (N + 0 + OTH + R).
+            redis_cli("HSET", k("user:N0OTHR"), "group", "OtherGroup",
+                      "enabled", "1")
+            redis_cli("HSET", k("group:OtherGroup"), "password", "otherpw")
+            publish("users")
+            time.sleep(0.5)
+            self.assertTrue(try_authenticate("N0OTHR", "otherpw"),
+                            "post-outage auth for a new user should succeed")
+
+        finally:
+            try:
+                peer.tcp.close()
+            except Exception:
+                pass
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
