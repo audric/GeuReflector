@@ -31,6 +31,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  ****************************************************************************/
 
 #include <cassert>
+#include <list>
 #include <sstream>
 #include <unistd.h>
 #include <algorithm>
@@ -69,6 +70,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "ReflectorClient.h"
 #include "TGHandler.h"
 #include "TrunkLink.h"
+#include "RedisStore.h"
 #include <version/SVXREFLECTOR.h>
 
 
@@ -298,6 +300,8 @@ Reflector::~Reflector(void)
   m_srv = 0;
   delete m_cmd_pty;
   m_cmd_pty = 0;
+  delete m_redis;
+  m_redis = nullptr;
   for (auto* link : m_trunk_links)
   {
     delete link;
@@ -417,36 +421,57 @@ bool Reflector::initialize(Async::Config &cfg)
         mem_fun(*this, &Reflector::ctrlPtyDataReceived));
   }
 
+  // Optional [REDIS] section — when present, Redis becomes the source
+  // of truth for users/passwords/cluster/trunk dynamic settings.
+  {
+    std::string redis_host;
+    std::string redis_unix;
+    m_cfg->getValue("REDIS", "HOST", redis_host);
+    m_cfg->getValue("REDIS", "UNIX_SOCKET", redis_unix);
+    if (!redis_host.empty() || !redis_unix.empty())
+    {
+      RedisStore::Config rcfg;
+      rcfg.host        = redis_host;
+      rcfg.unix_socket = redis_unix;
+      std::string port_s; m_cfg->getValue("REDIS", "PORT", port_s);
+      if (!port_s.empty()) rcfg.port = static_cast<uint16_t>(std::stoul(port_s));
+      m_cfg->getValue("REDIS", "PASSWORD", rcfg.password);
+      std::string db_s; m_cfg->getValue("REDIS", "DB", db_s);
+      if (!db_s.empty()) rcfg.db = std::stoi(db_s);
+      m_cfg->getValue("REDIS", "KEY_PREFIX", rcfg.key_prefix);
+      std::string tls_s; m_cfg->getValue("REDIS", "TLS_ENABLED", tls_s);
+      rcfg.tls_enabled = (tls_s == "1");
+      m_cfg->getValue("REDIS", "TLS_CA_CERT", rcfg.tls_ca_cert);
+      m_cfg->getValue("REDIS", "TLS_CLIENT_CERT", rcfg.tls_client_cert);
+      m_cfg->getValue("REDIS", "TLS_CLIENT_KEY", rcfg.tls_client_key);
+
+      m_redis = new RedisStore(rcfg);
+      if (!m_redis->connect()) {
+        std::cerr << "*** ERROR: [REDIS] is configured but Redis is unreachable. "
+                  << "Aborting startup." << std::endl;
+        return false;
+      }
+      auto warn_if_nonempty = [this](const char* section) {
+        std::list<std::string> keys = m_cfg->listSection(section);
+        if (!keys.empty()) {
+          std::cerr << "WARN: [" << section << "] in svxreflector.conf is "
+                       "ignored because [REDIS] is configured. "
+                    << "Run --import-conf-to-redis to migrate." << std::endl;
+        }
+      };
+      warn_if_nonempty("USERS");
+      warn_if_nonempty("PASSWORDS");
+      m_redis->configChanged.connect(
+          sigc::mem_fun(*this, &Reflector::onRedisConfigChanged));
+    }
+  }
+
   m_cfg->getValue("GLOBAL", "ACCEPT_CERT_EMAIL", m_accept_cert_email);
 
   m_cfg->valueUpdated.connect(sigc::mem_fun(*this, &Reflector::cfgUpdated));
 
   // Parse CLUSTER_TGS — comma-separated list of TG numbers broadcast to all peers
-  std::string cluster_tgs_str;
-  if (cfg.getValue("GLOBAL", "CLUSTER_TGS", cluster_tgs_str))
-  {
-    std::istringstream ctss(cluster_tgs_str);
-    std::string token;
-    while (std::getline(ctss, token, ','))
-    {
-      token.erase(0, token.find_first_not_of(" \t"));
-      token.erase(token.find_last_not_of(" \t") + 1);
-      if (!token.empty())
-      {
-        uint32_t tg = static_cast<uint32_t>(std::stoul(token));
-        m_cluster_tgs.insert(tg);
-      }
-    }
-    if (!m_cluster_tgs.empty())
-    {
-      std::cout << "Cluster TGs:";
-      for (uint32_t tg : m_cluster_tgs)
-      {
-        std::cout << " " << tg;
-      }
-      std::cout << std::endl;
-    }
-  }
+  reloadClusterTgs();
 
   // Satellite mode: connect to parent instead of joining the trunk mesh
   std::string satellite_of;
@@ -1056,6 +1081,10 @@ void Reflector::clientDisconnected(Async::FramedTcpConnection *con,
       {
         m_mqtt->onClientDisconnected(client->callsign());
       }
+      if (m_redis != nullptr)
+      {
+        m_redis->clearLiveClient(client->callsign());
+      }
       scheduleNodeListUpdate();
   }
   //Application::app().runTask([=]{ delete client; });
@@ -1521,6 +1550,10 @@ void Reflector::onTalkerUpdated(uint32_t tg, ReflectorClient* old_talker,
     {
       m_mqtt->onTalkerStop(tg, old_talker->callsign(), false);
     }
+    if (m_redis != nullptr)
+    {
+      m_redis->clearLiveTalker(tg);
+    }
   }
   if (new_talker != 0)
   {
@@ -1539,6 +1572,10 @@ void Reflector::onTalkerUpdated(uint32_t tg, ReflectorClient* old_talker,
     if (m_mqtt != nullptr)
     {
       m_mqtt->onTalkerStart(tg, new_talker->callsign(), false);
+    }
+    if (m_redis != nullptr)
+    {
+      m_redis->pushLiveTalker(tg, new_talker->callsign(), "local");
     }
   }
 
@@ -1725,6 +1762,15 @@ void Reflector::refreshStatus(void)
           static_cast<Json::UInt>(m_satellite_con_map.size());
       m_status["satellite_server"] = sat_srv;
     }
+  }
+  if (m_redis != nullptr)
+  {
+    Json::Value redis_status(Json::objectValue);
+    redis_status["live_queue_size"] =
+        static_cast<Json::UInt>(m_redis->liveQueueSize());
+    redis_status["dropped_live_writes"] =
+        static_cast<Json::UInt64>(m_redis->droppedLiveWrites());
+    m_status["redis"] = redis_status;
   }
 } /* Reflector::refreshStatus */
 
@@ -1989,6 +2035,7 @@ void Reflector::ctrlPtyDataReceived(const void *buf, size_t count)
       }
       if (subcmd == "MUTE") link->muteCallsign(callsign);
       else                  link->unmuteCallsign(callsign);
+
       m_cmd_pty->write(section + ": " + subcmd + " " + callsign + "\n");
     }
     else if (subcmd == "RELOAD")
@@ -2119,6 +2166,38 @@ void Reflector::initTrunkLinks(void)
       token.erase(token.find_last_not_of(" \t") + 1);
       if (!token.empty()) all_prefixes.push_back(token);
     }
+  }
+
+  // If Redis is configured, load trunk peer definitions from Redis and
+  // synthesize them into m_cfg so the existing trunk initialization
+  // loop picks them up. Warn if the .conf ALSO has [TRUNK_*] sections
+  // (they are ignored per the Redis-overrides rule).
+  if (m_redis != nullptr) {
+    std::list<std::string> conf_sections = m_cfg->listSections();
+    bool conf_has_trunk = false;
+    for (const std::string& s : conf_sections) {
+      if (s.size() >= 6 && s.substr(0, 6) == "TRUNK_") { conf_has_trunk = true; break; }
+    }
+    if (conf_has_trunk) {
+      std::cerr << "WARN: [TRUNK_*] sections in svxreflector.conf are "
+                   "ignored because [REDIS] is configured. Run "
+                   "--import-conf-to-redis to migrate." << std::endl;
+    }
+
+    auto peers = m_redis->loadTrunkPeers();
+    for (const auto& kv : peers) {
+      const std::string& section = kv.first;
+      const auto& p = kv.second;
+      m_cfg->setValue(section, "HOST", p.host);
+      if (!p.port.empty())   m_cfg->setValue(section, "PORT", p.port);
+      m_cfg->setValue(section, "SECRET", p.secret);
+      m_cfg->setValue(section, "REMOTE_PREFIX", p.remote_prefix);
+      if (!p.peer_id.empty())
+        m_cfg->setValue(section, "PEER_ID", p.peer_id);
+      m_redis_trunk_sections.insert(section);
+    }
+    std::cout << "Redis: loaded " << peers.size() << " trunk peer(s)"
+              << std::endl;
   }
 
   // First pass: collect all remote prefixes so we can do longest-prefix-match
@@ -2650,6 +2729,10 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
     {
       m_mqtt->onTalkerStop(tg, old_cs, true);
     }
+    if (m_redis != nullptr)
+    {
+      m_redis->clearLiveTalker(tg);
+    }
   }
   if (!new_cs.empty())
   {
@@ -2663,6 +2746,10 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
     if (m_mqtt != nullptr)
     {
       m_mqtt->onTalkerStart(tg, new_cs, true);
+    }
+    if (m_redis != nullptr)
+    {
+      m_redis->pushLiveTalker(tg, new_cs, "trunk");
     }
   }
 
@@ -2681,6 +2768,166 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
 } /* Reflector::onTrunkTalkerUpdated */
 
 
+void Reflector::reloadClusterTgs(void)
+{
+  m_cluster_tgs.clear();
+  if (m_redis) {
+    m_cluster_tgs = m_redis->loadClusterTgs();
+  } else {
+    std::string cluster_tgs_str;
+    if (m_cfg->getValue("GLOBAL", "CLUSTER_TGS", cluster_tgs_str))
+    {
+      std::istringstream ctss(cluster_tgs_str);
+      std::string token;
+      while (std::getline(ctss, token, ','))
+      {
+        token.erase(0, token.find_first_not_of(" \t"));
+        token.erase(token.find_last_not_of(" \t") + 1);
+        if (!token.empty())
+        {
+          try {
+            m_cluster_tgs.insert(static_cast<uint32_t>(std::stoul(token)));
+          } catch (...) { /* skip malformed */ }
+        }
+      }
+    }
+  }
+  if (!m_cluster_tgs.empty())
+  {
+    std::cout << "Cluster TGs:";
+    for (uint32_t tg : m_cluster_tgs)
+    {
+      std::cout << " " << tg;
+    }
+    std::cout << std::endl;
+  }
+}
+
+
+std::vector<std::string> Reflector::collectAllTrunkPrefixes(void) const
+{
+  std::vector<std::string> all;
+  for (const auto* link : m_trunk_links) {
+    for (const std::string& p : link->remotePrefix()) all.push_back(p);
+  }
+  return all;
+}
+
+
+bool Reflector::addTrunkLink(const std::string& section)
+{
+  if (m_redis == nullptr) {
+    std::cerr << "*** addTrunkLink called without Redis — refusing"
+              << std::endl;
+    return false;
+  }
+  // Already present?
+  for (const auto* link : m_trunk_links) {
+    if (link->section() == section) return true;
+  }
+
+  auto peers = m_redis->loadTrunkPeers();
+  auto it = peers.find(section);
+  if (it == peers.end()) {
+    std::cerr << "*** addTrunkLink(" << section
+              << "): peer hash not found in Redis" << std::endl;
+    return false;
+  }
+  const auto& p = it->second;
+
+  // Synthesize the config section (same shape as startup).
+  m_cfg->setValue(section, "HOST", p.host);
+  if (!p.port.empty())   m_cfg->setValue(section, "PORT", p.port);
+  m_cfg->setValue(section, "SECRET", p.secret);
+  m_cfg->setValue(section, "REMOTE_PREFIX", p.remote_prefix);
+  if (!p.peer_id.empty()) m_cfg->setValue(section, "PEER_ID", p.peer_id);
+
+  auto* link = new TrunkLink(this, *m_cfg, section);
+  if (!link->initialize()) {
+    std::cerr << "*** addTrunkLink(" << section
+              << "): TrunkLink::initialize() failed" << std::endl;
+    delete link;
+    return false;
+  }
+  m_trunk_links.push_back(link);
+  m_redis_trunk_sections.insert(section);
+
+  // Rebroadcast the full prefix set to every link (including the new one).
+  auto all_prefixes = collectAllTrunkPrefixes();
+  for (auto* l : m_trunk_links) l->setAllPrefixes(all_prefixes);
+
+  std::cout << "Added trunk link: " << section << " (" << p.host
+            << ":" << (p.port.empty() ? "5302" : p.port) << ")" << std::endl;
+  return true;
+}
+
+
+bool Reflector::removeTrunkLink(const std::string& section)
+{
+  auto it = std::find_if(m_trunk_links.begin(), m_trunk_links.end(),
+      [&](TrunkLink* l) { return l->section() == section; });
+  if (it == m_trunk_links.end()) return false;
+
+  TrunkLink* dead = *it;
+  m_trunk_links.erase(it);
+  m_redis_trunk_sections.erase(section);
+  delete dead;  // destructor clears trunk talker state via TGHandler
+
+  // Rebroadcast the remaining prefix set so peers drop the removed one.
+  auto all_prefixes = collectAllTrunkPrefixes();
+  for (auto* l : m_trunk_links) l->setAllPrefixes(all_prefixes);
+
+  std::cout << "Removed trunk link: " << section << std::endl;
+  return true;
+}
+
+
+void Reflector::onRedisConfigChanged(std::string scope)
+{
+  std::cout << "Redis config.changed: " << scope << std::endl;
+  if (scope == "users" || scope == "all") {
+    // Auth lookups are stateless (per-connect). Nothing to invalidate on
+    // existing connections — they are already authenticated. New
+    // connections will re-query Redis automatically.
+  }
+  if (scope == "cluster" || scope == "all") {
+    reloadClusterTgs();
+  }
+  if (scope.rfind("trunk:", 0) == 0 || scope == "all") {
+    std::string section = (scope == "all") ? "" : scope.substr(6);
+    if (section.empty()) {
+      // Full sweep — reload filters on every existing link; don't try
+      // to add/remove here (startup already did that).
+      for (auto* link : m_trunk_links) link->reloadConfig();
+    } else {
+      // Per-section: check Redis for peer presence vs local state.
+      auto peers = m_redis ? m_redis->loadTrunkPeers()
+                           : std::map<std::string, RedisStore::TrunkPeerConfig>{};
+      bool peer_in_redis = peers.find(section) != peers.end();
+      TrunkLink* existing = nullptr;
+      for (auto* l : m_trunk_links) {
+        if (l->section() == section) { existing = l; break; }
+      }
+      bool redis_managed = m_redis_trunk_sections.count(section) > 0;
+      if (peer_in_redis && existing == nullptr) {
+        addTrunkLink(section);
+      } else if (!peer_in_redis && existing != nullptr && redis_managed) {
+        // Only remove links that were originally created from Redis; conf-based
+        // links (e.g. TRUNK_TEST in tests) use reloadConfig() instead.
+        removeTrunkLink(section);
+      } else if (existing != nullptr) {
+        existing->reloadConfig();
+      } else {
+        // neither — log and ignore
+        std::cout << "Redis: trunk:" << section
+                  << " event but peer not in Redis and no local link"
+                  << std::endl;
+      }
+    }
+  }
+}
+
+
 void Reflector::publishRxUpdate(ReflectorClient* client)
 {
   if (m_mqtt != nullptr && !client->callsign().empty())
@@ -2696,6 +2943,10 @@ void Reflector::onClientAuthenticated(const std::string& callsign,
   if (m_mqtt != nullptr)
   {
     m_mqtt->onClientConnected(callsign, tg, ip);
+  }
+  if (m_redis != nullptr)
+  {
+    m_redis->pushLiveClient(callsign, ip, "", tg);
   }
   scheduleNodeListUpdate();
 } /* Reflector::onClientAuthenticated */
@@ -2762,6 +3013,10 @@ void Reflector::onTrunkStateChanged(const std::string& section,
     {
       m_mqtt->onTrunkDown(topic_id, direction);
     }
+  }
+  if (m_redis != nullptr)
+  {
+    m_redis->pushLiveTrunk(section, up ? "up" : "down", peer_id);
   }
 } /* Reflector::onTrunkStateChanged */
 

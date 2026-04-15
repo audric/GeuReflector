@@ -86,6 +86,7 @@ namespace Async
 
 class ReflectorMsg;
 class ReflectorUdpMsg;
+class RedisStore;
 
 
 /****************************************************************************
@@ -244,6 +245,8 @@ class Reflector : public sigc::trackable
     bool isClusterTG(uint32_t tg) const { return m_cluster_tgs.count(tg) > 0; }
     bool isSatelliteMode(void) const { return m_is_satellite; }
 
+    RedisStore* redisStore(void) const { return m_redis; }
+
     // Callbacks for SatelliteLink to forward satellite events to trunk peers
     void forwardSatelliteAudioToTrunks(uint32_t tg,
                                         const std::string& callsign);
@@ -316,6 +319,7 @@ class Reflector : public sigc::trackable
     Json::Value                 m_status;
 
     std::vector<TrunkLink*>     m_trunk_links;
+    std::set<std::string>       m_redis_trunk_sections; // sections loaded from Redis
     std::set<uint32_t>          m_cluster_tgs;
     bool                        m_trunk_debug = false;
     Async::Timer                m_nodelist_timer;
@@ -338,6 +342,7 @@ class Reflector : public sigc::trackable
 
     // MQTT publishing
     MqttPublisher*              m_mqtt = nullptr;
+    RedisStore*                 m_redis = nullptr;
     Async::Timer                m_mqtt_status_timer;
 
     Reflector(const Reflector&);
@@ -362,6 +367,11 @@ class Reflector : public sigc::trackable
     void cfgUpdated(const std::string& section, const std::string& tag);
     void onTrunkTalkerUpdated(uint32_t tg, std::string old_cs,
                               std::string new_cs);
+    void onRedisConfigChanged(std::string scope);
+    void reloadClusterTgs(void);
+    bool addTrunkLink(const std::string& section);
+    bool removeTrunkLink(const std::string& section);
+    std::vector<std::string> collectAllTrunkPrefixes(void) const;
     void refreshStatus(void);
     void initTrunkLinks(void);
     void initTrunkServer(void);

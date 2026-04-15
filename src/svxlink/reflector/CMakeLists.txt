@@ -24,13 +24,19 @@ pkg_check_modules(MOSQUITTO REQUIRED libmosquitto)
 include_directories(${MOSQUITTO_INCLUDE_DIRS})
 set(LIBS ${LIBS} ${MOSQUITTO_LIBRARIES})
 
+# Find hiredis library (Redis C client)
+pkg_check_modules(HIREDIS REQUIRED hiredis)
+include_directories(${HIREDIS_INCLUDE_DIRS})
+set(LIBS ${LIBS} ${HIREDIS_LIBRARIES})
+
 # Add project libraries
 set(LIBS asynccpp asyncaudio asynccore svxmisc ${LIBS})
 
 # Build the executable
 add_executable(svxreflector
   svxreflector.cpp Reflector.cpp ReflectorClient.cpp TGHandler.cpp TrunkLink.cpp
-  SatelliteLink.cpp SatelliteClient.cpp MqttPublisher.cpp
+  SatelliteLink.cpp SatelliteClient.cpp MqttPublisher.cpp RedisStore.cpp
+  RedisAsyncAdapter.cpp RedisLiveQueue.cpp
 )
 target_link_libraries(svxreflector ${LIBS})
 set_target_properties(svxreflector PROPERTIES

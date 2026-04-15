@@ -154,6 +154,10 @@ class TrunkLink : public sigc::trackable
     {
       return m_muted_callsigns.count(callsign) > 0;
     }
+    const std::set<std::string>& mutedCallsigns(void) const
+    {
+      return m_muted_callsigns;
+    }
     // Re-parse BLACKLIST_TGS, ALLOW_TGS and TG_MAP from current config
     void reloadConfig(void);
     // One-line summary for TRUNK STATUS

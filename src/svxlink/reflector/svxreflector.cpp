@@ -77,6 +77,8 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 #include "version/SVXREFLECTOR.h"
 #include "Reflector.h"
+#include <hiredis/hiredis.h>
+#include "RedisStore.h"
 
 
 /****************************************************************************
@@ -143,6 +145,211 @@ namespace {
   FdWatch*              stdin_watch = 0;
   LogWriter             logwriter;
 };
+
+static int import_to_redis = 0;
+static int dry_run = 0;
+
+
+/****************************************************************************
+ *
+ * Local helper: import [USERS]/[PASSWORDS] from conf into Redis
+ *
+ ****************************************************************************/
+
+static bool runImportConfToRedis(Async::Config& cfg, bool dry_run)
+{
+  RedisStore::Config rcfg;
+  cfg.getValue("REDIS", "HOST", rcfg.host);
+  std::string port_s; cfg.getValue("REDIS", "PORT", port_s);
+  if (!port_s.empty()) rcfg.port = static_cast<uint16_t>(std::stoul(port_s));
+  cfg.getValue("REDIS", "PASSWORD", rcfg.password);
+  std::string db_s; cfg.getValue("REDIS", "DB", db_s);
+  if (!db_s.empty()) rcfg.db = std::stoi(db_s);
+  cfg.getValue("REDIS", "KEY_PREFIX", rcfg.key_prefix);
+  cfg.getValue("REDIS", "UNIX_SOCKET", rcfg.unix_socket);
+  if (rcfg.host.empty() && rcfg.unix_socket.empty()) {
+    std::cerr << "*** ERROR: --import-conf-to-redis requires [REDIS] in conf"
+              << std::endl;
+    return false;
+  }
+
+  redisContext* ctx = nullptr;
+  if (!dry_run) {
+    struct timeval tv = { 5, 0 };
+    ctx = rcfg.unix_socket.empty()
+        ? redisConnectWithTimeout(rcfg.host.c_str(), rcfg.port, tv)
+        : redisConnectUnixWithTimeout(rcfg.unix_socket.c_str(), tv);
+    if (!ctx || ctx->err) {
+      std::cerr << "*** ERROR: import: Redis connect failed: "
+                << (ctx ? ctx->errstr : "alloc failed") << std::endl;
+      if (ctx) redisFree(ctx);
+      return false;
+    }
+    if (!rcfg.password.empty()) {
+      redisReply* r = (redisReply*)redisCommand(ctx, "AUTH %s", rcfg.password.c_str());
+      if (r) freeReplyObject(r);
+    }
+    if (rcfg.db != 0) {
+      redisReply* r = (redisReply*)redisCommand(ctx, "SELECT %d", rcfg.db);
+      if (r) freeReplyObject(r);
+    }
+  }
+
+  auto kf = [&](const std::string& s) {
+    return rcfg.key_prefix.empty() ? s : rcfg.key_prefix + ":" + s;
+  };
+
+  size_t users = 0, groups = 0;
+
+  for (auto& cs : cfg.listSection("USERS")) {
+    std::string group;
+    if (!cfg.getValue("USERS", cs, group) || group.empty()) continue;
+    std::string ukey = kf("user:" + cs);
+    if (dry_run) {
+      std::cout << "[dry-run] HSET " << ukey << " group " << group
+                << " enabled 1" << std::endl;
+    } else {
+      redisReply* r = (redisReply*)redisCommand(ctx,
+          "HSET %s group %s enabled 1", ukey.c_str(), group.c_str());
+      if (r) freeReplyObject(r);
+    }
+    ++users;
+  }
+
+  for (auto& g : cfg.listSection("PASSWORDS")) {
+    std::string pw;
+    if (!cfg.getValue("PASSWORDS", g, pw) || pw.empty()) continue;
+    std::string gkey = kf("group:" + g);
+    if (dry_run) {
+      std::cout << "[dry-run] HSET " << gkey << " password <REDACTED>"
+                << std::endl;
+    } else {
+      redisReply* r = (redisReply*)redisCommand(ctx,
+          "HSET %s password %s", gkey.c_str(), pw.c_str());
+      if (r) freeReplyObject(r);
+    }
+    ++groups;
+  }
+
+  size_t cluster_n = 0;
+  std::string cluster_str;
+  if (cfg.getValue("GLOBAL", "CLUSTER_TGS", cluster_str))
+  {
+    std::istringstream ss(cluster_str);
+    std::string tok;
+    std::string ck = kf("cluster:tgs");
+    while (std::getline(ss, tok, ','))
+    {
+      tok.erase(0, tok.find_first_not_of(" \t"));
+      tok.erase(tok.find_last_not_of(" \t") + 1);
+      if (tok.empty()) continue;
+      if (dry_run) {
+        std::cout << "[dry-run] SADD " << ck << " " << tok << std::endl;
+      } else {
+        redisReply* r = (redisReply*)redisCommand(ctx, "SADD %s %s",
+                                                  ck.c_str(), tok.c_str());
+        if (r) freeReplyObject(r);
+      }
+      ++cluster_n;
+    }
+  }
+
+  size_t trunks_n = 0;
+  std::list<std::string> sections = cfg.listSections();
+  for (auto& sec : sections)
+  {
+    if (sec.rfind("TRUNK_", 0) != 0) continue;
+    ++trunks_n;
+    std::string trunk_label = sec.substr(6);  // "TRUNK_AB" → "AB"
+
+    // Import the peer definition hash.
+    std::string host, port_s_peer, secret, remote_prefix, peer_id;
+    cfg.getValue(sec, "HOST",          host);
+    cfg.getValue(sec, "PORT",          port_s_peer);
+    cfg.getValue(sec, "SECRET",        secret);
+    cfg.getValue(sec, "REMOTE_PREFIX", remote_prefix);
+    cfg.getValue(sec, "PEER_ID",       peer_id);
+    if (!host.empty() && !secret.empty() && !remote_prefix.empty())
+    {
+      std::string pk = kf("trunk:" + trunk_label + ":peer");
+      auto setField = [&](const char* field, const std::string& value) {
+        if (value.empty()) return;
+        if (dry_run) {
+          std::cout << "[dry-run] HSET " << pk << " " << field
+                    << " " << (std::string(field) == "secret" ? "<REDACTED>" : value)
+                    << std::endl;
+        } else {
+          redisReply* r = (redisReply*)redisCommand(ctx, "HSET %s %s %s",
+              pk.c_str(), field, value.c_str());
+          if (r) freeReplyObject(r);
+        }
+      };
+      setField("host",          host);
+      setField("port",          port_s_peer);
+      setField("secret",        secret);
+      setField("remote_prefix", remote_prefix);
+      setField("peer_id",       peer_id);
+    }
+
+    auto importSet = [&](const std::string& field, const std::string& subkey) {
+      std::string s;
+      if (!cfg.getValue(sec, field, s) || s.empty()) return;
+      std::string k = kf("trunk:" + trunk_label + ":" + subkey);
+      std::istringstream ss(s);
+      std::string tok;
+      while (std::getline(ss, tok, ','))
+      {
+        tok.erase(0, tok.find_first_not_of(" \t"));
+        tok.erase(tok.find_last_not_of(" \t") + 1);
+        if (tok.empty()) continue;
+        if (dry_run) {
+          std::cout << "[dry-run] SADD " << k << " " << tok << std::endl;
+        } else {
+          redisReply* r = (redisReply*)redisCommand(ctx, "SADD %s %s",
+                                                    k.c_str(), tok.c_str());
+          if (r) freeReplyObject(r);
+        }
+      }
+    };
+    importSet("BLACKLIST_TGS", "blacklist");
+    importSet("ALLOW_TGS",     "allow");
+
+    std::string tgmap_str;
+    if (cfg.getValue(sec, "TG_MAP", tgmap_str) && !tgmap_str.empty())
+    {
+      std::string k = kf("trunk:" + trunk_label + ":tgmap");
+      std::istringstream ss(tgmap_str);
+      std::string pair;
+      while (std::getline(ss, pair, ','))
+      {
+        auto colon = pair.find(':');
+        if (colon == std::string::npos) continue;
+        std::string peer  = pair.substr(0, colon);
+        std::string local = pair.substr(colon + 1);
+        // Trim whitespace
+        peer.erase(0, peer.find_first_not_of(" \t"));
+        peer.erase(peer.find_last_not_of(" \t") + 1);
+        local.erase(0, local.find_first_not_of(" \t"));
+        local.erase(local.find_last_not_of(" \t") + 1);
+        if (dry_run) {
+          std::cout << "[dry-run] HSET " << k << " " << peer
+                    << " " << local << std::endl;
+        } else {
+          redisReply* r = (redisReply*)redisCommand(ctx, "HSET %s %s %s",
+              k.c_str(), peer.c_str(), local.c_str());
+          if (r) freeReplyObject(r);
+        }
+      }
+    }
+  }
+
+  std::cout << "Imported " << users << " users, " << groups << " groups, "
+            << cluster_n << " cluster TGs, " << trunks_n << " trunks."
+            << std::endl;
+
+  if (ctx) redisFree(ctx);
+  return true;
+}
 
 
 /****************************************************************************
@@ -388,6 +595,10 @@ int main(int argc, const char *argv[])
     stdin_watch->activity.connect(sigc::ptr_fun(&stdinHandler));
   }
 
+  if (import_to_redis) {
+    return runImportConfToRedis(cfg, dry_run != 0) ? 0 : 1;
+  }
+
   Reflector ref;
   if (ref.initialize(cfg))
   {
@@ -453,6 +664,10 @@ static void parse_arguments(int argc, const char **argv)
 	    "Start " PROGRAM_NAME " as a daemon", NULL},
     {"version", 0, POPT_ARG_NONE, &print_version, 0,
 	    "Print the application version string", NULL},
+    {"import-conf-to-redis", 0, POPT_ARG_NONE, &import_to_redis, 0,
+            "Import [USERS]/[PASSWORDS] from .conf into Redis, then exit", NULL},
+    {"dry-run", 0, POPT_ARG_NONE, &dry_run, 0,
+            "With --import-conf-to-redis: print commands without executing", NULL},
     {NULL, 0, 0, NULL, 0}
   };
   int err;

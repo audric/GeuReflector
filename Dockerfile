@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopus-dev \
     libgsm1-dev \
     libmosquitto-dev \
+    libhiredis-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -30,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopus0 \
     libgsm1 \
     libmosquitto1 \
+    libhiredis-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/build/bin/svxreflector /usr/bin/svxreflector

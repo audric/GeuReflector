@@ -60,6 +60,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "Reflector.h"
 #include "TGHandler.h"
 #include "ReflectorClient.h"
+#include "RedisStore.h"
 #include <json/json.h>
 
 
@@ -371,17 +372,25 @@ Json::Value TrunkLink::statusJson(void) const
   for (const auto& p : m_remote_prefix) remote_arr.append(p);
   obj["remote_prefix"] = remote_arr;
 
-  // active_talkers: TGs held by trunk that match remote prefix or are cluster TGs
+  // active_talkers: per-peer active TGs (already post-TG_MAP remap).
+  // We use m_peer_active_tgs directly instead of filtering the global
+  // trunk-talker map by isSharedTG, because a TG_MAP entry can remap a
+  // peer-owned wire TG to a local-owned TG that no longer matches the
+  // peer's remote prefix — that TG must still appear in this peer's view.
   Json::Value talkers(Json::objectValue);
-  const auto& trunk_map = TGHandler::instance()->trunkTalkersSnapshot();
-  for (auto& kv : trunk_map)
+  for (uint32_t tg : m_peer_active_tgs)
   {
-    if (isSharedTG(kv.first) || m_reflector->isClusterTG(kv.first))
+    const std::string cs = TGHandler::instance()->trunkTalkerForTG(tg);
+    if (!cs.empty())
     {
-      talkers[std::to_string(kv.first)] = kv.second;
+      talkers[std::to_string(tg)] = cs;
     }
   }
   obj["active_talkers"] = talkers;
+
+  Json::Value muted_arr(Json::arrayValue);
+  for (const auto& cs : m_muted_callsigns) muted_arr.append(cs);
+  obj["muted"] = muted_arr;
 
   return obj;
 } /* TrunkLink::statusJson */
@@ -1098,34 +1107,53 @@ void TrunkLink::reloadConfig(void)
   m_tg_map_in.clear();
   m_tg_map_out.clear();
 
+  RedisStore* rs = m_reflector->redisStore();
+
   std::string blacklist_str;
-  if (m_cfg.getValue(m_section, "BLACKLIST_TGS", blacklist_str)
-      && !blacklist_str.empty())
+  if (rs) {
+    blacklist_str = rs->loadTrunkFilter(m_section, "blacklist");
+  } else {
+    m_cfg.getValue(m_section, "BLACKLIST_TGS", blacklist_str);
+  }
+  if (!blacklist_str.empty())
   {
     m_blacklist_filter = TgFilter::parse(blacklist_str);
   }
 
   std::string allow_str;
-  if (m_cfg.getValue(m_section, "ALLOW_TGS", allow_str) && !allow_str.empty())
+  if (rs) {
+    allow_str = rs->loadTrunkFilter(m_section, "allow");
+  } else {
+    m_cfg.getValue(m_section, "ALLOW_TGS", allow_str);
+  }
+  if (!allow_str.empty())
   {
     m_allow_filter = TgFilter::parse(allow_str);
   }
 
-  std::string tgmap_str;
-  if (m_cfg.getValue(m_section, "TG_MAP", tgmap_str) && !tgmap_str.empty())
-  {
-    std::istringstream ms(tgmap_str);
-    std::string pair;
-    while (std::getline(ms, pair, ','))
+  if (rs) {
+    auto tgmap = rs->loadTrunkTgMap(m_section);
+    for (auto& kv : tgmap) {
+      m_tg_map_in[kv.first]   = kv.second;
+      m_tg_map_out[kv.second] = kv.first;
+    }
+  } else {
+    std::string tgmap_str;
+    if (m_cfg.getValue(m_section, "TG_MAP", tgmap_str) && !tgmap_str.empty())
     {
-      auto colon = pair.find(':');
-      if (colon == std::string::npos) continue;
-      try {
-        uint32_t peer_tg  = std::stoul(pair.substr(0, colon));
-        uint32_t local_tg = std::stoul(pair.substr(colon + 1));
-        m_tg_map_in[peer_tg]   = local_tg;
-        m_tg_map_out[local_tg] = peer_tg;
-      } catch (...) { /* skip malformed */ }
+      std::istringstream ms(tgmap_str);
+      std::string pair;
+      while (std::getline(ms, pair, ','))
+      {
+        auto colon = pair.find(':');
+        if (colon == std::string::npos) continue;
+        try {
+          uint32_t peer_tg  = std::stoul(pair.substr(0, colon));
+          uint32_t local_tg = std::stoul(pair.substr(colon + 1));
+          m_tg_map_in[peer_tg]   = local_tg;
+          m_tg_map_out[local_tg] = peer_tg;
+        } catch (...) { /* skip malformed */ }
+      }
     }
   }
 
@@ -1134,7 +1162,8 @@ void TrunkLink::reloadConfig(void)
             " blacklist=" + m_blacklist_filter.toString())
        << (m_allow_filter.empty()     ? "" :
             " allow="     + m_allow_filter.toString())
-       << " tg_map_entries=" << m_tg_map_in.size() << endl;
+       << " tg_map_entries=" << m_tg_map_in.size()
+       << endl;
 } /* TrunkLink::reloadConfig */
 
 

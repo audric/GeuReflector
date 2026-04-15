@@ -24,6 +24,7 @@ def generate_reflector_conf(name: str) -> str:
         f"CLUSTER_TGS={cluster_str}",
         f"TRUNK_LISTEN_PORT={T.INTERNAL_TRUNK_PORT}",
         f"HTTP_SRV_PORT={T.INTERNAL_HTTP_PORT}",
+        "COMMAND_PTY=/dev/shm/reflector_ctrl",
         "TRUNK_DEBUG=1",
         "",
         "[SERVER_CERT]",
@@ -109,6 +110,16 @@ def generate_reflector_conf(name: str) -> str:
         lines.append(f"MQTT_NAME={T.MQTT_NAMES[name]}")
     lines.append("")
 
+    if r.get("redis"):
+        lines += [
+            "[REDIS]",
+            f"HOST={T.REDIS['host']}",
+            f"PORT={T.REDIS['port']}",
+            f"DB={T.redis_db_index(name)}",
+            f"KEY_PREFIX={T.service_name(name)}",
+            "",
+        ]
+
     return "\n".join(lines)
 
 
@@ -133,6 +144,13 @@ def generate_docker_compose() -> str:
             sat_port = T.mapped_satellite_port(name)
             sat_port_line = f'\n      - "{sat_port}:{T.SATELLITE["listen_port"]}/tcp"'
 
+        depends_on_line = ""
+        if T.REFLECTORS[name].get("redis"):
+            depends_on_line = """
+    depends_on:
+      redis:
+        condition: service_healthy"""
+
         services.append(f"""  {svc}:
     build:
       context: ..
@@ -151,7 +169,7 @@ def generate_docker_compose() -> str:
       timeout: 2s
       retries: 15
     networks:
-      - trunk_mesh""")
+      - trunk_mesh{depends_on_line}""")
 
     # Mosquitto broker for MQTT testing
     services.append("""  mosquitto:
@@ -161,6 +179,22 @@ def generate_docker_compose() -> str:
       - "11883:1883/tcp"
     healthcheck:
       test: ["CMD-SHELL", "mosquitto_pub -h localhost -t test -m test || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+    networks:
+      - trunk_mesh""")
+
+    # Redis used by any reflector flagged `redis: True`.
+    any_redis = any(r.get("redis") for r in T.REFLECTORS.values())
+    if any_redis:
+        services.append("""  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "16379:6379/tcp"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 2s
       timeout: 2s
       retries: 10

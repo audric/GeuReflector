@@ -10,7 +10,7 @@ to regenerate configs/ and docker-compose.test.yml.  The test harness
 # ---------------------------------------------------------------------------
 
 REFLECTORS = {
-    #  name       prefixes (list)          host-port-base
+    #  name       prefixes (list)          host-port-base       redis
     "a": {"prefix": ["122"],  "trunk_port_base": 15000},
     "b": {"prefix": ["121"],  "trunk_port_base": 25000},
     "c": {"prefix": ["1"],    "trunk_port_base": 35000},
@@ -60,6 +60,17 @@ SATELLITE = {
     "secret": "sat_secret",
     "listen_port": 5303,
 }
+
+# Redis broker — used by reflectors flagged `redis: True`.
+# Each reflector uses its own DB index to avoid pollution between tests.
+REDIS = {
+    "host": "redis",
+    "port": 6379,
+}
+
+def redis_db_index(name: str) -> int:
+    """Stable per-reflector Redis DB index derived from name order."""
+    return sorted(REFLECTORS).index(name)
 
 # MQTT test config — broker runs as a Docker service in test compose
 MQTT = {
