@@ -1081,6 +1081,10 @@ void Reflector::clientDisconnected(Async::FramedTcpConnection *con,
       {
         m_mqtt->onClientDisconnected(client->callsign());
       }
+      if (m_redis != nullptr)
+      {
+        m_redis->clearLiveClient(client->callsign());
+      }
       scheduleNodeListUpdate();
   }
   //Application::app().runTask([=]{ delete client; });
@@ -1546,6 +1550,10 @@ void Reflector::onTalkerUpdated(uint32_t tg, ReflectorClient* old_talker,
     {
       m_mqtt->onTalkerStop(tg, old_talker->callsign(), false);
     }
+    if (m_redis != nullptr)
+    {
+      m_redis->clearLiveTalker(tg);
+    }
   }
   if (new_talker != 0)
   {
@@ -1564,6 +1572,10 @@ void Reflector::onTalkerUpdated(uint32_t tg, ReflectorClient* old_talker,
     if (m_mqtt != nullptr)
     {
       m_mqtt->onTalkerStart(tg, new_talker->callsign(), false);
+    }
+    if (m_redis != nullptr)
+    {
+      m_redis->pushLiveTalker(tg, new_talker->callsign(), "local");
     }
   }
 
@@ -2682,6 +2694,10 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
     {
       m_mqtt->onTalkerStop(tg, old_cs, true);
     }
+    if (m_redis != nullptr)
+    {
+      m_redis->clearLiveTalker(tg);
+    }
   }
   if (!new_cs.empty())
   {
@@ -2695,6 +2711,10 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
     if (m_mqtt != nullptr)
     {
       m_mqtt->onTalkerStart(tg, new_cs, true);
+    }
+    if (m_redis != nullptr)
+    {
+      m_redis->pushLiveTalker(tg, new_cs, "trunk");
     }
   }
 
@@ -2785,6 +2805,10 @@ void Reflector::onClientAuthenticated(const std::string& callsign,
   {
     m_mqtt->onClientConnected(callsign, tg, ip);
   }
+  if (m_redis != nullptr)
+  {
+    m_redis->pushLiveClient(callsign, ip, "", tg);
+  }
   scheduleNodeListUpdate();
 } /* Reflector::onClientAuthenticated */
 
@@ -2850,6 +2874,10 @@ void Reflector::onTrunkStateChanged(const std::string& section,
     {
       m_mqtt->onTrunkDown(topic_id, direction);
     }
+  }
+  if (m_redis != nullptr)
+  {
+    m_redis->pushLiveTrunk(section, up ? "up" : "down", peer_id);
   }
 } /* Reflector::onTrunkStateChanged */
 

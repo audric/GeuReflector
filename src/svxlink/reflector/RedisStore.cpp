@@ -2,7 +2,10 @@
 #include <hiredis/hiredis.h>
 #include <hiredis/async.h>
 #include "RedisAsyncAdapter.h"
+#include <AsyncTimer.h>
+#include "RedisLiveQueue.h"
 #include <iostream>
+#include <ctime>
 
 namespace {
 
@@ -26,7 +29,10 @@ void onAsyncDisconnectThunk(const redisAsyncContext* ac, int status) {
 
 RedisStore::RedisStore(const Config& cfg) : m_cfg(cfg) {}
 RedisStore::~RedisStore() {
-  if (m_sync) { redisFree(m_sync); m_sync = nullptr; }
+  delete m_drain_timer;    m_drain_timer = nullptr;
+  delete m_live_queue;     m_live_queue  = nullptr;
+  if (m_async) { redisAsyncFree(m_async); m_async = nullptr; }
+  if (m_sync)  { redisFree(m_sync);       m_sync  = nullptr; }
 }
 
 bool RedisStore::connectSync(void) {
@@ -69,6 +75,12 @@ bool RedisStore::connect(void) {
   if (!connectSync()) return false;
   if (!connectAsync()) return false;
   subscribe();
+
+  m_live_queue = new RedisLiveQueue(4096);
+  m_drain_timer = new Async::Timer(75, Async::Timer::TYPE_PERIODIC);
+  m_drain_timer->expired.connect(
+      sigc::mem_fun(*this, &RedisStore::drainLiveQueue));
+
   std::cout << "RedisStore: connected sync+async, subscribed to "
             << channelName() << std::endl;
   return true;
@@ -208,15 +220,74 @@ void RedisStore::publishConfigChanged(const std::string& scope) {
   if (r) freeReplyObject(r);
 }
 
-void RedisStore::pushLiveTalker(uint32_t, const std::string&, const std::string&) {}
-void RedisStore::clearLiveTalker(uint32_t) {}
-void RedisStore::pushLiveClient(const std::string&, const std::string&,
-                                const std::string&, uint32_t) {}
-void RedisStore::clearLiveClient(const std::string&) {}
-void RedisStore::pushLiveTrunk(const std::string&, const std::string&,
-                               const std::string&) {}
+void RedisStore::pushLiveTalker(uint32_t tg, const std::string& callsign,
+                                const std::string& source) {
+  if (!m_live_queue) return;
+  RedisLiveQueue::Op op;
+  op.op  = RedisLiveQueue::OpType::HSET;
+  op.key = keyFor("live:talker:" + std::to_string(tg));
+  op.fields = {
+    {"callsign",   callsign},
+    {"started_at", std::to_string(std::time(nullptr))},
+    {"source",     source}
+  };
+  op.ttl_s = 60;
+  m_live_queue->push(std::move(op));
+}
 
-size_t RedisStore::liveQueueSize(void) const { return 0; }
+void RedisStore::clearLiveTalker(uint32_t tg) {
+  if (!m_live_queue) return;
+  RedisLiveQueue::Op op;
+  op.op  = RedisLiveQueue::OpType::DEL;
+  op.key = keyFor("live:talker:" + std::to_string(tg));
+  m_live_queue->push(std::move(op));
+}
+
+void RedisStore::pushLiveClient(const std::string& callsign,
+                                const std::string& ip,
+                                const std::string& codecs,
+                                uint32_t current_tg) {
+  if (!m_live_queue) return;
+  RedisLiveQueue::Op op;
+  op.op  = RedisLiveQueue::OpType::HSET;
+  op.key = keyFor("live:client:" + callsign);
+  op.fields = {
+    {"connected_at", std::to_string(std::time(nullptr))},
+    {"ip",           ip},
+    {"codecs",       codecs},
+    {"tg",           std::to_string(current_tg)}
+  };
+  op.ttl_s = 60;
+  m_live_queue->push(std::move(op));
+}
+
+void RedisStore::clearLiveClient(const std::string& callsign) {
+  if (!m_live_queue) return;
+  RedisLiveQueue::Op op;
+  op.op  = RedisLiveQueue::OpType::DEL;
+  op.key = keyFor("live:client:" + callsign);
+  m_live_queue->push(std::move(op));
+}
+
+void RedisStore::pushLiveTrunk(const std::string& section,
+                               const std::string& state,
+                               const std::string& peer_id) {
+  if (!m_live_queue) return;
+  RedisLiveQueue::Op op;
+  op.op  = RedisLiveQueue::OpType::HSET;
+  op.key = keyFor("live:trunk:" + section);
+  op.fields = {
+    {"state",   state},
+    {"peer_id", peer_id},
+    {"last_hb", std::to_string(std::time(nullptr))}
+  };
+  op.ttl_s = 60;
+  m_live_queue->push(std::move(op));
+}
+
+size_t RedisStore::liveQueueSize(void) const {
+  return m_live_queue ? m_live_queue->size() : 0;
+}
 
 bool RedisStore::connectAsync(void) {
   if (!m_cfg.unix_socket.empty()) {
@@ -255,7 +326,48 @@ void RedisStore::subscribe(void) {
 void RedisStore::scheduleReconnect(void) {}
 void RedisStore::onAsyncDisconnect(int) {}
 void RedisStore::onPubSubMessage(const std::string&, const std::string&) {}
-void RedisStore::drainLiveQueue(Async::Timer*) {}
+void RedisStore::drainLiveQueue(Async::Timer*) {
+  if (!m_async || !m_live_queue) return;
+  std::vector<RedisLiveQueue::Op> ops;
+  m_live_queue->drain(ops);
+  if (ops.empty()) return;
+
+  for (auto& op : ops) {
+    switch (op.op) {
+      case RedisLiveQueue::OpType::HSET: {
+        std::vector<const char*> argv;
+        std::vector<size_t>      argl;
+        argv.push_back("HSET"); argl.push_back(4);
+        argv.push_back(op.key.c_str()); argl.push_back(op.key.size());
+        for (auto& kv : op.fields) {
+          argv.push_back(kv.first.c_str());  argl.push_back(kv.first.size());
+          argv.push_back(kv.second.c_str()); argl.push_back(kv.second.size());
+        }
+        redisAsyncCommandArgv(m_async, nullptr, nullptr,
+                              static_cast<int>(argv.size()),
+                              argv.data(), argl.data());
+        if (op.ttl_s > 0) {
+          redisAsyncCommand(m_async, nullptr, nullptr,
+                            "EXPIRE %s %d", op.key.c_str(), op.ttl_s);
+        }
+        break;
+      }
+      case RedisLiveQueue::OpType::DEL:
+        redisAsyncCommand(m_async, nullptr, nullptr,
+                          "DEL %s", op.key.c_str());
+        break;
+      case RedisLiveQueue::OpType::EXPIRE:
+        redisAsyncCommand(m_async, nullptr, nullptr,
+                          "EXPIRE %s %d", op.key.c_str(), op.ttl_s);
+        break;
+    }
+  }
+
+  // Notify dashboards once per drain cycle.
+  std::string ch = keyFor("live.changed");
+  redisAsyncCommand(m_async, nullptr, nullptr,
+                    "PUBLISH %s tick", ch.c_str());
+}
 void RedisStore::refreshLiveExpire(Async::Timer*) {}
 
 std::string RedisStore::keyFor(const std::string& suffix) const {
