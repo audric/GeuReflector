@@ -482,3 +482,335 @@ curl -s http://localhost:8080/status | python3 -m json.tool | grep -A4 '"redis"'
 #     "dropped_live_writes": 0
 # }
 ```
+
+---
+
+## PHP dashboard example
+
+Examples below use the [**phpredis**](https://github.com/phpredis/phpredis)
+PECL extension (the canonical `Redis` class). For pure-PHP setups without
+the extension, [**Predis**](https://github.com/predis/predis) (installable
+via Composer) exposes a nearly identical API — `new Predis\Client([...])`
+in place of `new Redis()`, and the same `hSet` / `sAdd` / `publish` method
+names work unchanged.
+
+All snippets assume the reflector is configured with `KEY_PREFIX=refl1`.
+Adjust `$prefix` for your deployment, or leave it empty when no prefix is
+set on the reflector.
+
+### Connect
+
+```php
+<?php
+$r = new Redis();
+$r->connect('127.0.0.1', 6379, 1.0);   // host, port, timeout seconds
+// $r->auth('your_password');           // if PASSWORD= is set on the reflector
+// $r->select(0);                       // if DB != 0
+
+$prefix = 'refl1';                      // match the reflector's KEY_PREFIX
+$k = fn(string $suffix) => $prefix === '' ? $suffix : "$prefix:$suffix";
+$channel = $k('config.changed');
+```
+
+### Add a user
+
+```php
+$r->hSet($k('user:ON4ABC'),      'group',    'admins');
+$r->hSet($k('user:ON4ABC'),      'enabled',  '1');
+$r->hSet($k('group:admins'),     'password', 's3cur3p@ss');
+$r->publish($channel, 'users');
+```
+
+Or atomic-ish with `MULTI/EXEC`:
+
+```php
+$r->multi()
+  ->hSet($k('user:ON4ABC'),  'group',    'admins')
+  ->hSet($k('user:ON4ABC'),  'enabled',  '1')
+  ->hSet($k('group:admins'), 'password', 's3cur3p@ss')
+  ->publish($channel, 'users')
+  ->exec();
+```
+
+### List all users
+
+```php
+$users = [];
+$it = null;
+while (($keys = $r->scan($it, $k('user:*'), 200)) !== false) {
+    foreach ($keys as $key) {
+        $fields = $r->hGetAll($key);
+        $callsign = substr($key, strlen($k('user:')));
+        $users[$callsign] = $fields;
+    }
+}
+// $users === ['ON4ABC' => ['group' => 'admins', 'enabled' => '1'], ...]
+```
+
+### Disable, re-enable, delete a user
+
+```php
+$r->hSet($k('user:ON4ABC'), 'enabled', '0');
+$r->publish($channel, 'users');
+
+$r->hSet($k('user:ON4ABC'), 'enabled', '1');
+$r->publish($channel, 'users');
+
+$r->del($k('user:ON4ABC'));
+$r->publish($channel, 'users');
+```
+
+### Change a password-group's password
+
+```php
+$r->hSet($k('group:admins'), 'password', 'newS3cret');
+$r->publish($channel, 'users');
+```
+
+### Add / remove a cluster TG
+
+```php
+$r->sAdd($k('cluster:tgs'), '9990');
+$r->publish($channel, 'cluster');
+
+$r->sRem($k('cluster:tgs'), '9990');
+$r->publish($channel, 'cluster');
+```
+
+### Edit a per-trunk filter
+
+```php
+// Blacklist TG 666 on trunk TRUNK_1_2
+$r->sAdd($k('trunk:TRUNK_1_2:blacklist'), '666');
+$r->publish($channel, 'trunk:TRUNK_1_2');
+
+// Remove the blacklist entry
+$r->sRem($k('trunk:TRUNK_1_2:blacklist'), '666');
+$r->publish($channel, 'trunk:TRUNK_1_2');
+
+// Set a TG_MAP entry
+$r->hSet($k('trunk:TRUNK_1_2:tgmap'), '7000', '1220');
+$r->publish($channel, 'trunk:TRUNK_1_2');
+```
+
+### Add / remove a trunk peer at runtime
+
+```php
+// Add a trunk peer (link comes up without a reflector restart)
+$r->hMSet($k('trunk:TRUNK_1_3:peer'), [
+    'host'          => 'reflector-3.example.org',
+    'port'          => '5302',
+    'secret'        => 'shared_trunk_secret',
+    'remote_prefix' => '3',
+    'peer_id'       => 'my-peer-id',
+]);
+$r->publish($channel, 'trunk:TRUNK_1_3');
+
+// Remove a trunk peer
+$r->del($k('trunk:TRUNK_1_3:peer'));
+$r->publish($channel, 'trunk:TRUNK_1_3');
+```
+
+### Read live state (connected clients, active talkers, trunk state)
+
+```php
+// Currently connected clients
+$clients = [];
+$it = null;
+while (($keys = $r->scan($it, $k('live:client:*'), 200)) !== false) {
+    foreach ($keys as $key) {
+        $callsign = substr($key, strlen($k('live:client:')));
+        $clients[$callsign] = $r->hGetAll($key);
+    }
+}
+
+// Active talkers (one per TG)
+$talkers = [];
+$it = null;
+while (($keys = $r->scan($it, $k('live:talker:*'), 200)) !== false) {
+    foreach ($keys as $key) {
+        $tg = (int)substr($key, strlen($k('live:talker:')));
+        $talkers[$tg] = $r->hGetAll($key);
+    }
+}
+
+// Trunk link state
+$trunks = [];
+$it = null;
+while (($keys = $r->scan($it, $k('live:trunk:*'), 200)) !== false) {
+    foreach ($keys as $key) {
+        $section = substr($key, strlen($k('live:trunk:')));
+        $trunks[$section] = $r->hGetAll($key);
+    }
+}
+```
+
+### Subscribe to live updates (push UI refresh)
+
+The reflector publishes on `<KEY_PREFIX>:live.changed` once per drain
+cycle (~75 ms). A dashboard worker / websocket backend can subscribe to
+that channel and push refreshes to the browser instead of polling.
+
+```php
+$sub = new Redis();
+$sub->connect('127.0.0.1', 6379);
+// $sub->auth('...');
+// $sub->select(0);
+$sub->subscribe([$k('live.changed')], function ($redis, $chan, $msg) {
+    // $msg is always "tick" — the signal is "something changed",
+    // the dashboard re-reads live:* keys to get the new state.
+    // Forward to your websocket / server-sent-events layer here.
+    error_log("live.changed on $chan: $msg");
+});
+```
+
+Subscribe is blocking; run it in a dedicated worker process.
+
+### Running the importer from PHP
+
+The `--import-conf-to-redis` CLI is idempotent — it's fine to invoke from
+a dashboard bootstrap script when provisioning a new reflector:
+
+```php
+$output = [];
+$rc = 0;
+exec('svxreflector --config /etc/svxlink/svxreflector.conf '
+   . '--import-conf-to-redis 2>&1', $output, $rc);
+if ($rc !== 0) {
+    throw new RuntimeException("import failed: " . implode("\n", $output));
+}
+```
+
+### Error handling notes
+
+- Every write op is idempotent — retrying after a transient network
+  error is safe.
+- The `publish` return value is the number of subscribers that received
+  the message. `0` means the reflector isn't connected right now; the
+  write still lands in Redis and will be picked up on the next reflector
+  reconnect + full reload (see "Failure modes").
+- `hSet` / `hMSet` create the hash if it doesn't exist; no need to
+  pre-check.
+
+---
+
+## Migrating from a MySQL-backed setup
+
+If you were previously running a custom dashboard that stored svxreflector
+users and trunk definitions in MySQL, the path of least resistance is to
+generate a `.conf` snippet from your MySQL tables, review it, and feed
+it through the existing `--import-conf-to-redis` importer.
+
+### Assumed MySQL schema
+
+Every custom dashboard is different. The examples below assume tables
+along these lines — adapt the queries to your actual column names:
+
+```sql
+CREATE TABLE users (
+    callsign     VARCHAR(32)  PRIMARY KEY,
+    group_name   VARCHAR(64)  NOT NULL,
+    enabled      TINYINT(1)   NOT NULL DEFAULT 1
+);
+
+CREATE TABLE groups (
+    name         VARCHAR(64)  PRIMARY KEY,
+    password     VARCHAR(128) NOT NULL
+);
+
+CREATE TABLE cluster_tgs (
+    tg           INT UNSIGNED PRIMARY KEY
+);
+
+CREATE TABLE trunk_peers (
+    section         VARCHAR(64)  PRIMARY KEY,   -- e.g. "TRUNK_1_2"
+    host            VARCHAR(255) NOT NULL,
+    port            INT          NOT NULL DEFAULT 5302,
+    secret          VARCHAR(128) NOT NULL,
+    remote_prefix   VARCHAR(64)  NOT NULL,
+    peer_id         VARCHAR(64)
+);
+
+CREATE TABLE trunk_filters (
+    section         VARCHAR(64)  NOT NULL,
+    kind            ENUM('blacklist','allow') NOT NULL,
+    pattern         VARCHAR(32)  NOT NULL,      -- "666", "24*", "2427-2438"
+    PRIMARY KEY (section, kind, pattern)
+);
+
+CREATE TABLE trunk_tgmap (
+    section         VARCHAR(64)  NOT NULL,
+    peer_tg         INT UNSIGNED NOT NULL,
+    local_tg        INT UNSIGNED NOT NULL,
+    PRIMARY KEY (section, peer_tg)
+);
+```
+
+### MySQL → `.conf` → importer
+
+Generate a `.conf`-style snippet from SQL, drop it alongside the real
+reflector config, run the importer, then delete the snippet. No new
+code lives on the dashboard side after the one-shot migration.
+
+```php
+<?php
+// mysql-to-conf.php > /tmp/migration.conf
+$db = new PDO(/* as above */);
+
+echo "[USERS]\n";
+foreach ($db->query('SELECT callsign, group_name FROM users WHERE enabled=1') as $row) {
+    echo "{$row['callsign']}={$row['group_name']}\n";
+}
+echo "\n[PASSWORDS]\n";
+foreach ($db->query('SELECT name, password FROM groups') as $row) {
+    echo "{$row['name']}=\"{$row['password']}\"\n";
+}
+
+// CLUSTER_TGS goes under [GLOBAL]
+echo "\n[GLOBAL]\nCLUSTER_TGS=";
+$tgs = [];
+foreach ($db->query('SELECT tg FROM cluster_tgs ORDER BY tg') as $row) {
+    $tgs[] = $row['tg'];
+}
+echo implode(',', $tgs) . "\n";
+
+// Trunk peers + filters
+foreach ($db->query('SELECT * FROM trunk_peers') as $row) {
+    echo "\n[{$row['section']}]\n";
+    echo "HOST={$row['host']}\nPORT={$row['port']}\n";
+    echo "SECRET={$row['secret']}\n";
+    echo "REMOTE_PREFIX={$row['remote_prefix']}\n";
+    if (!empty($row['peer_id'])) echo "PEER_ID={$row['peer_id']}\n";
+
+    $filters = ['blacklist' => [], 'allow' => []];
+    $stmt = $db->prepare('SELECT kind, pattern FROM trunk_filters WHERE section=?');
+    $stmt->execute([$row['section']]);
+    foreach ($stmt as $f) $filters[$f['kind']][] = $f['pattern'];
+    if ($filters['blacklist']) echo "BLACKLIST_TGS=" . implode(',', $filters['blacklist']) . "\n";
+    if ($filters['allow'])     echo "ALLOW_TGS="     . implode(',', $filters['allow'])     . "\n";
+
+    $stmt = $db->prepare('SELECT peer_tg, local_tg FROM trunk_tgmap WHERE section=?');
+    $stmt->execute([$row['section']]);
+    $pairs = [];
+    foreach ($stmt as $m) $pairs[] = "{$m['peer_tg']}:{$m['local_tg']}";
+    if ($pairs) echo "TG_MAP=" . implode(',', $pairs) . "\n";
+}
+```
+
+Run it, sanity-check, then:
+
+```bash
+php mysql-to-conf.php > /tmp/migration.conf
+cat /etc/svxlink/svxreflector.conf /tmp/migration.conf > /tmp/merged.conf
+# Eyeball /tmp/merged.conf, then:
+svxreflector --config /tmp/merged.conf --import-conf-to-redis --dry-run
+svxreflector --config /tmp/merged.conf --import-conf-to-redis
+rm /tmp/migration.conf /tmp/merged.conf
+```
+
+The importer is idempotent, so re-running it does not produce duplicates.
+
+Once the migration succeeds and the reflector is running against Redis,
+consider **retiring MySQL** for reflector config — your dashboard can
+read/write Redis directly (see the PHP examples above) and the reflector
+picks up changes without a second hop.
