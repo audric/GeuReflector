@@ -2194,6 +2194,7 @@ void Reflector::initTrunkLinks(void)
       m_cfg->setValue(section, "REMOTE_PREFIX", p.remote_prefix);
       if (!p.peer_id.empty())
         m_cfg->setValue(section, "PEER_ID", p.peer_id);
+      m_redis_trunk_sections.insert(section);
     }
     std::cout << "Redis: loaded " << peers.size() << " trunk peer(s)"
               << std::endl;
@@ -2803,6 +2804,84 @@ void Reflector::reloadClusterTgs(void)
 }
 
 
+std::vector<std::string> Reflector::collectAllTrunkPrefixes(void) const
+{
+  std::vector<std::string> all;
+  for (const auto* link : m_trunk_links) {
+    for (const std::string& p : link->remotePrefix()) all.push_back(p);
+  }
+  return all;
+}
+
+
+bool Reflector::addTrunkLink(const std::string& section)
+{
+  if (m_redis == nullptr) {
+    std::cerr << "*** addTrunkLink called without Redis — refusing"
+              << std::endl;
+    return false;
+  }
+  // Already present?
+  for (const auto* link : m_trunk_links) {
+    if (link->section() == section) return true;
+  }
+
+  auto peers = m_redis->loadTrunkPeers();
+  auto it = peers.find(section);
+  if (it == peers.end()) {
+    std::cerr << "*** addTrunkLink(" << section
+              << "): peer hash not found in Redis" << std::endl;
+    return false;
+  }
+  const auto& p = it->second;
+
+  // Synthesize the config section (same shape as startup).
+  m_cfg->setValue(section, "HOST", p.host);
+  if (!p.port.empty())   m_cfg->setValue(section, "PORT", p.port);
+  m_cfg->setValue(section, "SECRET", p.secret);
+  m_cfg->setValue(section, "REMOTE_PREFIX", p.remote_prefix);
+  if (!p.peer_id.empty()) m_cfg->setValue(section, "PEER_ID", p.peer_id);
+
+  auto* link = new TrunkLink(this, *m_cfg, section);
+  if (!link->initialize()) {
+    std::cerr << "*** addTrunkLink(" << section
+              << "): TrunkLink::initialize() failed" << std::endl;
+    delete link;
+    return false;
+  }
+  m_trunk_links.push_back(link);
+  m_redis_trunk_sections.insert(section);
+
+  // Rebroadcast the full prefix set to every link (including the new one).
+  auto all_prefixes = collectAllTrunkPrefixes();
+  for (auto* l : m_trunk_links) l->setAllPrefixes(all_prefixes);
+
+  std::cout << "Added trunk link: " << section << " (" << p.host
+            << ":" << (p.port.empty() ? "5302" : p.port) << ")" << std::endl;
+  return true;
+}
+
+
+bool Reflector::removeTrunkLink(const std::string& section)
+{
+  auto it = std::find_if(m_trunk_links.begin(), m_trunk_links.end(),
+      [&](TrunkLink* l) { return l->section() == section; });
+  if (it == m_trunk_links.end()) return false;
+
+  TrunkLink* dead = *it;
+  m_trunk_links.erase(it);
+  m_redis_trunk_sections.erase(section);
+  delete dead;  // destructor clears trunk talker state via TGHandler
+
+  // Rebroadcast the remaining prefix set so peers drop the removed one.
+  auto all_prefixes = collectAllTrunkPrefixes();
+  for (auto* l : m_trunk_links) l->setAllPrefixes(all_prefixes);
+
+  std::cout << "Removed trunk link: " << section << std::endl;
+  return true;
+}
+
+
 void Reflector::onRedisConfigChanged(std::string scope)
 {
   std::cout << "Redis config.changed: " << scope << std::endl;
@@ -2816,8 +2895,34 @@ void Reflector::onRedisConfigChanged(std::string scope)
   }
   if (scope.rfind("trunk:", 0) == 0 || scope == "all") {
     std::string section = (scope == "all") ? "" : scope.substr(6);
-    for (auto* link : m_trunk_links) {
-      if (section.empty() || link->section() == section) link->reloadConfig();
+    if (section.empty()) {
+      // Full sweep — reload filters on every existing link; don't try
+      // to add/remove here (startup already did that).
+      for (auto* link : m_trunk_links) link->reloadConfig();
+    } else {
+      // Per-section: check Redis for peer presence vs local state.
+      auto peers = m_redis ? m_redis->loadTrunkPeers()
+                           : std::map<std::string, RedisStore::TrunkPeerConfig>{};
+      bool peer_in_redis = peers.find(section) != peers.end();
+      TrunkLink* existing = nullptr;
+      for (auto* l : m_trunk_links) {
+        if (l->section() == section) { existing = l; break; }
+      }
+      bool redis_managed = m_redis_trunk_sections.count(section) > 0;
+      if (peer_in_redis && existing == nullptr) {
+        addTrunkLink(section);
+      } else if (!peer_in_redis && existing != nullptr && redis_managed) {
+        // Only remove links that were originally created from Redis; conf-based
+        // links (e.g. TRUNK_TEST in tests) use reloadConfig() instead.
+        removeTrunkLink(section);
+      } else if (existing != nullptr) {
+        existing->reloadConfig();
+      } else {
+        // neither — log and ignore
+        std::cout << "Redis: trunk:" << section
+                  << " event but peer not in Redis and no local link"
+                  << std::endl;
+      }
     }
   }
 }

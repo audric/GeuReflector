@@ -319,6 +319,7 @@ class Reflector : public sigc::trackable
     Json::Value                 m_status;
 
     std::vector<TrunkLink*>     m_trunk_links;
+    std::set<std::string>       m_redis_trunk_sections; // sections loaded from Redis
     std::set<uint32_t>          m_cluster_tgs;
     bool                        m_trunk_debug = false;
     Async::Timer                m_nodelist_timer;
@@ -368,6 +369,9 @@ class Reflector : public sigc::trackable
                               std::string new_cs);
     void onRedisConfigChanged(std::string scope);
     void reloadClusterTgs(void);
+    bool addTrunkLink(const std::string& section);
+    bool removeTrunkLink(const std::string& section);
+    std::vector<std::string> collectAllTrunkPrefixes(void) const;
     void refreshStatus(void);
     void initTrunkLinks(void);
     void initTrunkServer(void);
