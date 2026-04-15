@@ -4,6 +4,25 @@
 @author  GeuReflector
 @date    2026-04-15
 
+\verbatim
+SvxReflector - An audio reflector for connecting SvxLink Servers
+Copyright (C) 2003-2026 Tobias Blomberg / SM0SVX
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+\endverbatim
+
 The twin link mirrors the full TGHandler state between two paired
 reflectors (see docs/TWIN_PROTOCOL.md).  Unlike TrunkLink there is
 no prefix filtering, no TG ownership arbitration, and no cluster-TG
@@ -13,14 +32,35 @@ logic — the pair shares everything.
 #ifndef TWINLINK_INCLUDED
 #define TWINLINK_INCLUDED
 
+
+/****************************************************************************
+ *
+ * System Includes
+ *
+ ****************************************************************************/
+
 #include <string>
 #include <cstdint>
 #include <vector>
+
+
+/****************************************************************************
+ *
+ * Project Includes
+ *
+ ****************************************************************************/
 
 #include <AsyncConfig.h>
 #include <AsyncTcpPrioClient.h>
 #include <AsyncFramedTcpConnection.h>
 #include <AsyncTimer.h>
+
+
+/****************************************************************************
+ *
+ * Forward declarations
+ *
+ ****************************************************************************/
 
 class Reflector;
 class MsgTrunkHello;
@@ -100,7 +140,7 @@ class TwinLink
     void handleMsgTrunkHeartbeat(void);
     void handleMsgTwinExtTalkerStart(std::istream& is);
     void handleMsgTwinExtTalkerStop(std::istream& is);
-    void onHeartbeatTick(Async::Timer*);
+    void heartbeatTick(Async::Timer*);
 
     bool sendMsg(const ReflectorMsg& msg);
     void sendMsgOnOutbound(const ReflectorMsg& msg);
