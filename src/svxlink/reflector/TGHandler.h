@@ -174,6 +174,28 @@ class TGHandler : public sigc::trackable
       return m_trunk_talkers;
     }
 
+    /**
+     * @brief   Like setTrunkTalkerForTG, but also records which external
+     *          peer (by TRUNK section id) holds the TG.  Used by the twin
+     *          link so state can be cleaned up per-peer on disconnect.
+     *
+     * Passing an empty callsign clears the talker for this TG.
+     */
+    void setTrunkTalkerForTGViaPeer(uint32_t tg,
+                                    const std::string& callsign,
+                                    const std::string& peer_id);
+
+    /**
+     * @brief   Clear all trunk-talker entries attributed to a given peer
+     *          (e.g. when that peer's trunk disconnects).
+     */
+    void clearTrunkTalkersForPeer(const std::string& peer_id);
+
+    /**
+     * @brief   Return the peer_id that holds the TG, or "" if none.
+     */
+    std::string peerIdForTG(uint32_t tg) const;
+
     bool allowTgSelection(ReflectorClient *client, uint32_t tg);
 
     bool allowTgMonitoring(ReflectorClient *client, uint32_t tg);
@@ -221,6 +243,7 @@ class TGHandler : public sigc::trackable
     IdMap                            m_id_map;
     ClientMap                        m_client_map;
     std::map<uint32_t, std::string>  m_trunk_talkers;
+    std::map<uint32_t, std::string>  m_trunk_talker_peer_ids;  // tg -> peer_id
     Async::Timer                     m_timeout_timer;
     unsigned                         m_sql_timeout;
     unsigned                         m_sql_timeout_blocktime;

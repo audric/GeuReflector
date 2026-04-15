@@ -299,12 +299,14 @@ void TGHandler::setTrunkTalkerForTG(uint32_t tg, const std::string& callsign)
 
 void TGHandler::clearTrunkTalkerForTG(uint32_t tg)
 {
+  m_trunk_talker_peer_ids.erase(tg);
   setTrunkTalkerForTG(tg, "");
 } /* TGHandler::clearTrunkTalkerForTG */
 
 
 void TGHandler::clearAllTrunkTalkers(void)
 {
+  m_trunk_talker_peer_ids.clear();
   std::vector<uint32_t> keys;
   for (auto& kv : m_trunk_talkers)
   {
@@ -312,9 +314,51 @@ void TGHandler::clearAllTrunkTalkers(void)
   }
   for (uint32_t tg : keys)
   {
-    clearTrunkTalkerForTG(tg);
+    setTrunkTalkerForTG(tg, "");
   }
 } /* TGHandler::clearAllTrunkTalkers */
+
+
+void TGHandler::setTrunkTalkerForTGViaPeer(uint32_t tg,
+                                           const std::string& callsign,
+                                           const std::string& peer_id)
+{
+  setTrunkTalkerForTG(tg, callsign);
+  if (callsign.empty())
+  {
+    m_trunk_talker_peer_ids.erase(tg);
+  }
+  else
+  {
+    m_trunk_talker_peer_ids[tg] = peer_id;
+  }
+} /* TGHandler::setTrunkTalkerForTGViaPeer */
+
+
+void TGHandler::clearTrunkTalkersForPeer(const std::string& peer_id)
+{
+  for (auto it = m_trunk_talker_peer_ids.begin();
+       it != m_trunk_talker_peer_ids.end(); )
+  {
+    if (it->second == peer_id)
+    {
+      uint32_t tg = it->first;
+      it = m_trunk_talker_peer_ids.erase(it);
+      setTrunkTalkerForTG(tg, "");
+    }
+    else
+    {
+      ++it;
+    }
+  }
+} /* TGHandler::clearTrunkTalkersForPeer */
+
+
+std::string TGHandler::peerIdForTG(uint32_t tg) const
+{
+  auto it = m_trunk_talker_peer_ids.find(tg);
+  return (it != m_trunk_talker_peer_ids.end()) ? it->second : std::string();
+} /* TGHandler::peerIdForTG */
 
 
 std::string TGHandler::trunkTalkerForTG(uint32_t tg) const
