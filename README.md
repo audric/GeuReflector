@@ -52,11 +52,33 @@ automatically.
 - **Satellite reflectors** — lightweight relay instances that connect to a parent
   reflector instead of joining the full mesh, reducing configuration overhead for
   large deployments
+- **Per-trunk TG filters** — `BLACKLIST_TGS`, `ALLOW_TGS`, `TG_MAP` (with
+  explicit-route bypass of the prefix routing check), and `PEER_ID` on each
+  `[TRUNK_x]` section, with a shared filter syntax (exact, `24*` prefix,
+  `2427-2438` range). Reloadable at runtime via the PTY admin channel
+- **Node-list broadcasting** — on local client login / logout / TG change the
+  reflector debounces (500 ms) and emits a `MsgTrunkNodeList` to every peer
+  carrying callsign + current TG + optional lat/lon/QTH. Inbound lists are
+  republished via MQTT under `nodes/<peer_id>`; the local list under
+  `nodes/local`
+- **PTY admin channel** — live commands written to `/dev/shm/reflector_ctrl`:
+  `TRUNK MUTE|UNMUTE <section> <callsign>` (applied on the inbound audio path),
+  `TRUNK RELOAD [<section>]` (re-reads filters without restart),
+  `TRUNK STATUS [<section>]`, plus CFG GET/SET and the existing certificate
+  commands
 - **HTTP `/status` endpoint** — JSON status with trunk state,
-  active talkers, satellite connections, and static configuration
+  active talkers, satellite connections, per-trunk muted callsigns,
+  Redis metrics (when enabled), and static configuration
 - **MQTT publishing** — real-time event-driven updates (talker, client,
-  trunk state, receiver signal levels) to an external MQTT broker, plus
-  configurable periodic full status dumps
+  trunk state, receiver signal levels, node lists) to an external MQTT broker,
+  plus configurable periodic full status dumps. Optional `MQTT_NAME` inserts
+  a path component so multiple reflectors can share a `TOPIC_PREFIX`
+- **Optional Redis-backed config store** — when `[REDIS]` is configured,
+  users/passwords, cluster TGs, per-trunk filters, and trunk peers themselves
+  are read from Redis. A web dashboard can add/remove users and trunk peers,
+  push filter changes, and subscribe to live state (`live:client:*`,
+  `live:talker:*`, `live:trunk:*`) without restarting the reflector. See
+  [`docs/REDIS.md`](docs/REDIS.md)
 - SvxLink client nodes are **unmodified** — they connect to their local
   reflector as normal and are unaware of the trunk
 

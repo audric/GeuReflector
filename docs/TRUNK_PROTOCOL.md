@@ -320,15 +320,29 @@ payload, packed using the `ASYNC_MSG_MEMBERS` macro.
 
 | Type | Name                  | Fields                                           |
 |------|-----------------------|--------------------------------------------------|
-| 115  | `MsgTrunkHello`       | `string id`, `string local_prefix`, `uint32 priority` |
+| 115  | `MsgTrunkHello`       | `string id`, `string local_prefix`, `uint32 priority`, `uint8[] nonce`, `uint8[] hmac`, `uint8 role` |
 | 116  | `MsgTrunkTalkerStart` | `uint32 tg`, `string callsign`                   |
 | 117  | `MsgTrunkTalkerStop`  | `uint32 tg`                                      |
 | 118  | `MsgTrunkAudio`       | `uint32 tg`, `uint8[] audio`                     |
 | 119  | `MsgTrunkFlush`       | `uint32 tg`                                      |
 | 120  | `MsgTrunkHeartbeat`   | *(no fields)*                                    |
+| 121  | `MsgTrunkNodeList`    | `string[] callsigns`, `uint32[] tgs`, `float[] lats`, `float[] lons`, `string[] qth_names` |
+| 122  | `MsgTrunkFilter`      | `string filter` (shared-syntax TG filter: exact / `24*` / `10-20`, comma-separated) |
 
 Type numbers 115–120 are chosen to follow the last existing SvxReflector TCP
-message type (114 = `MsgStartUdpEncryption`) without collision.
+message type (114 = `MsgStartUdpEncryption`) without collision. Types 121–122
+were added by the jayReflector integration (v1.1.0) and are optional —
+older peers silently ignore unknown message types, preserving backward
+compatibility.
+
+`MsgTrunkNodeList` is emitted by the reflector on local client login, logout,
+or TG change, debounced to 500 ms, and broadcast to every trunk peer. Peers
+republish it via MQTT under `nodes/<peer_id>` so a central dashboard can see
+who is connected to each reflector.
+
+`MsgTrunkFilter` is intended for satellite links to advertise TG interest to
+the parent. The parent uses it to avoid forwarding TGs the satellite does not
+want. Reserved for satellite use; trunk peers do not currently emit it.
 
 Audio is transported over TCP (not UDP) — the trunk is a reliable server-to-server
 link, not a lossy radio gateway path, so TCP framing is appropriate and avoids
