@@ -29,6 +29,7 @@ void onAsyncDisconnectThunk(const redisAsyncContext* ac, int status) {
 
 RedisStore::RedisStore(const Config& cfg) : m_cfg(cfg) {}
 RedisStore::~RedisStore() {
+  delete m_heartbeat_timer; m_heartbeat_timer = nullptr;
   delete m_drain_timer;    m_drain_timer = nullptr;
   delete m_live_queue;     m_live_queue  = nullptr;
   if (m_async) { redisAsyncFree(m_async); m_async = nullptr; }
@@ -80,6 +81,10 @@ bool RedisStore::connect(void) {
   m_drain_timer = new Async::Timer(75, Async::Timer::TYPE_PERIODIC);
   m_drain_timer->expired.connect(
       sigc::mem_fun(*this, &RedisStore::drainLiveQueue));
+
+  m_heartbeat_timer = new Async::Timer(30000, Async::Timer::TYPE_PERIODIC);
+  m_heartbeat_timer->expired.connect(
+      sigc::mem_fun(*this, &RedisStore::refreshLiveExpire));
 
   std::cout << "RedisStore: connected sync+async, subscribed to "
             << channelName() << std::endl;
@@ -226,6 +231,7 @@ void RedisStore::pushLiveTalker(uint32_t tg, const std::string& callsign,
   RedisLiveQueue::Op op;
   op.op  = RedisLiveQueue::OpType::HSET;
   op.key = keyFor("live:talker:" + std::to_string(tg));
+  m_live_keys.insert(op.key);
   op.fields = {
     {"callsign",   callsign},
     {"started_at", std::to_string(std::time(nullptr))},
@@ -240,6 +246,7 @@ void RedisStore::clearLiveTalker(uint32_t tg) {
   RedisLiveQueue::Op op;
   op.op  = RedisLiveQueue::OpType::DEL;
   op.key = keyFor("live:talker:" + std::to_string(tg));
+  m_live_keys.erase(op.key);
   m_live_queue->push(std::move(op));
 }
 
@@ -251,6 +258,7 @@ void RedisStore::pushLiveClient(const std::string& callsign,
   RedisLiveQueue::Op op;
   op.op  = RedisLiveQueue::OpType::HSET;
   op.key = keyFor("live:client:" + callsign);
+  m_live_keys.insert(op.key);
   op.fields = {
     {"connected_at", std::to_string(std::time(nullptr))},
     {"ip",           ip},
@@ -266,6 +274,7 @@ void RedisStore::clearLiveClient(const std::string& callsign) {
   RedisLiveQueue::Op op;
   op.op  = RedisLiveQueue::OpType::DEL;
   op.key = keyFor("live:client:" + callsign);
+  m_live_keys.erase(op.key);
   m_live_queue->push(std::move(op));
 }
 
@@ -276,6 +285,7 @@ void RedisStore::pushLiveTrunk(const std::string& section,
   RedisLiveQueue::Op op;
   op.op  = RedisLiveQueue::OpType::HSET;
   op.key = keyFor("live:trunk:" + section);
+  m_live_keys.insert(op.key);
   op.fields = {
     {"state",   state},
     {"peer_id", peer_id},
@@ -368,7 +378,16 @@ void RedisStore::drainLiveQueue(Async::Timer*) {
   redisAsyncCommand(m_async, nullptr, nullptr,
                     "PUBLISH %s tick", ch.c_str());
 }
-void RedisStore::refreshLiveExpire(Async::Timer*) {}
+void RedisStore::refreshLiveExpire(Async::Timer*) {
+  if (!m_live_queue) return;
+  for (const std::string& k : m_live_keys) {
+    RedisLiveQueue::Op op;
+    op.op    = RedisLiveQueue::OpType::EXPIRE;
+    op.key   = k;
+    op.ttl_s = 60;
+    m_live_queue->push(std::move(op));
+  }
+}
 
 std::string RedisStore::keyFor(const std::string& suffix) const {
   if (m_cfg.key_prefix.empty()) return suffix;

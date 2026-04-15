@@ -1763,6 +1763,15 @@ void Reflector::refreshStatus(void)
       m_status["satellite_server"] = sat_srv;
     }
   }
+  if (m_redis != nullptr)
+  {
+    Json::Value redis_status(Json::objectValue);
+    redis_status["live_queue_size"] =
+        static_cast<Json::UInt>(m_redis->liveQueueSize());
+    redis_status["dropped_live_writes"] =
+        static_cast<Json::UInt64>(m_redis->droppedLiveWrites());
+    m_status["redis"] = redis_status;
+  }
 } /* Reflector::refreshStatus */
 
 
