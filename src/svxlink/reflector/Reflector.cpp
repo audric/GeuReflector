@@ -69,6 +69,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "ReflectorClient.h"
 #include "TGHandler.h"
 #include "TrunkLink.h"
+#include "RedisStore.h"
 #include <version/SVXREFLECTOR.h>
 
 
@@ -298,6 +299,8 @@ Reflector::~Reflector(void)
   m_srv = 0;
   delete m_cmd_pty;
   m_cmd_pty = 0;
+  delete m_redis;
+  m_redis = nullptr;
   for (auto* link : m_trunk_links)
   {
     delete link;
@@ -415,6 +418,39 @@ bool Reflector::initialize(Async::Config &cfg)
     m_cmd_pty->setLineBuffered(true);
     m_cmd_pty->dataReceived.connect(
         mem_fun(*this, &Reflector::ctrlPtyDataReceived));
+  }
+
+  // Optional [REDIS] section — when present, Redis becomes the source
+  // of truth for users/passwords/cluster/trunk dynamic settings.
+  {
+    std::string redis_host;
+    std::string redis_unix;
+    m_cfg->getValue("REDIS", "HOST", redis_host);
+    m_cfg->getValue("REDIS", "UNIX_SOCKET", redis_unix);
+    if (!redis_host.empty() || !redis_unix.empty())
+    {
+      RedisStore::Config rcfg;
+      rcfg.host        = redis_host;
+      rcfg.unix_socket = redis_unix;
+      std::string port_s; m_cfg->getValue("REDIS", "PORT", port_s);
+      if (!port_s.empty()) rcfg.port = static_cast<uint16_t>(std::stoul(port_s));
+      m_cfg->getValue("REDIS", "PASSWORD", rcfg.password);
+      std::string db_s; m_cfg->getValue("REDIS", "DB", db_s);
+      if (!db_s.empty()) rcfg.db = std::stoi(db_s);
+      m_cfg->getValue("REDIS", "KEY_PREFIX", rcfg.key_prefix);
+      std::string tls_s; m_cfg->getValue("REDIS", "TLS_ENABLED", tls_s);
+      rcfg.tls_enabled = (tls_s == "1");
+      m_cfg->getValue("REDIS", "TLS_CA_CERT", rcfg.tls_ca_cert);
+      m_cfg->getValue("REDIS", "TLS_CLIENT_CERT", rcfg.tls_client_cert);
+      m_cfg->getValue("REDIS", "TLS_CLIENT_KEY", rcfg.tls_client_key);
+
+      m_redis = new RedisStore(rcfg);
+      if (!m_redis->connect()) {
+        std::cerr << "*** ERROR: [REDIS] is configured but Redis is unreachable. "
+                  << "Aborting startup." << std::endl;
+        return false;
+      }
+    }
   }
 
   m_cfg->getValue("GLOBAL", "ACCEPT_CERT_EMAIL", m_accept_cert_email);

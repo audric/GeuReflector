@@ -86,6 +86,7 @@ namespace Async
 
 class ReflectorMsg;
 class ReflectorUdpMsg;
+class RedisStore;
 
 
 /****************************************************************************
@@ -244,6 +245,8 @@ class Reflector : public sigc::trackable
     bool isClusterTG(uint32_t tg) const { return m_cluster_tgs.count(tg) > 0; }
     bool isSatelliteMode(void) const { return m_is_satellite; }
 
+    RedisStore* redisStore(void) const { return m_redis; }
+
     // Callbacks for SatelliteLink to forward satellite events to trunk peers
     void forwardSatelliteAudioToTrunks(uint32_t tg,
                                         const std::string& callsign);
@@ -338,6 +341,7 @@ class Reflector : public sigc::trackable
 
     // MQTT publishing
     MqttPublisher*              m_mqtt = nullptr;
+    RedisStore*                 m_redis = nullptr;
     Async::Timer                m_mqtt_status_timer;
 
     Reflector(const Reflector&);
