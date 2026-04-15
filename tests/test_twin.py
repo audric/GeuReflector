@@ -5,12 +5,12 @@ Verifies the TWIN handshake, PAIRED trunk wiring, talker-state mirroring via
 log inspection, and recovery after container failure.
 
 Topology used: TWIN (generate_configs.py --topology twin)
-  - reflector-refA  (IT, LOCAL_PREFIX=222)
+  - reflector-refa  (IT, LOCAL_PREFIX=222)
   - reflector-ref1  (DE twin 1, LOCAL_PREFIX=262, [TWIN] partner=ref2)
   - reflector-ref2  (DE twin 2, LOCAL_PREFIX=262, [TWIN] partner=ref1)
-  - reflector-refC  (extra peer, LOCAL_PREFIX=333)
+  - reflector-refc  (extra peer, LOCAL_PREFIX=333)
 
-  refA connects to ref1 AND ref2 via a single PAIRED=1 trunk section (TRUNK_IT_DE).
+  refa connects to ref1 AND ref2 via a single PAIRED=1 trunk section (TRUNK_IT_DE).
   ref1 and ref2 maintain a direct [TWIN] link for state mirroring.
 
 Requires: Python 3.7+, stdlib only (+ topology.py from this directory).
@@ -138,17 +138,17 @@ class TestTwinIntegration(unittest.TestCase):
         sys.stderr.write(f"\r\033[K  {G}\u2714{RST} Twin reflectors up\n")
         sys.stderr.flush()
 
-        # Wait for trunk connections between refA↔ref1 and refA↔ref2
+        # Wait for trunk connections between refa↔ref1 and refa↔ref2
         sys.stderr.write(f"  {D}waiting for trunk mesh...{RST}")
         sys.stderr.flush()
-        # refA has TRUNK_IT_DE (PAIRED=1 → ref1 + ref2)
-        wait_for_trunk_connected(*_http("refA"), "TRUNK_IT_DE", timeout=30.0)
-        # ref1 and ref2 each have TRUNK_IT_DE back to refA
+        # refa has TRUNK_IT_DE (PAIRED=1 → ref1 + ref2)
+        wait_for_trunk_connected(*_http("refa"), "TRUNK_IT_DE", timeout=30.0)
+        # ref1 and ref2 each have TRUNK_IT_DE back to refa
         wait_for_trunk_connected(*_http("ref1"), "TRUNK_IT_DE", timeout=30.0)
         wait_for_trunk_connected(*_http("ref2"), "TRUNK_IT_DE", timeout=30.0)
-        # refC links
-        wait_for_trunk_connected(*_http("refA"), "TRUNK_IT_C", timeout=30.0)
-        wait_for_trunk_connected(*_http("refC"), "TRUNK_IT_C", timeout=30.0)
+        # refc links
+        wait_for_trunk_connected(*_http("refa"), "TRUNK_IT_C", timeout=30.0)
+        wait_for_trunk_connected(*_http("refc"), "TRUNK_IT_C", timeout=30.0)
         sys.stderr.write(f"\r\033[K  {G}\u2714{RST} Trunk mesh connected\n")
         sys.stderr.flush()
 
@@ -203,33 +203,33 @@ class TestTwinIntegration(unittest.TestCase):
                 )
 
     # ------------------------------------------------------------------
-    # Test 3: PAIRED trunk — refA connected to BOTH ref1 and ref2
+    # Test 3: PAIRED trunk — refa connected to BOTH ref1 and ref2
     # ------------------------------------------------------------------
     def test_03_paired_trunk_both_partners_connected(self):
-        """refA's TRUNK_IT_DE (PAIRED=1) reports connected=True.
+        """refa's TRUNK_IT_DE (PAIRED=1) reports connected=True.
 
         This confirms that TrunkLink with PAIRED=1 and two peer hosts
         reaches the 'active' state after both outbound connections complete
         their handshake (or at least one, since isActive() returns true
         when either outbound or inbound is ready).
         """
-        status_a = get_status(*_http("refA"))
+        status_a = get_status(*_http("refa"))
         trunk = status_a.get("trunks", {}).get("TRUNK_IT_DE", None)
         self.assertIsNotNone(trunk,
-            "TRUNK_IT_DE not present in refA /status. "
+            "TRUNK_IT_DE not present in refa /status. "
             "Was the twin topology generated and docker-compose started?")
         self.assertTrue(
             trunk.get("connected", False),
-            f"TRUNK_IT_DE on refA is not connected. trunk status: {trunk}",
+            f"TRUNK_IT_DE on refa is not connected. trunk status: {trunk}",
         )
 
     # ------------------------------------------------------------------
-    # Test 4: PAIRED trunk — both pair members see refA as connected
+    # Test 4: PAIRED trunk — both pair members see refa as connected
     # ------------------------------------------------------------------
     def test_04_paired_trunk_pair_members_see_refa(self):
         """ref1 and ref2 each see their TRUNK_IT_DE section as connected.
 
-        Confirms the return leg (pair member → refA) is also established.
+        Confirms the return leg (pair member → refa) is also established.
         """
         for name in ("ref1", "ref2"):
             status = get_status(*_http(name))
@@ -362,17 +362,17 @@ class TestTwinIntegration(unittest.TestCase):
                 pass
 
     # ------------------------------------------------------------------
-    # Test 7: PAIRED trunk failover — kill ref1, refA still routes via ref2
+    # Test 7: PAIRED trunk failover — kill ref1, refa still routes via ref2
     # ------------------------------------------------------------------
     def test_07_paired_trunk_failover(self):
-        """Killing ref1 should not disconnect refA from the DE twin pair.
+        """Killing ref1 should not disconnect refa from the DE twin pair.
 
-        refA uses PAIRED=1 with HOST=reflector-ref1,reflector-ref2.  When
-        ref1 goes down, refA must still be able to exchange traffic with ref2
+        refa uses PAIRED=1 with HOST=reflector-ref1,reflector-ref2.  When
+        ref1 goes down, refa must still be able to exchange traffic with ref2
         (TrunkLink D2 sticky fallback / isActive() via any live connection).
 
         Verification: after killing ref1 and waiting for the heartbeat RX
-        timeout (~15s), refA's TRUNK_IT_DE status must still report
+        timeout (~15s), refa's TRUNK_IT_DE status must still report
         connected=True (served by the ref2 connection).
         """
         # Step 1: kill ref1
@@ -389,10 +389,10 @@ class TestTwinIntegration(unittest.TestCase):
             # Heartbeat TX interval is 10s, RX timeout is 15s → allow 20s.
             time.sleep(20.0)
 
-            # Step 3: refA must still report the trunk as connected (via ref2)
+            # Step 3: refa must still report the trunk as connected (via ref2)
             def refa_still_connected():
                 try:
-                    status = get_status(*_http("refA"))
+                    status = get_status(*_http("refa"))
                     return status.get("trunks", {}).get(
                         "TRUNK_IT_DE", {}).get("connected", False)
                 except Exception:
@@ -402,7 +402,7 @@ class TestTwinIntegration(unittest.TestCase):
                 refa_still_connected,
                 timeout=10.0,
                 interval=1.0,
-                msg="refA TRUNK_IT_DE lost connectivity after killing ref1; "
+                msg="refa TRUNK_IT_DE lost connectivity after killing ref1; "
                     "expected ref2 to keep the paired link active",
             )
 
@@ -414,7 +414,7 @@ class TestTwinIntegration(unittest.TestCase):
                 # Also wait for trunk re-establishment
                 wait_for_trunk_connected(*_http("ref1"), "TRUNK_IT_DE",
                                          timeout=30.0)
-                wait_for_trunk_connected(*_http("refA"), "TRUNK_IT_DE",
+                wait_for_trunk_connected(*_http("refa"), "TRUNK_IT_DE",
                                          timeout=30.0)
             except AssertionError:
                 pass
