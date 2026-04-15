@@ -262,6 +262,35 @@ static bool runImportConfToRedis(Async::Config& cfg, bool dry_run)
     ++trunks_n;
     std::string trunk_label = sec.substr(6);  // "TRUNK_AB" → "AB"
 
+    // Import the peer definition hash.
+    std::string host, port_s_peer, secret, remote_prefix, peer_id;
+    cfg.getValue(sec, "HOST",          host);
+    cfg.getValue(sec, "PORT",          port_s_peer);
+    cfg.getValue(sec, "SECRET",        secret);
+    cfg.getValue(sec, "REMOTE_PREFIX", remote_prefix);
+    cfg.getValue(sec, "PEER_ID",       peer_id);
+    if (!host.empty() && !secret.empty() && !remote_prefix.empty())
+    {
+      std::string pk = kf("trunk:" + trunk_label + ":peer");
+      auto setField = [&](const char* field, const std::string& value) {
+        if (value.empty()) return;
+        if (dry_run) {
+          std::cout << "[dry-run] HSET " << pk << " " << field
+                    << " " << (std::string(field) == "secret" ? "<REDACTED>" : value)
+                    << std::endl;
+        } else {
+          redisReply* r = (redisReply*)redisCommand(ctx, "HSET %s %s %s",
+              pk.c_str(), field, value.c_str());
+          if (r) freeReplyObject(r);
+        }
+      };
+      setField("host",          host);
+      setField("port",          port_s_peer);
+      setField("secret",        secret);
+      setField("remote_prefix", remote_prefix);
+      setField("peer_id",       peer_id);
+    }
+
     auto importSet = [&](const std::string& field, const std::string& subkey) {
       std::string s;
       if (!cfg.getValue(sec, field, s) || s.empty()) return;

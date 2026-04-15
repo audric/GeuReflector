@@ -194,6 +194,65 @@ std::map<uint32_t, uint32_t> RedisStore::loadTrunkTgMap(const std::string& secti
   return out;
 }
 
+std::map<std::string, RedisStore::TrunkPeerConfig>
+RedisStore::loadTrunkPeers(void)
+{
+  std::map<std::string, TrunkPeerConfig> out;
+  if (!m_sync) return out;
+  std::string pattern = keyFor("trunk:*:peer");
+  redisReply* r = (redisReply*)redisCommand(m_sync, "KEYS %s", pattern.c_str());
+  if (!r || r->type != REDIS_REPLY_ARRAY) {
+    if (r) freeReplyObject(r);
+    return out;
+  }
+  std::vector<std::string> matched_keys;
+  for (size_t i = 0; i < r->elements; ++i) {
+    if (r->element[i]->type == REDIS_REPLY_STRING) {
+      matched_keys.emplace_back(r->element[i]->str, r->element[i]->len);
+    }
+  }
+  freeReplyObject(r);
+
+  // Extract section name: strip "<keyprefix>:trunk:" prefix and ":peer" suffix.
+  std::string left = keyFor("trunk:");
+  const std::string right = ":peer";
+  for (const std::string& key : matched_keys) {
+    if (key.size() < left.size() + right.size()) continue;
+    if (key.substr(0, left.size()) != left) continue;
+    if (key.substr(key.size() - right.size()) != right) continue;
+    std::string section = key.substr(left.size(),
+                                     key.size() - left.size() - right.size());
+    if (section.empty()) continue;
+
+    redisReply* h = (redisReply*)redisCommand(m_sync, "HGETALL %s", key.c_str());
+    if (!h || h->type != REDIS_REPLY_ARRAY) {
+      if (h) freeReplyObject(h);
+      continue;
+    }
+    TrunkPeerConfig cfg;
+    for (size_t i = 0; i + 1 < h->elements; i += 2) {
+      std::string field(h->element[i]->str, h->element[i]->len);
+      std::string value(h->element[i+1]->str, h->element[i+1]->len);
+      if      (field == "host")          cfg.host = value;
+      else if (field == "port")          cfg.port = value;
+      else if (field == "secret")        cfg.secret = value;
+      else if (field == "remote_prefix") cfg.remote_prefix = value;
+      else if (field == "peer_id")       cfg.peer_id = value;
+    }
+    freeReplyObject(h);
+
+    // Require host + secret + remote_prefix
+    if (cfg.host.empty() || cfg.secret.empty() || cfg.remote_prefix.empty()) {
+      std::cerr << "*** WARN: RedisStore: trunk peer " << section
+                << " missing required fields (host/secret/remote_prefix); "
+                << "skipping" << std::endl;
+      continue;
+    }
+    out[section] = std::move(cfg);
+  }
+  return out;
+}
+
 void RedisStore::publishConfigChanged(const std::string& scope) {
   if (!m_sync) return;
   std::string ch = channelName();
