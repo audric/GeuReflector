@@ -63,6 +63,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "ReflectorClient.h"
 #include "Reflector.h"
 #include "TGHandler.h"
+#include "RedisStore.h"
 
 
 /****************************************************************************
@@ -1290,6 +1291,14 @@ void ReflectorClient::handleHeartbeat(Async::Timer *t)
 
 std::string ReflectorClient::lookupUserKey(const std::string& callsign)
 {
+  if (m_reflector->redisStore() != nullptr) {
+    std::string key = m_reflector->redisStore()->lookupUserKey(callsign);
+    if (key.empty()) {
+      cout << "*** WARNING: Redis lookup failed for user \""
+           << callsign << "\"" << endl;
+    }
+    return key;
+  }
   string auth_group;
   if (!m_cfg->getValue("USERS", callsign, auth_group) || auth_group.empty())
   {

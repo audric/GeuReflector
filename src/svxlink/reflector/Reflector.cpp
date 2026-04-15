@@ -31,6 +31,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  ****************************************************************************/
 
 #include <cassert>
+#include <list>
 #include <sstream>
 #include <unistd.h>
 #include <algorithm>
@@ -450,6 +451,16 @@ bool Reflector::initialize(Async::Config &cfg)
                   << "Aborting startup." << std::endl;
         return false;
       }
+      auto warn_if_nonempty = [this](const char* section) {
+        std::list<std::string> keys = m_cfg->listSection(section);
+        if (!keys.empty()) {
+          std::cerr << "WARN: [" << section << "] in svxreflector.conf is "
+                       "ignored because [REDIS] is configured. "
+                    << "Run --import-conf-to-redis to migrate." << std::endl;
+        }
+      };
+      warn_if_nonempty("USERS");
+      warn_if_nonempty("PASSWORDS");
     }
   }
 
