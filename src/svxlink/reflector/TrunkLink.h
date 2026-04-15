@@ -266,6 +266,26 @@ class TrunkLink : public sigc::trackable
     void heartbeatTick(Async::Timer* t);
     void clearPeerTalkerState(void);
 
+    // PAIRED mode: per-host outbound client handlers (D2)
+    void onPairedOutboundConnected(FramedTcpClient* client);
+    void onPairedOutboundDisconnected(FramedTcpClient* client,
+                                      Async::TcpConnection* con,
+                                      Async::TcpConnection::DisconnectReason reason);
+    void onPairedOutboundFrame(FramedTcpClient* client,
+                               Async::FramedTcpConnection* con,
+                               std::vector<uint8_t>& data);
+    size_t pairedClientIndex(FramedTcpClient* client) const;
+    void sendMsgOnPairedOutbound(size_t idx, const ReflectorMsg& msg);
+
+    // Per-client handshake/heartbeat state for paired outbound connections
+    struct PairedClientState
+    {
+      bool     hello_received = false;
+      unsigned hb_tx_cnt      = 0;
+      unsigned hb_rx_cnt      = 0;
+    };
+    std::vector<PairedClientState> m_ob_states;  // parallel to m_ob_cons
+
 };  /* class TrunkLink */
 
 
