@@ -471,31 +471,7 @@ bool Reflector::initialize(Async::Config &cfg)
   m_cfg->valueUpdated.connect(sigc::mem_fun(*this, &Reflector::cfgUpdated));
 
   // Parse CLUSTER_TGS — comma-separated list of TG numbers broadcast to all peers
-  std::string cluster_tgs_str;
-  if (cfg.getValue("GLOBAL", "CLUSTER_TGS", cluster_tgs_str))
-  {
-    std::istringstream ctss(cluster_tgs_str);
-    std::string token;
-    while (std::getline(ctss, token, ','))
-    {
-      token.erase(0, token.find_first_not_of(" \t"));
-      token.erase(token.find_last_not_of(" \t") + 1);
-      if (!token.empty())
-      {
-        uint32_t tg = static_cast<uint32_t>(std::stoul(token));
-        m_cluster_tgs.insert(tg);
-      }
-    }
-    if (!m_cluster_tgs.empty())
-    {
-      std::cout << "Cluster TGs:";
-      for (uint32_t tg : m_cluster_tgs)
-      {
-        std::cout << " " << tg;
-      }
-      std::cout << std::endl;
-    }
-  }
+  reloadClusterTgs();
 
   // Satellite mode: connect to parent instead of joining the trunk mesh
   std::string satellite_of;
@@ -2732,7 +2708,37 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
 
 void Reflector::reloadClusterTgs(void)
 {
-  // Stub — populated by Task C2 (Cluster TGs from Redis).
+  m_cluster_tgs.clear();
+  if (m_redis) {
+    m_cluster_tgs = m_redis->loadClusterTgs();
+  } else {
+    std::string cluster_tgs_str;
+    if (m_cfg->getValue("GLOBAL", "CLUSTER_TGS", cluster_tgs_str))
+    {
+      std::istringstream ctss(cluster_tgs_str);
+      std::string token;
+      while (std::getline(ctss, token, ','))
+      {
+        token.erase(0, token.find_first_not_of(" \t"));
+        token.erase(token.find_last_not_of(" \t") + 1);
+        if (!token.empty())
+        {
+          try {
+            m_cluster_tgs.insert(static_cast<uint32_t>(std::stoul(token)));
+          } catch (...) { /* skip malformed */ }
+        }
+      }
+    }
+  }
+  if (!m_cluster_tgs.empty())
+  {
+    std::cout << "Cluster TGs:";
+    for (uint32_t tg : m_cluster_tgs)
+    {
+      std::cout << " " << tg;
+    }
+    std::cout << std::endl;
+  }
 }
 
 
