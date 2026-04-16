@@ -5,10 +5,10 @@
 The integration tests verify the trunk protocol, satellite links, twin (HA-pair) protocol, Redis-backed config store, and end-to-end audio routing by spinning up reflector meshes in Docker Compose and connecting fake peers and clients from a Python test harness.
 
 `run_tests.sh` runs in **two phases**:
-1. A 3-reflector trunk mesh exercising `test_trunk.py` (27 tests).
+1. A 3-reflector trunk mesh exercising `test_trunk.py` (30 tests).
 2. A 4-reflector twin topology exercising `test_twin.py` (10 tests).
 
-A separate harness (`run_redis_tests.sh`) runs `test_redis.py` (10 tests) against a single-reflector + Redis stack. See [Redis Integration Tests](#redis-integration-tests) below.
+A separate harness (`run_redis_tests.sh`) runs `test_redis.py` (13 tests) against a single-reflector + Redis stack. See [Redis Integration Tests](#redis-integration-tests) below.
 
 **Requirements:** Docker, Docker Compose, Python 3.7+ (stdlib only, no pip packages).
 
@@ -22,7 +22,7 @@ bash run_tests.sh
 This will:
 1. Generate the default configs and `docker-compose.test.yml` from `topology.py`
 2. Build and start the 3-reflector mesh
-3. Run 27 automated trunk/satellite/MQTT tests (`test_trunk.py`)
+3. Run 30 automated trunk/satellite/MQTT tests (`test_trunk.py`)
 4. Enter an interactive prompt to manually test any TG number
 5. Tear down the default mesh
 6. Regenerate with `--topology twin` (4-reflector twin topology)
@@ -113,14 +113,14 @@ Internal port for `[TWIN]` is always 5304; satellite is 5303.
 |------|---------|
 | `topology.py` | Single source of truth — prefixes, ports, secrets, cluster TGs, test clients. Contains both the default mesh (`REFLECTORS`) and the `TWIN_REFLECTORS` / `TWIN_TRUNKS` definitions. |
 | `generate_configs.py` | Generates `configs/*.conf` and `docker-compose.test.yml` from topology. Supports `--topology default` (implicit) and `--topology twin`. |
-| `test_trunk.py` | Test harness: fake trunk peers, satellite peer, V2 client, 27 test cases, interactive loop. |
+| `test_trunk.py` | Test harness: fake trunk peers, satellite peer, V2 client, 30 test cases, interactive loop. |
 | `test_twin.py` | TWIN-protocol tests (10 cases) using the twin topology. Reuses `ClientPeer` and `SatellitePeer` from `test_trunk.py`. |
 | `run_tests.sh` | Orchestrator: generate → build → trunk tests → teardown → regenerate twin → build → twin tests → teardown. |
 | `configs/` | Generated reflector config files (do not edit manually) |
 | `docker-compose.test.yml` | Generated compose file (do not edit manually) |
 | `topology_redis.py` | Topology for the Redis test harness (single reflector + Redis). |
 | `generate_redis_configs.py` | Generates `configs-redis/*.conf` and `docker-compose.redis.yml`. |
-| `test_redis.py` | Redis-backed config-store tests (10 cases): users, trunk filters, live-state hashes, outage/resync, import idempotence, dynamic trunk add/remove. |
+| `test_redis.py` | Redis-backed config-store tests (13 cases): users, trunk filters, live-state hashes, outage/resync, import idempotence, peer-node mirroring + sanitization, dynamic trunk add/remove. |
 | `run_redis_tests.sh` | Redis test orchestrator with `up`/`test`/`down`/`all` subcommands. |
 | `configs-redis/` | Generated Redis-harness configs (do not edit manually) |
 | `docker-compose.redis.yml` | Generated Redis compose file (do not edit manually) |
@@ -252,8 +252,11 @@ Each test writes directly to Redis via `redis-cli` inside the container, publish
 | 6 | `live:client` disappears on disconnect | After forceful TCP close the hash is removed within ~5 s |
 | 7 | Outage + resync | Stopping Redis keeps existing clients connected; on restart the reflector logs `config.changed: all` and accepts newly-written users |
 | 8 | `--import-conf-to-redis` idempotent | Running the importer twice against the same `.conf` produces identical keyspace dumps |
-| 9 | Dynamic trunk add/remove | Writing a `trunk:<SECTION>:peer` hash + publish logs `Added trunk link: …`; deleting it logs `Removed trunk link: …` |
-| 10 | Incomplete peer skipped | A peer hash missing `secret`/`remote_prefix` is ignored (no link created, reflector does not crash) |
+| 9 | Peer node list populates + diffs | Inbound `MsgTrunkNodeList` creates `live:peer_node:<section>:<callsign>` hashes; a shrunk follow-up list DELs dropped callsigns and updates mutated fields (e.g. `tg`) |
+| 10 | Peer node strings sanitized | Control chars and `:` are stripped from `callsign`/`qth`, oversized callsigns truncated to 32, entries whose callsign becomes empty are dropped, and non-finite / out-of-range lat/lon are cleared while keeping the callsign |
+| 11 | Peer nodes cleared on disconnect | Closing the trunk link with no other direction active DELs all `live:peer_node:<section>:*` keys for that peer |
+| 12 | Dynamic trunk add/remove | Writing a `trunk:<SECTION>:peer` hash + publish logs `Added trunk link: …`; deleting it logs `Removed trunk link: …` |
+| 13 | Incomplete peer skipped | A peer hash missing `secret`/`remote_prefix` is ignored (no link created, reflector does not crash) |
 
 ## Interactive Mode
 
