@@ -184,6 +184,9 @@ Simulates a V2 SvxLink client. Performs the full TCP authentication handshake (P
 |---|------|-----------------|
 | 18 | MQTT talker event | Talker start/stop on a trunk publishes to `<prefix>/talker/<tg>/(start|stop)` |
 | 26 | `MQTT_NAME` in topic | Reflector with `MQTT_NAME=mqname-c` publishes node-list under `<prefix>/c/mqname-c/nodes/local` |
+| 28 | MQTT client connect/disconnect | V2 client connect publishes `client/<callsign>/connected` (with `tg`, `ip`); disconnect publishes `client/<callsign>/disconnected` |
+| 29 | MQTT full status | Periodic retained `status` message arrives and contains `nodes` and `trunks` keys |
+| 30 | MQTT local nodes | Client connect triggers retained `nodes/local` message listing the client's callsign with `timestamp` |
 
 ### Per-Trunk Filters and Mapping (jayReflector additions)
 

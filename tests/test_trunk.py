@@ -1664,6 +1664,172 @@ class TestTrunkIntegration(unittest.TestCase):
         finally:
             rx.close()
 
+    # ------------------------------------------------------------------
+    # Test 28: MQTT client connect/disconnect events
+    # ------------------------------------------------------------------
+    def test_28_mqtt_client_connect_disconnect(self):
+        """Connecting a V2 client publishes a 'connected' MQTT event with
+        tg and ip fields; disconnecting publishes a 'disconnected' event."""
+        received = []
+        connected_event = threading.Event()
+
+        def on_connect(client, userdata, flags, rc):
+            client.subscribe(f"svxreflector/a/client/{CLIENT_CALLSIGN}/#")
+            connected_event.set()
+
+        def on_message(client, userdata, msg):
+            received.append((msg.topic, json.loads(msg.payload)))
+
+        mc = mqtt_client.Client()
+        mc.on_connect = on_connect
+        mc.on_message = on_message
+        mc.connect(HOST, 11883, 60)
+        mc.loop_start()
+
+        try:
+            self.assertTrue(connected_event.wait(timeout=5),
+                            "MQTT subscribe timed out")
+            time.sleep(0.5)
+
+            # Connect a V2 client to reflector-a
+            client = ClientPeer()
+            port = T.mapped_client_port(self.PRIMARY)
+            client.connect(HOST, port)
+            client.authenticate(callsign=CLIENT_CALLSIGN,
+                                password=CLIENT_PASSWORD)
+            time.sleep(2)
+
+            # Verify MQTT connected event
+            topic_connected = (
+                f"svxreflector/a/client/{CLIENT_CALLSIGN}/connected")
+            conn_events = [r for r in received
+                           if r[0] == topic_connected]
+            self.assertTrue(len(conn_events) > 0,
+                            f"Expected MQTT connected event, "
+                            f"got topics: {[r[0] for r in received]}")
+            payload = conn_events[0][1]
+            self.assertIn("tg", payload)
+            self.assertIn("ip", payload)
+
+            # Disconnect the client
+            received.clear()
+            client.close()
+            time.sleep(2)
+
+            # Verify MQTT disconnected event
+            topic_disconnected = (
+                f"svxreflector/a/client/{CLIENT_CALLSIGN}/disconnected")
+            disc_events = [r for r in received
+                           if r[0] == topic_disconnected]
+            self.assertTrue(len(disc_events) > 0,
+                            f"Expected MQTT disconnected event, "
+                            f"got topics: {[r[0] for r in received]}")
+        finally:
+            mc.loop_stop()
+            mc.disconnect()
+
+    # ------------------------------------------------------------------
+    # Test 29: MQTT full status is published periodically
+    # ------------------------------------------------------------------
+    def test_29_mqtt_full_status(self):
+        """The reflector publishes a retained 'status' message on a periodic
+        timer.  Verify it arrives and contains expected top-level keys."""
+        received = []
+        connected_event = threading.Event()
+
+        def on_connect(client, userdata, flags, rc):
+            client.subscribe("svxreflector/a/status")
+            connected_event.set()
+
+        def on_message(client, userdata, msg):
+            received.append(json.loads(msg.payload))
+
+        mc = mqtt_client.Client()
+        mc.on_connect = on_connect
+        mc.on_message = on_message
+        mc.connect(HOST, 11883, 60)
+        mc.loop_start()
+
+        try:
+            self.assertTrue(connected_event.wait(timeout=5),
+                            "MQTT subscribe timed out")
+            # Status is published on a 1s timer (default) and is retained,
+            # so we should get it quickly — either retained or fresh.
+            wait_until(lambda: len(received) > 0, timeout=5.0,
+                       msg="no MQTT status message received")
+
+            status = received[-1]
+            # The status JSON mirrors the HTTP /status endpoint
+            self.assertIn("nodes", status,
+                          f"status payload missing 'nodes': {list(status.keys())}")
+            self.assertIn("trunks", status,
+                          f"status payload missing 'trunks': {list(status.keys())}")
+        finally:
+            mc.loop_stop()
+            mc.disconnect()
+
+    # ------------------------------------------------------------------
+    # Test 30: MQTT local node list on client connect
+    # ------------------------------------------------------------------
+    def test_30_mqtt_local_nodes(self):
+        """When a V2 client connects, the reflector publishes a retained
+        'nodes/local' MQTT message listing all local clients."""
+        received = []
+        connected_event = threading.Event()
+
+        def on_connect(client, userdata, flags, rc):
+            client.subscribe("svxreflector/a/nodes/local")
+            connected_event.set()
+
+        def on_message(client, userdata, msg):
+            received.append(json.loads(msg.payload))
+
+        mc = mqtt_client.Client()
+        mc.on_connect = on_connect
+        mc.on_message = on_message
+        mc.connect(HOST, 11883, 60)
+        mc.loop_start()
+
+        try:
+            self.assertTrue(connected_event.wait(timeout=5),
+                            "MQTT subscribe timed out")
+            time.sleep(0.5)
+
+            # Connect a V2 client to trigger a node-list publish
+            client = ClientPeer()
+            port = T.mapped_client_port(self.PRIMARY)
+            client.connect(HOST, port)
+            client.authenticate(callsign=CLIENT_CALLSIGN,
+                                password=CLIENT_PASSWORD)
+
+            try:
+                # Wait for a nodes/local message containing our callsign
+                def has_our_node():
+                    for msg in received:
+                        if "nodes" not in msg:
+                            continue
+                        for node in msg["nodes"]:
+                            if node.get("callsign") == CLIENT_CALLSIGN:
+                                return True
+                    return False
+
+                wait_until(has_our_node, timeout=5.0,
+                           msg=f"no nodes/local message containing "
+                               f"{CLIENT_CALLSIGN}")
+
+                # Verify structure of the latest message
+                last = received[-1]
+                self.assertIn("nodes", last)
+                self.assertIn("timestamp", last)
+                self.assertIsInstance(last["nodes"], list)
+                callsigns = [n["callsign"] for n in last["nodes"]]
+                self.assertIn(CLIENT_CALLSIGN, callsigns)
+            finally:
+                client.close()
+        finally:
+            mc.loop_stop()
+            mc.disconnect()
+
 
 # ---------------------------------------------------------------------------
 # Custom test runner with clean, readable output
