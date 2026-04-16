@@ -124,6 +124,8 @@ class TrunkLink : public sigc::trackable
     {
       return m_paired ? !m_ib_cons.empty() : (m_inbound_con != nullptr);
     }
+    // True when at least one direction (inbound or outbound) is ready.
+    bool isActive(void) const;
 
     // Accept an inbound connection from a peer that has already sent a hello
     void acceptInboundConnection(Async::FramedTcpConnection* con,
@@ -228,7 +230,6 @@ class TrunkLink : public sigc::trackable
     TrunkLink(const TrunkLink&);
     TrunkLink& operator=(const TrunkLink&);
 
-    bool isActive(void) const;
     bool isOutboundReady(void) const;
     bool isInboundReady(void) const;
     bool isOwnedTG(uint32_t tg) const;

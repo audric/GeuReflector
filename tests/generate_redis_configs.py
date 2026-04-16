@@ -49,6 +49,7 @@ def generate_docker_compose() -> str:
     for name in sorted(T.REFLECTORS):
         svc = T.service_name(name)
         client_port = T.mapped_client_port(name)
+        trunk_port = T.mapped_trunk_port(name)
         http_port = T.mapped_http_port(name)
         vol = f"pki-redis-{name}"
         volumes.append(vol)
@@ -62,6 +63,7 @@ def generate_docker_compose() -> str:
     ports:
       - "{client_port}:{T.INTERNAL_CLIENT_PORT}/tcp"
       - "{client_port}:{T.INTERNAL_CLIENT_PORT}/udp"
+      - "{trunk_port}:{T.INTERNAL_TRUNK_PORT}/tcp"
       - "{http_port}:{T.INTERNAL_HTTP_PORT}/tcp"
     depends_on:
       redis:

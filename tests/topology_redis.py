@@ -43,6 +43,9 @@ def service_name(name: str) -> str:
 def mapped_client_port(name: str) -> int:
     return REFLECTORS[name]["trunk_port_base"] + 300
 
+def mapped_trunk_port(name: str) -> int:
+    return REFLECTORS[name]["trunk_port_base"] + 302
+
 def mapped_http_port(name: str) -> int:
     return REFLECTORS[name]["trunk_port_base"] + 3080
 

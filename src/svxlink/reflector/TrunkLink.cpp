@@ -33,6 +33,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <iostream>
 #include <sstream>
 #include <cassert>
+#include <cmath>
 #include <random>
 #include <cerrno>
 #include <cstring>
@@ -74,6 +75,42 @@ using namespace std;
 using namespace Async;
 using namespace sigc;
 
+
+// Strip control chars (< 0x20 and 0x7f) and ':' (Redis key delimiter),
+// then truncate to `max_len`. Used for untrusted identifiers received
+// over the trunk: peer_id from hellos and callsigns from node lists.
+static std::string sanitizeIdent(const std::string& in, size_t max_len)
+{
+  std::string out;
+  out.reserve(std::min(in.size(), max_len));
+  for (char c : in)
+  {
+    unsigned char u = static_cast<unsigned char>(c);
+    if (u < 0x20 || u == 0x7f) continue;
+    if (c == ':') continue;
+    out += c;
+    if (out.size() >= max_len) break;
+  }
+  return out;
+}
+
+// Strip control chars only and truncate to `max_bytes`. Used for free-
+// form text fields (e.g. QTH name) where non-ASCII bytes (UTF-8) are
+// legitimate. Truncation is byte-level; callers tolerate the possibility
+// of a split UTF-8 sequence at the boundary.
+static std::string sanitizeText(const std::string& in, size_t max_bytes)
+{
+  std::string out;
+  out.reserve(std::min(in.size(), max_bytes));
+  for (char c : in)
+  {
+    unsigned char u = static_cast<unsigned char>(c);
+    if (u < 0x20 || u == 0x7f) continue;
+    out += c;
+    if (out.size() >= max_bytes) break;
+  }
+  return out;
+}
 
 static std::vector<std::string> splitPrefixes(const std::string& s)
 {
@@ -508,7 +545,7 @@ void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
     // (all twins share same priority; last-writer wins is fine)
     m_peer_priority = hello.priority();
     if (m_peer_id_received.empty())
-      m_peer_id_received = hello.id();
+      m_peer_id_received = sanitizeIdent(hello.id(), 64);
 
     cout << m_section << ": paired inbound accepted from peer '"
          << hello.id() << "' " << con->remoteHost() << ":"
@@ -556,7 +593,7 @@ void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
   con->frameReceived.connect(
       mem_fun(*this, &TrunkLink::onFrameReceived));
 
-  m_peer_id_received = hello.id();
+  m_peer_id_received = sanitizeIdent(hello.id(), 64);
   cout << m_section << ": Accepted inbound from " << con->remoteHost()
        << ":" << con->remotePort() << " peer='" << hello.id()
        << "' priority=" << m_peer_priority << endl;
@@ -601,7 +638,6 @@ void TrunkLink::onInboundDisconnected(Async::FramedTcpConnection* con,
   }
 
   cout << m_section << ": Inbound trunk connection lost" << endl;
-  m_reflector->onTrunkStateChanged(m_section, peerId(), "inbound", false);
 
   if (m_debug)
   {
@@ -625,6 +661,10 @@ void TrunkLink::onInboundDisconnected(Async::FramedTcpConnection* con,
   {
     m_heartbeat_timer.setEnable(false);
   }
+
+  // Emit after state is cleared so isActive()-based cleanup in consumers
+  // (e.g. Redis peer-node mirror) sees the correct post-disconnect state.
+  m_reflector->onTrunkStateChanged(m_section, peerId(), "inbound", false);
 } /* TrunkLink::onInboundDisconnected */
 
 
@@ -731,7 +771,6 @@ void TrunkLink::onDisconnected(TcpConnection* con,
 {
   cout << m_section << ": Outbound disconnected: "
        << TcpConnection::disconnectReasonStr(reason) << endl;
-  m_reflector->onTrunkStateChanged(m_section, peerId(), "outbound", false);
 
   if (m_debug)
   {
@@ -750,6 +789,10 @@ void TrunkLink::onDisconnected(TcpConnection* con,
   {
     m_heartbeat_timer.setEnable(false);
   }
+
+  // Emit after state is cleared so isActive()-based cleanup in consumers
+  // sees the correct post-disconnect state.
+  m_reflector->onTrunkStateChanged(m_section, peerId(), "outbound", false);
 
   // TcpPrioClient auto-reconnects — nothing else to do
 } /* TrunkLink::onDisconnected */
@@ -898,7 +941,7 @@ void TrunkLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
   }
 
   m_peer_priority = msg.priority();
-  m_peer_id_received = msg.id();
+  m_peer_id_received = sanitizeIdent(msg.id(), 64);
   m_ob_hello_received = true;
 
   cout << m_section << ": Trunk hello from peer '" << msg.id()
@@ -1605,7 +1648,7 @@ void TrunkLink::onPairedOutboundFrame(FramedTcpClient* client,
       // (all twins share the same peer priority; last-writer wins is fine here)
       m_peer_priority = msg.priority();
       if (m_peer_id_received.empty())
-        m_peer_id_received = msg.id();
+        m_peer_id_received = sanitizeIdent(msg.id(), 64);
 
       cout << m_section << ": paired outbound #" << idx
            << " hello received (peer='" << msg.id()
@@ -1746,7 +1789,50 @@ void TrunkLink::handleMsgTrunkNodeList(std::istream& is)
          << "]: Failed to unpack MsgTrunkNodeList" << endl;
     return;
   }
-  m_reflector->onPeerNodeList(peerId(), msg.nodes());
+
+  // Sanitize every entry before handing off. Untrusted strings from peer
+  // reflectors flow into Redis key names, MQTT payloads and log output;
+  // keep them byte-bounded and free of control / delimiter characters.
+  std::vector<MsgTrunkNodeList::NodeEntry> sanitized;
+  sanitized.reserve(msg.nodes().size());
+  unsigned dropped = 0;
+  for (const auto& n : msg.nodes())
+  {
+    MsgTrunkNodeList::NodeEntry e;
+    e.callsign = sanitizeIdent(n.callsign, 32);
+    if (e.callsign.empty())
+    {
+      ++dropped;
+      continue;
+    }
+    e.tg       = n.tg;
+    e.qth_name = sanitizeText(n.qth_name, 64);
+
+    // Lat/lon: reject non-finite; drop out-of-range values by zeroing
+    // them (keep the callsign, lose the coordinates). Downstream consumers
+    // already treat (0,0) as "no location".
+    if (std::isfinite(n.lat) && std::isfinite(n.lon) &&
+        n.lat >= -90.0f && n.lat <= 90.0f &&
+        n.lon >= -180.0f && n.lon <= 180.0f)
+    {
+      e.lat = n.lat;
+      e.lon = n.lon;
+    }
+    else
+    {
+      e.lat = 0.0f;
+      e.lon = 0.0f;
+    }
+    sanitized.push_back(std::move(e));
+  }
+  if (dropped > 0)
+  {
+    cerr << "*** WARN[" << m_section << "]: dropped " << dropped
+         << " node list entrie(s) with empty/invalid callsign after "
+            "sanitization" << endl;
+  }
+
+  m_reflector->onPeerNodeList(peerId(), sanitized);
 } /* TrunkLink::handleMsgTrunkNodeList */
 
 

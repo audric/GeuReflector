@@ -14,7 +14,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import topology_redis as T
-from test_trunk import ClientPeer
+from test_trunk import ClientPeer, TrunkPeer
 
 HOST = "127.0.0.1"
 
@@ -456,6 +456,170 @@ TG_MAP=1:2624123,2:2624124
 
         self.assertEqual(snapshot1, snapshot2,
                          "second import produced different Redis state")
+
+
+class RedisPeerNodeTest(unittest.TestCase):
+    """Verify peer node lists received over the trunk are mirrored into
+    Redis as live:peer_node:<peer_id>:<callsign> hashes, with removed
+    callsigns DEL'd on shrink and full cleanup on trunk disconnect."""
+
+    # Matches topology_redis.TRUNK_TEST (the static trunk section in the
+    # generated r1 config).
+    SECTION = T.TRUNK_TEST["section"]        # "TRUNK_TEST"
+    SECRET  = T.TRUNK_TEST["secret"]         # "test_secret"
+    # Reflector's REMOTE_PREFIX for this section — peer must advertise it
+    # as its local_prefix to pass the inbound prefix check.
+    LOCAL_PREFIX = T.TRUNK_TEST["remote_prefix"]  # "9"
+
+    TRUNK_PORT = T.mapped_trunk_port(R1)
+
+    def setUp(self):
+        flushdb()
+
+    def _peer_key(self, callsign: str) -> str:
+        return k(f"live:peer_node:{self.SECTION}:{callsign}")
+
+    def _wait_for_hash(self, key: str, present: bool, timeout: float = 3.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            exists = redis_cli("EXISTS", key).strip() == "1"
+            if present and exists:
+                return redis_cli("HGETALL", key)
+            if (not present) and (not exists):
+                return ""
+            time.sleep(0.1)
+        self.fail(
+            f"Timed out waiting for {key} "
+            f"{'to exist' if present else 'to be absent'}")
+
+    def _hgetall_dict(self, key: str) -> dict:
+        raw = redis_cli("HGETALL", key)
+        if not raw:
+            return {}
+        fields = raw.splitlines()
+        return dict(zip(fields[0::2], fields[1::2]))
+
+    def _connect_peer(self) -> TrunkPeer:
+        peer = TrunkPeer()
+        peer.connect(HOST, self.TRUNK_PORT)
+        peer.handshake(trunk_id=self.SECTION,
+                       local_prefix=self.LOCAL_PREFIX,
+                       secret=self.SECRET)
+        return peer
+
+    def test_peer_node_list_creates_and_updates_hashes(self):
+        """Inbound node list populates live:peer_node:* hashes;
+        subsequent shrunk list DELs dropped callsigns."""
+        peer = self._connect_peer()
+        try:
+            peer.send_node_list([
+                ("N1AAA", 123, 0.0, 0.0, ""),
+                ("N1BBB", 456, 52.5, 13.4, "Berlin"),
+            ])
+            self._wait_for_hash(self._peer_key("N1AAA"), present=True)
+            self._wait_for_hash(self._peer_key("N1BBB"), present=True)
+
+            aaa = self._hgetall_dict(self._peer_key("N1AAA"))
+            self.assertEqual(aaa["callsign"], "N1AAA")
+            self.assertEqual(aaa["peer_id"], self.SECTION)
+            self.assertEqual(aaa["tg"], "123")
+            self.assertIn("updated_at", aaa)
+            # No lat/lon/qth expected when lat==lon==0 and qth empty.
+            self.assertNotIn("lat", aaa)
+            self.assertNotIn("lon", aaa)
+            self.assertNotIn("qth_name", aaa)
+
+            bbb = self._hgetall_dict(self._peer_key("N1BBB"))
+            self.assertEqual(bbb["tg"], "456")
+            self.assertIn("lat", bbb)
+            self.assertIn("lon", bbb)
+            self.assertEqual(bbb["qth_name"], "Berlin")
+
+            # Shrink the list: drop N1BBB, update N1AAA's TG.
+            peer.send_node_list([("N1AAA", 789)])
+            self._wait_for_hash(self._peer_key("N1BBB"), present=False)
+            deadline = time.time() + 3.0
+            while time.time() < deadline:
+                aaa = self._hgetall_dict(self._peer_key("N1AAA"))
+                if aaa.get("tg") == "789":
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail(f"N1AAA tg did not update to 789, got {aaa!r}")
+        finally:
+            peer.close()
+
+    def test_hostile_strings_are_sanitized(self):
+        """Callsigns/QTH with control chars, ':' delimiters, or oversized
+        lengths must be stripped/truncated before Redis write. Entries
+        whose callsign becomes empty after sanitization must be dropped
+        entirely; entries with invalid lat/lon must keep callsign but
+        lose the coordinates."""
+        peer = self._connect_peer()
+        try:
+            peer.send_node_list([
+                # 1) Control chars + ':' removed from callsign
+                ("N1\x01AAA:EVIL", 111, 0.0, 0.0, ""),
+                # 2) Over-length callsign is truncated to 32
+                ("Z" * 64, 222, 0.0, 0.0, ""),
+                # 3) Callsign is only stripped chars → entry dropped
+                (":::\x00\x01\x02", 333, 0.0, 0.0, ""),
+                # 4) QTH control chars stripped; other bytes kept
+                ("N1QTH", 444, 52.5, 13.4, "Bad\x01\x02QTH"),
+                # 5) Invalid coordinates → keep callsign, drop lat/lon
+                ("N1GEOX", 555, float("nan"), 13.4, ""),
+                ("N1GEOY", 556, 52.5, 999.0, ""),
+            ])
+
+            # (1) sanitized callsign = "N1AAAEVIL"
+            self._wait_for_hash(self._peer_key("N1AAAEVIL"), present=True)
+            # (2) truncated to 32 'Z'
+            self._wait_for_hash(self._peer_key("Z" * 32), present=True)
+            # (3) dropped entirely — no key with the stripped form should exist.
+            # Sanity-check by listing live:peer_node:TRUNK_TEST:* and verifying
+            # only expected callsigns appear.
+            raw = redis_cli("KEYS", k(f"live:peer_node:{self.SECTION}:*"))
+            present_keys = set(raw.splitlines()) if raw else set()
+            expected = {
+                self._peer_key("N1AAAEVIL"),
+                self._peer_key("Z" * 32),
+                self._peer_key("N1QTH"),
+                self._peer_key("N1GEOX"),
+                self._peer_key("N1GEOY"),
+            }
+            self.assertEqual(present_keys, expected,
+                f"unexpected peer_node keys: got={sorted(present_keys)} "
+                f"expected={sorted(expected)}")
+
+            # (4) QTH stripped of control chars
+            qth_entry = self._hgetall_dict(self._peer_key("N1QTH"))
+            self.assertEqual(qth_entry["qth_name"], "BadQTH")
+
+            # (5) Invalid coordinates → no lat/lon fields
+            geox = self._hgetall_dict(self._peer_key("N1GEOX"))
+            self.assertNotIn("lat", geox)
+            self.assertNotIn("lon", geox)
+            geoy = self._hgetall_dict(self._peer_key("N1GEOY"))
+            self.assertNotIn("lat", geoy)
+            self.assertNotIn("lon", geoy)
+        finally:
+            peer.close()
+
+    def test_peer_nodes_cleared_on_trunk_disconnect(self):
+        """Closing the trunk link (no other direction active) must DEL all
+        of that peer's node keys from Redis."""
+        peer = self._connect_peer()
+        try:
+            peer.send_node_list([("N1AAA", 123), ("N1BBB", 456)])
+            self._wait_for_hash(self._peer_key("N1AAA"), present=True)
+            self._wait_for_hash(self._peer_key("N1BBB"), present=True)
+        finally:
+            peer.close()
+
+        # Outbound peer (192.0.2.1) is unroutable, so isActive() becomes
+        # false as soon as our inbound closes — cleanup should fire.
+        self._wait_for_hash(self._peer_key("N1AAA"), present=False, timeout=5.0)
+        self._wait_for_hash(self._peer_key("N1BBB"), present=False, timeout=5.0)
 
 
 class RedisTrunkAddRemoveTest(unittest.TestCase):

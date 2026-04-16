@@ -325,6 +325,9 @@ class Reflector : public sigc::trackable
     Json::Value                 m_status;
 
     std::vector<TrunkLink*>     m_trunk_links;
+    // Tracks last-seen callsign set per peer_id so we can DEL dropped
+    // callsigns from Redis when a peer's node list shrinks.
+    std::map<std::string, std::set<std::string>> m_peer_node_cache;
     std::set<std::string>       m_redis_trunk_sections; // sections loaded from Redis
     std::set<uint32_t>          m_cluster_tgs;
     bool                        m_trunk_debug = false;

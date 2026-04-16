@@ -166,6 +166,45 @@ def build_heartbeat() -> bytes:
     return struct.pack("!H", MSG_TRUNK_HEARTBEAT)
 
 
+def build_node_list(nodes) -> bytes:
+    """Build a MsgTrunkNodeList frame.
+
+    `nodes` is an iterable of (callsign, tg[, lat, lon, qth_name]) tuples.
+    Unspecified lat/lon default to 0.0 and qth_name to "".
+    Matches the on-wire layout: vec<string> callsigns, vec<u32> tgs,
+    vec<float> lat, vec<float> lon, vec<string> qth_names — each vector
+    prefixed with a u16 element count.
+    """
+    norm = []
+    for n in nodes:
+        if len(n) == 2:
+            cs, tg = n
+            lat, lon, qth = 0.0, 0.0, ""
+        elif len(n) == 5:
+            cs, tg, lat, lon, qth = n
+        else:
+            raise ValueError("node tuple must be (cs, tg) or (cs, tg, lat, lon, qth)")
+        norm.append((cs, tg, lat, lon, qth))
+
+    payload = struct.pack("!H", MSG_TRUNK_NODE_LIST)
+    payload += struct.pack("!H", len(norm))
+    for cs, _tg, _lat, _lon, _qth in norm:
+        payload += pack_string(cs)
+    payload += struct.pack("!H", len(norm))
+    for _cs, tg, _lat, _lon, _qth in norm:
+        payload += struct.pack("!I", tg)
+    payload += struct.pack("!H", len(norm))
+    for _cs, _tg, lat, _lon, _qth in norm:
+        payload += struct.pack("!f", lat)
+    payload += struct.pack("!H", len(norm))
+    for _cs, _tg, _lat, lon, _qth in norm:
+        payload += struct.pack("!f", lon)
+    payload += struct.pack("!H", len(norm))
+    for _cs, _tg, _lat, _lon, qth in norm:
+        payload += pack_string(qth)
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # Message parser
 # ---------------------------------------------------------------------------
@@ -270,6 +309,9 @@ class TrunkPeer:
 
     def send_heartbeat(self):
         send_frame(self.sock, build_heartbeat())
+
+    def send_node_list(self, nodes):
+        send_frame(self.sock, build_node_list(nodes))
 
     def recv_msg(self, timeout: float = 5.0):
         old = self.sock.gettimeout()

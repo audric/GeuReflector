@@ -314,6 +314,43 @@ void RedisStore::clearLiveClient(const std::string& callsign) {
   m_live_queue->push(std::move(op));
 }
 
+void RedisStore::pushPeerNode(const std::string& peer_id,
+                              const std::string& callsign,
+                              uint32_t tg,
+                              float lat, float lon,
+                              const std::string& qth_name) {
+  if (!m_live_queue) return;
+  RedisLiveQueue::Op op;
+  op.op  = RedisLiveQueue::OpType::HSET;
+  op.key = keyFor("live:peer_node:" + peer_id + ":" + callsign);
+  m_live_keys.insert(op.key);
+  op.fields = {
+    {"peer_id",    peer_id},
+    {"callsign",   callsign},
+    {"tg",         std::to_string(tg)},
+    {"updated_at", std::to_string(std::time(nullptr))}
+  };
+  if (lat != 0.0f || lon != 0.0f) {
+    op.fields.emplace_back("lat", std::to_string(lat));
+    op.fields.emplace_back("lon", std::to_string(lon));
+  }
+  if (!qth_name.empty()) {
+    op.fields.emplace_back("qth_name", qth_name);
+  }
+  op.ttl_s = 60;
+  m_live_queue->push(std::move(op));
+}
+
+void RedisStore::clearPeerNode(const std::string& peer_id,
+                               const std::string& callsign) {
+  if (!m_live_queue) return;
+  RedisLiveQueue::Op op;
+  op.op  = RedisLiveQueue::OpType::DEL;
+  op.key = keyFor("live:peer_node:" + peer_id + ":" + callsign);
+  m_live_keys.erase(op.key);
+  m_live_queue->push(std::move(op));
+}
+
 void RedisStore::pushLiveTrunk(const std::string& section,
                                const std::string& state,
                                const std::string& peer_id) {

@@ -3034,6 +3034,27 @@ void Reflector::onPeerNodeList(const std::string& peer_id,
   {
     m_mqtt->publishPeerNodes(peer_id, nodes);
   }
+
+  if (m_redis != nullptr && !peer_id.empty())
+  {
+    std::set<std::string> seen;
+    for (const auto& n : nodes)
+    {
+      if (n.callsign.empty()) continue;
+      seen.insert(n.callsign);
+      m_redis->pushPeerNode(peer_id, n.callsign, n.tg,
+                            n.lat, n.lon, n.qth_name);
+    }
+    auto& prev = m_peer_node_cache[peer_id];
+    for (const std::string& cs : prev)
+    {
+      if (seen.find(cs) == seen.end())
+      {
+        m_redis->clearPeerNode(peer_id, cs);
+      }
+    }
+    prev = std::move(seen);
+  }
 } /* Reflector::onPeerNodeList */
 
 
@@ -3058,6 +3079,30 @@ void Reflector::onTrunkStateChanged(const std::string& section,
   if (m_redis != nullptr)
   {
     m_redis->pushLiveTrunk(section, up ? "up" : "down", peer_id);
+  }
+
+  // When a trunk link is fully down (both directions), clear any node
+  // entries we were mirroring from this peer into Redis. Keeps Redis in
+  // sync with the fact that we can no longer observe the peer's roster.
+  if (!up && m_redis != nullptr && !peer_id.empty())
+  {
+    TrunkLink* link = nullptr;
+    for (auto* l : m_trunk_links)
+    {
+      if (l->section() == section) { link = l; break; }
+    }
+    if (link == nullptr || !link->isActive())
+    {
+      auto it = m_peer_node_cache.find(peer_id);
+      if (it != m_peer_node_cache.end())
+      {
+        for (const std::string& cs : it->second)
+        {
+          m_redis->clearPeerNode(peer_id, cs);
+        }
+        m_peer_node_cache.erase(it);
+      }
+    }
   }
 } /* Reflector::onTrunkStateChanged */
 
