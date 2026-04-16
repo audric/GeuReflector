@@ -1872,6 +1872,69 @@ class TestTrunkIntegration(unittest.TestCase):
             mc.loop_stop()
             mc.disconnect()
 
+    # ------------------------------------------------------------------
+    # Test 31: MQTT works in satellite mode
+    # ------------------------------------------------------------------
+    def test_31_mqtt_satellite_client_events(self):
+        """A satellite-mode reflector publishes MQTT client connect and
+        disconnect events under its own topic prefix, just like a full
+        reflector. Verifies that the MQTT init runs before the satellite
+        early-return in Reflector::initialize()."""
+        sat_name = T.SATELLITE_NODE["name"]
+        sat_topic = f"svxreflector/{sat_name}/client/{CLIENT_CALLSIGN}"
+        received = []
+        sub_event = threading.Event()
+
+        def on_connect(client, userdata, flags, rc):
+            client.subscribe(f"{sat_topic}/#")
+            sub_event.set()
+
+        def on_message(client, userdata, msg):
+            try:
+                payload = json.loads(msg.payload)
+            except (ValueError, json.JSONDecodeError):
+                payload = msg.payload
+            received.append((msg.topic, payload))
+
+        mc = mqtt_client.Client()
+        mc.on_connect = on_connect
+        mc.on_message = on_message
+        mc.connect(HOST, 11883, 60)
+        mc.loop_start()
+
+        try:
+            self.assertTrue(sub_event.wait(timeout=5),
+                            "MQTT subscribe timed out")
+            time.sleep(0.5)
+
+            client = ClientPeer()
+            client.connect(HOST, T.sat_node_mapped_client_port())
+            client.authenticate(callsign=CLIENT_CALLSIGN,
+                                password=CLIENT_PASSWORD)
+            time.sleep(2)
+
+            connected_topic = f"{sat_topic}/connected"
+            conn_events = [r for r in received if r[0] == connected_topic]
+            self.assertTrue(len(conn_events) > 0,
+                            f"Expected MQTT connected event from satellite, "
+                            f"got topics: {[r[0] for r in received]}")
+            payload = conn_events[0][1]
+            self.assertIn("tg", payload)
+            self.assertIn("ip", payload)
+
+            received.clear()
+            client.close()
+            time.sleep(2)
+
+            disconnected_topic = f"{sat_topic}/disconnected"
+            disc_events = [r for r in received if r[0] == disconnected_topic]
+            self.assertTrue(len(disc_events) > 0,
+                            f"Expected MQTT disconnected event from satellite, "
+                            f"got topics: {[r[0] for r in received]}")
+        finally:
+            mc.loop_stop()
+            mc.disconnect()
+
 
 # ---------------------------------------------------------------------------
 # Custom test runner with clean, readable output

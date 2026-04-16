@@ -78,6 +78,11 @@ class RedisStore : public sigc::trackable
                         const std::string& codecs,
                         uint32_t current_tg);
     void clearLiveClient(const std::string& callsign);
+    // Publish the rich per-client status blob (rx levels, monitoredTGs,
+    // qth/location etc.) as a serialized JSON string in the `status`
+    // field of the existing live:client:<callsign> hash.
+    void pushClientStatus(const std::string& callsign,
+                          const std::string& status_json);
     void pushLiveTrunk(const std::string& section,
                        const std::string& state,
                        const std::string& peer_id);

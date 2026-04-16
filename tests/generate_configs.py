@@ -126,6 +126,57 @@ def generate_reflector_conf(name: str) -> str:
     return "\n".join(lines)
 
 
+def generate_satellite_node_conf() -> str:
+    """Generate svxreflector.conf for a satellite-mode reflector that
+    connects to the primary reflector as a satellite peer."""
+    sat = T.SATELLITE_NODE
+    parent = T.sat_node_parent()
+    parent_svc = T.service_name(parent)
+    parent_prefix = T.prefix_str(T.REFLECTORS[parent]["prefix"])
+
+    lines = [
+        "[GLOBAL]",
+        'TIMESTAMP_FORMAT="%c"',
+        f"LISTEN_PORT={T.INTERNAL_CLIENT_PORT}",
+        "TG_FOR_V1_CLIENTS=999",
+        f"LOCAL_PREFIX={parent_prefix}",
+        f"HTTP_SRV_PORT={T.INTERNAL_HTTP_PORT}",
+        f"SATELLITE_OF={parent_svc}",
+        f"SATELLITE_PORT={T.SATELLITE['listen_port']}",
+        f"SATELLITE_SECRET={T.SATELLITE['secret']}",
+        f"SATELLITE_ID={sat['id']}",
+        "",
+        "[SERVER_CERT]",
+        f"COMMON_NAME={T.sat_node_service_name()}",
+        "",
+        "[USERS]",
+    ]
+    groups_seen = set()
+    for client in T.TEST_CLIENTS:
+        lines.append(f"{client['callsign']}={client['group']}")
+        groups_seen.add(client['group'])
+    lines += [
+        "",
+        "[PASSWORDS]",
+    ]
+    for client in T.TEST_CLIENTS:
+        if client['group'] in groups_seen:
+            lines.append(f"{client['group']}={client['password']}")
+            groups_seen.discard(client['group'])
+    lines += [
+        "",
+        "[MQTT]",
+        f"HOST={T.MQTT['host']}",
+        f"PORT={T.MQTT['port']}",
+        f"USERNAME={T.MQTT['username']}",
+        f"PASSWORD={T.MQTT['password']}",
+        f"TOPIC_PREFIX=svxreflector/{sat['name']}",
+        "STATUS_INTERVAL=1000",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def generate_docker_compose() -> str:
     """Generate docker-compose.test.yml content."""
     services = []
@@ -173,6 +224,30 @@ def generate_docker_compose() -> str:
       retries: 15
     networks:
       - trunk_mesh{depends_on_line}""")
+
+    # Satellite-mode reflector — joins the primary as a satellite. Used
+    # to verify satellite-mode behavior (MQTT publishing, V2 client server).
+    sat_svc = T.sat_node_service_name()
+    sat_vol = f"pki-{T.SATELLITE_NODE['name']}"
+    volumes.append(sat_vol)
+    services.append(f"""  {sat_svc}:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    volumes:
+      - ./configs/{sat_svc}.conf:/etc/svxlink/svxreflector.conf:ro
+      - {sat_vol}:/var/lib/svxlink/pki
+    ports:
+      - "{T.sat_node_mapped_client_port()}:{T.INTERNAL_CLIENT_PORT}/tcp"
+      - "{T.sat_node_mapped_client_port()}:{T.INTERNAL_CLIENT_PORT}/udp"
+      - "{T.sat_node_mapped_http_port()}:{T.INTERNAL_HTTP_PORT}/tcp"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/{T.INTERNAL_HTTP_PORT}) 2>/dev/null'"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    networks:
+      - trunk_mesh""")
 
     # Mosquitto broker for MQTT testing
     services.append("""  mosquitto:
@@ -495,6 +570,13 @@ def main():
             with open(path, "w") as f:
                 f.write(content)
             print(f"  wrote {os.path.relpath(path, script_dir)}")
+
+        # Satellite-mode reflector config
+        sat_path = os.path.join(configs_dir,
+                                f"{T.sat_node_service_name()}.conf")
+        with open(sat_path, "w") as f:
+            f.write(generate_satellite_node_conf())
+        print(f"  wrote {os.path.relpath(sat_path, script_dir)}")
 
         # Generate docker-compose
         compose_path = os.path.join(script_dir, "docker-compose.test.yml")

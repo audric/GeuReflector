@@ -483,6 +483,35 @@ bool Reflector::initialize(Async::Config &cfg)
   // Parse CLUSTER_TGS — comma-separated list of TG numbers broadcast to all peers
   reloadClusterTgs();
 
+  // Initialize MQTT publisher if [MQTT] section is configured.
+  // Done before the satellite early-return so satellites publish too.
+  std::string mqtt_host;
+  if (cfg.getValue("MQTT", "HOST", mqtt_host))
+  {
+    m_mqtt = new MqttPublisher(cfg);
+    if (!m_mqtt->initialize())
+    {
+      cerr << "*** WARNING: MQTT publisher failed to initialize, continuing without MQTT" << endl;
+      delete m_mqtt;
+      m_mqtt = nullptr;
+    }
+    else
+    {
+      // Set up periodic status publishing
+      unsigned status_interval = 1000;
+      cfg.getValue("MQTT", "STATUS_INTERVAL", status_interval);
+      m_mqtt_status_timer.setTimeout(status_interval);
+      m_mqtt_status_timer.setEnable(true);
+      m_mqtt_status_timer.expired.connect(
+          [this](Async::Timer*)
+          {
+            refreshStatus();
+            m_mqtt->publishFullStatus(m_status);
+            m_mqtt_status_timer.setEnable(true);
+          });
+    }
+  }
+
   // Satellite mode: connect to parent instead of joining the trunk mesh
   std::string satellite_of;
   if (cfg.getValue("GLOBAL", "SATELLITE_OF", satellite_of) &&
@@ -517,34 +546,6 @@ bool Reflector::initialize(Async::Config &cfg)
   initTwinLink();
   initTwinServer();
   initSatelliteServer();
-
-  // Initialize MQTT publisher if [MQTT] section is configured
-  std::string mqtt_host;
-  if (cfg.getValue("MQTT", "HOST", mqtt_host))
-  {
-    m_mqtt = new MqttPublisher(cfg);
-    if (!m_mqtt->initialize())
-    {
-      cerr << "*** WARNING: MQTT publisher failed to initialize, continuing without MQTT" << endl;
-      delete m_mqtt;
-      m_mqtt = nullptr;
-    }
-    else
-    {
-      // Set up periodic status publishing
-      unsigned status_interval = 1000;
-      cfg.getValue("MQTT", "STATUS_INTERVAL", status_interval);
-      m_mqtt_status_timer.setTimeout(status_interval);
-      m_mqtt_status_timer.setEnable(true);
-      m_mqtt_status_timer.expired.connect(
-          [this](Async::Timer*)
-          {
-            refreshStatus();
-            m_mqtt->publishFullStatus(m_status);
-            m_mqtt_status_timer.setEnable(true);
-          });
-    }
-  }
 
   return true;
 } /* Reflector::initialize */
@@ -2961,7 +2962,21 @@ void Reflector::publishRxUpdate(ReflectorClient* client)
   {
     m_mqtt->onRxUpdate(client->callsign(), client->rxStatusJson());
   }
+  publishClientStatus(client);
 } /* Reflector::publishRxUpdate */
+
+
+void Reflector::publishClientStatus(ReflectorClient* client)
+{
+  if (m_redis == nullptr || client == nullptr) return;
+  const std::string& cs = client->callsign();
+  if (cs.empty()) return;
+  if (!m_status["nodes"].isMember(cs)) return;
+  Json::StreamWriterBuilder wb;
+  wb["indentation"] = "";
+  m_redis->pushClientStatus(cs,
+      Json::writeString(wb, m_status["nodes"][cs]));
+} /* Reflector::publishClientStatus */
 
 
 void Reflector::onClientAuthenticated(const std::string& callsign,

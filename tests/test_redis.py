@@ -14,7 +14,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import topology_redis as T
-from test_trunk import ClientPeer, TrunkPeer
+from test_trunk import ClientPeer, TrunkPeer, send_frame, pack_string
 
 HOST = "127.0.0.1"
 
@@ -224,6 +224,61 @@ class RedisLiveStateTest(unittest.TestCase):
             ts = int(mapping["connected_at"])
             self.assertGreater(ts, 0)
             self.assertLess(abs(ts - time.time()), 60)
+        finally:
+            try:
+                peer.tcp.close()
+            except Exception:
+                pass
+
+    def test_live_client_status_blob(self):
+        """After a V2 client sends MsgNodeInfo (qth + rx + monitoredTGs),
+        the rich status blob lands in live:client:<callsign>.status as a
+        serialized JSON string containing qth, rx params, and monitoredTGs."""
+        import json as _json
+        import struct as _struct
+        MSG_NODE_INFO_V2 = 111
+
+        peer = ClientPeer()
+        peer.connect(HOST, R1_CLIENT_PORT)
+        try:
+            peer.authenticate(callsign="N0TEST", password="testpass")
+            self._wait_for_hash(k("live:client:N0TEST"), present=True)
+
+            node_info = {
+                "swInfo": "test-client/1.0",
+                "qth": [{
+                    "name": "Test QTH",
+                    "lat": 45.5,
+                    "lon": 9.2,
+                    "rx": {"A": {"name": "TestRx"}},
+                    "tx": {"A": {"name": "TestTx"}},
+                }],
+            }
+            payload = _struct.pack("!H", MSG_NODE_INFO_V2)
+            payload += pack_string(_json.dumps(node_info))
+            send_frame(peer.tcp, payload)
+
+            # Wait for status field to appear and parse as JSON
+            deadline = time.time() + 3.0
+            blob = ""
+            while time.time() < deadline:
+                blob = redis_cli("HGET", k("live:client:N0TEST"), "status")
+                if blob:
+                    break
+                time.sleep(0.1)
+            self.assertNotEqual(blob, "",
+                "status field never appeared on live:client:N0TEST")
+
+            status = _json.loads(blob)
+            self.assertIn("qth", status)
+            self.assertEqual(status["qth"][0]["name"], "Test QTH")
+            self.assertAlmostEqual(status["qth"][0]["lat"], 45.5)
+            self.assertIn("rx", status["qth"][0])
+            self.assertIn("A", status["qth"][0]["rx"])
+            # Reflector populates default rx params after parsing NodeInfo
+            self.assertIn("siglev", status["qth"][0]["rx"]["A"])
+            self.assertIn("sql_open", status["qth"][0]["rx"]["A"])
+            self.assertIn("monitoredTGs", status)
         finally:
             try:
                 peer.tcp.close()

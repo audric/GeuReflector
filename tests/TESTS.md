@@ -5,7 +5,7 @@
 The integration tests verify the trunk protocol, satellite links, twin (HA-pair) protocol, Redis-backed config store, and end-to-end audio routing by spinning up reflector meshes in Docker Compose and connecting fake peers and clients from a Python test harness.
 
 `run_tests.sh` runs in **two phases**:
-1. A 3-reflector trunk mesh exercising `test_trunk.py` (30 tests).
+1. A 3-reflector trunk mesh + a satellite-mode reflector exercising `test_trunk.py` (31 tests).
 2. A 4-reflector twin topology exercising `test_twin.py` (10 tests).
 
 A separate harness (`run_redis_tests.sh`) runs `test_redis.py` (13 tests) against a single-reflector + Redis stack. See [Redis Integration Tests](#redis-integration-tests) below.
@@ -22,7 +22,7 @@ bash run_tests.sh
 This will:
 1. Generate the default configs and `docker-compose.test.yml` from `topology.py`
 2. Build and start the 3-reflector mesh
-3. Run 30 automated trunk/satellite/MQTT tests (`test_trunk.py`)
+3. Run 31 automated trunk/satellite/MQTT tests (`test_trunk.py`)
 4. Enter an interactive prompt to manually test any TG number
 5. Tear down the default mesh
 6. Regenerate with `--topology twin` (4-reflector twin topology)
@@ -58,7 +58,7 @@ Two fake trunk peers connect from the test harness:
 Two V2 clients are configured on every reflector:
 - **N0TEST** / **N0SEND** (group `TestGroup`, password `testpass`)
 
-A satellite server is enabled on reflector-a (port 5303, secret `sat_secret`).
+A satellite server is enabled on reflector-a (port 5303, secret `sat_secret`). A real satellite-mode reflector (`reflector-sat`, `SATELLITE_OF=reflector-a`) also runs in the compose so tests can verify satellite-mode behavior end-to-end (e.g. that MQTT publishing still works).
 
 All test configs have `TRUNK_DEBUG=1` enabled for verbose trunk logging during test runs.
 
@@ -69,6 +69,7 @@ All test configs have `TRUNK_DEBUG=1` enabled for verbose trunk logging during t
 | a         | 15300             | 15302       | 18080| 15303     |
 | b         | 25300             | 25302       | 28080| —         |
 | c         | 35300             | 35302       | 38080| —         |
+| sat       | 55300             | —           | 58080| —         |
 
 Internal ports inside Docker are always 5300, 5302, 8080, 5303.
 
@@ -113,7 +114,7 @@ Internal port for `[TWIN]` is always 5304; satellite is 5303.
 |------|---------|
 | `topology.py` | Single source of truth — prefixes, ports, secrets, cluster TGs, test clients. Contains both the default mesh (`REFLECTORS`) and the `TWIN_REFLECTORS` / `TWIN_TRUNKS` definitions. |
 | `generate_configs.py` | Generates `configs/*.conf` and `docker-compose.test.yml` from topology. Supports `--topology default` (implicit) and `--topology twin`. |
-| `test_trunk.py` | Test harness: fake trunk peers, satellite peer, V2 client, 30 test cases, interactive loop. |
+| `test_trunk.py` | Test harness: fake trunk peers, satellite peer, V2 client, 31 test cases, interactive loop. |
 | `test_twin.py` | TWIN-protocol tests (10 cases) using the twin topology. Reuses `ClientPeer` and `SatellitePeer` from `test_trunk.py`. |
 | `run_tests.sh` | Orchestrator: generate → build → trunk tests → teardown → regenerate twin → build → twin tests → teardown. |
 | `configs/` | Generated reflector config files (do not edit manually) |
@@ -187,6 +188,7 @@ Simulates a V2 SvxLink client. Performs the full TCP authentication handshake (P
 | 28 | MQTT client connect/disconnect | V2 client connect publishes `client/<callsign>/connected` (with `tg`, `ip`); disconnect publishes `client/<callsign>/disconnected` |
 | 29 | MQTT full status | Periodic retained `status` message arrives and contains `nodes` and `trunks` keys |
 | 30 | MQTT local nodes | Client connect triggers retained `nodes/local` message listing the client's callsign with `timestamp` |
+| 31 | MQTT works in satellite mode | A satellite-mode reflector (`reflector-sat`, `SATELLITE_OF=reflector-a`) publishes `client/<callsign>/connected` and `disconnected` events under its own topic prefix |
 
 ### Per-Trunk Filters and Mapping (jayReflector additions)
 
@@ -250,6 +252,7 @@ Each test writes directly to Redis via `redis-cli` inside the container, publish
 | 4 | Allow change triggers reload | Adding an allow-list entry produces a matching `Reloaded filters` line |
 | 5 | `live:client` appears on auth | On V2 authentication, `live:client:<callsign>` hash is populated with `connected_at`, `ip`, `tg`, `codecs` |
 | 6 | `live:client` disappears on disconnect | After forceful TCP close the hash is removed within ~5 s |
+| 6b | `live:client` rich status blob | After the client sends `MsgNodeInfo`, `live:client:<callsign>.status` holds the full per-client JSON (qth, rx params, monitoredTGs) and `updated_at` |
 | 7 | Outage + resync | Stopping Redis keeps existing clients connected; on restart the reflector logs `config.changed: all` and accepts newly-written users |
 | 8 | `--import-conf-to-redis` idempotent | Running the importer twice against the same `.conf` produces identical keyspace dumps |
 | 9 | Peer node list populates + diffs | Inbound `MsgTrunkNodeList` creates `live:peer_node:<section>:<callsign>` hashes; a shrunk follow-up list DELs dropped callsigns and updates mutated fields (e.g. `tg`) |

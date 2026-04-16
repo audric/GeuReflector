@@ -314,6 +314,21 @@ void RedisStore::clearLiveClient(const std::string& callsign) {
   m_live_queue->push(std::move(op));
 }
 
+void RedisStore::pushClientStatus(const std::string& callsign,
+                                  const std::string& status_json) {
+  if (!m_live_queue) return;
+  RedisLiveQueue::Op op;
+  op.op  = RedisLiveQueue::OpType::HSET;
+  op.key = keyFor("live:client:" + callsign);
+  m_live_keys.insert(op.key);
+  op.fields = {
+    {"status",     status_json},
+    {"updated_at", std::to_string(std::time(nullptr))}
+  };
+  op.ttl_s = 60;
+  m_live_queue->push(std::move(op));
+}
+
 void RedisStore::pushPeerNode(const std::string& peer_id,
                               const std::string& callsign,
                               uint32_t tg,

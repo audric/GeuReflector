@@ -260,6 +260,9 @@ class Reflector : public sigc::trackable
     void forwardFlushToSatellitesExcept(SatelliteLink* except, uint32_t tg);
 
     void publishRxUpdate(ReflectorClient* client);
+    // Push the rich per-client status blob (rx, monitoredTGs, qth, ...)
+    // to Redis. Cheap no-op if Redis is not configured.
+    void publishClientStatus(ReflectorClient* client);
     void onClientAuthenticated(const std::string& callsign, uint32_t tg,
                                const std::string& ip);
     void notifyExternalTrunkTalkerStart(uint32_t tg,

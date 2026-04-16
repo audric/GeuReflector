@@ -61,6 +61,15 @@ SATELLITE = {
     "listen_port": 5303,
 }
 
+# A real satellite-mode reflector — runs as a satellite of the primary
+# reflector. Used to verify that satellite mode preserves features like
+# MQTT publishing and the V2 client server.
+SATELLITE_NODE = {
+    "name":      "sat",
+    "id":        "SAT_NODE",
+    "port_base": 55000,
+}
+
 # Redis broker — used by reflectors flagged `redis: True`.
 # Each reflector uses its own DB index to avoid pollution between tests.
 REDIS = {
@@ -205,6 +214,19 @@ def service_name(name: str) -> str:
 
 def mapped_satellite_port(name: str) -> int:
     return REFLECTORS[name]["trunk_port_base"] + 303
+
+def sat_node_service_name() -> str:
+    return f"reflector-{SATELLITE_NODE['name']}"
+
+def sat_node_parent() -> str:
+    """Parent reflector that the satellite-mode node attaches to."""
+    return sorted(REFLECTORS)[0]
+
+def sat_node_mapped_client_port() -> int:
+    return SATELLITE_NODE["port_base"] + 300
+
+def sat_node_mapped_http_port() -> int:
+    return SATELLITE_NODE["port_base"] + 3080
 
 def trunk_section_name(name_a: str, name_b: str = "") -> str:
     """Shared trunk section name for a link between two reflectors.

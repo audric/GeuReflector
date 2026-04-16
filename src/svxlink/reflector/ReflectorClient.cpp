@@ -1016,6 +1016,7 @@ void ReflectorClient::handleNodeInfo(std::istream& is)
               << "]: Failed to parse MsgNodeInfo JSON object: "
               << e.what() << std::endl;
   }
+  if (m_reflector != nullptr) m_reflector->publishClientStatus(this);
 } /* ReflectorClient::handleNodeInfo */
 
 
@@ -1433,6 +1434,7 @@ void ReflectorClient::setMonitoredTGs(const std::set<uint32_t>& tgs)
       monitored_tgs.append(tg);
     }
   }
+  if (m_reflector != nullptr) m_reflector->publishClientStatus(this);
 } /* ReflectorClient::setMonitoredTGs */
 
 
@@ -1467,6 +1469,7 @@ void ReflectorClient::setTg(uint32_t tg)
   }
 
   updateIsTalker();
+  if (m_reflector != nullptr) m_reflector->publishClientStatus(this);
 } /* ReflectorClient::setTg */
 
 
