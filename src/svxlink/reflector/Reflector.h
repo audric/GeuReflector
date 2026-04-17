@@ -263,6 +263,15 @@ class Reflector : public sigc::trackable
     // Push the rich per-client status blob (rx, monitoredTGs, qth, ...)
     // to Redis. Cheap no-op if Redis is not configured.
     void publishClientStatus(ReflectorClient* client);
+    // Reflector-wide live:meta hash (mode, version, prefixes, ports,
+    // cluster TGs, satellite-server stats). Event-driven write.
+    void publishMetaToRedis(void);
+    // Per-satellite live:satellite:<id> snapshot. Triggered on satellite
+    // hello + active-TG changes.
+    void publishSatelliteStatusToRedis(SatelliteLink* link);
+    // Per-trunk live:trunk:<section> `status` field with full
+    // TrunkLink::statusJson(). Triggered on trunk state-change events.
+    void publishTrunkStatusToRedis(TrunkLink* link);
     void onClientAuthenticated(const std::string& callsign, uint32_t tg,
                                const std::string& ip);
     void notifyExternalTrunkTalkerStart(uint32_t tg,

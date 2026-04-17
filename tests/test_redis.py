@@ -297,6 +297,46 @@ class RedisLiveStateTest(unittest.TestCase):
         # Drain queue + Redis publish should take <100ms. Give more for slack.
         self._wait_for_hash(k("live:client:N0TEST"), present=False, timeout=5.0)
 
+    def test_live_meta_populated_at_startup(self):
+        """live:meta hash carries reflector-wide info (mode, version, ports,
+        cluster_tgs) so dashboards can reconstruct the /status header
+        without an HTTP query."""
+        # setUp() flushdb wiped the startup-written keys; trigger a
+        # republish via the existing config.changed pubsub.
+        publish("all")
+        time.sleep(0.5)
+        raw = self._wait_for_hash(k("live:meta"), present=True, timeout=5.0)
+        fields = raw.splitlines()
+        m = dict(zip(fields[0::2], fields[1::2]))
+        self.assertEqual(m.get("mode"), "reflector")
+        self.assertIn("version", m)
+        self.assertIn("listen_port", m)
+        self.assertIn("local_prefix", m)
+        # cluster_tgs is always written (may be empty CSV)
+        self.assertIn("cluster_tgs", m)
+        self.assertIn("updated_at", m)
+
+    def test_live_trunk_carries_status_blob(self):
+        """live:trunk:<section> includes a `status` field with the full
+        TrunkLink::statusJson() snapshot (host, port, connected flags,
+        local/remote prefixes, active_talkers, muted)."""
+        import json as _json
+        publish("all")
+        time.sleep(0.5)
+        raw = self._wait_for_hash(k("live:trunk:TRUNK_TEST"),
+                                  present=True, timeout=5.0)
+        fields = raw.splitlines()
+        m = dict(zip(fields[0::2], fields[1::2]))
+        self.assertIn("status", m)
+        status = _json.loads(m["status"])
+        # Sanity: statusJson contract from TrunkLink.cpp
+        self.assertIn("host", status)
+        self.assertIn("port", status)
+        self.assertIn("connected", status)
+        self.assertIn("local_prefix", status)
+        self.assertIn("remote_prefix", status)
+        self.assertIn("active_talkers", status)
+
 
 class RedisOutageTest(unittest.TestCase):
     """Verify reflector tolerates Redis going down and resyncs on resume."""

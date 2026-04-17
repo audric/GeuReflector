@@ -19,27 +19,58 @@ pkg_check_modules (JSONCPP REQUIRED jsoncpp)
 include_directories(${JSONCPP_INCLUDE_DIRS})
 set(LIBS ${LIBS} ${JSONCPP_LIBRARIES})
 
-# Find mosquitto library (MQTT publishing)
-pkg_check_modules(MOSQUITTO REQUIRED libmosquitto)
-include_directories(${MOSQUITTO_INCLUDE_DIRS})
-set(LIBS ${LIBS} ${MOSQUITTO_LIBRARIES})
+# Optional MQTT publishing — pass -DWITH_MQTT=OFF to build without
+# libmosquitto. Call sites keep working through a no-op stub class
+# defined in MqttPublisher.h.
+option(WITH_MQTT "Enable MQTT publishing (requires libmosquitto)" ON)
+if(WITH_MQTT)
+  pkg_check_modules(MOSQUITTO REQUIRED libmosquitto)
+  include_directories(${MOSQUITTO_INCLUDE_DIRS})
+  set(LIBS ${LIBS} ${MOSQUITTO_LIBRARIES})
+  message(STATUS "WITH_MQTT=ON: building with libmosquitto support")
+else()
+  message(STATUS "WITH_MQTT=OFF: building WITHOUT MQTT support; "
+                 "[MQTT] config sections will fail to initialize at startup")
+endif()
 
-# Find hiredis library (Redis C client)
-pkg_check_modules(HIREDIS REQUIRED hiredis)
-include_directories(${HIREDIS_INCLUDE_DIRS})
-set(LIBS ${LIBS} ${HIREDIS_LIBRARIES})
+# Optional Redis-backed config store — pass -DWITH_REDIS=OFF to build
+# without libhiredis. Call sites keep working through a no-op stub class
+# defined in RedisStore.h.
+option(WITH_REDIS "Enable Redis-backed config store (requires libhiredis)" ON)
+if(WITH_REDIS)
+  pkg_check_modules(HIREDIS REQUIRED hiredis)
+  include_directories(${HIREDIS_INCLUDE_DIRS})
+  set(LIBS ${LIBS} ${HIREDIS_LIBRARIES})
+  message(STATUS "WITH_REDIS=ON: building with libhiredis support")
+else()
+  message(STATUS "WITH_REDIS=OFF: building WITHOUT Redis support; "
+                 "[REDIS] config sections will cause startup to abort")
+endif()
 
 # Add project libraries
 set(LIBS asynccpp asyncaudio asynccore svxmisc ${LIBS})
 
 # Build the executable
-add_executable(svxreflector
+set(REFLECTOR_SOURCES
   svxreflector.cpp Reflector.cpp ReflectorClient.cpp TGHandler.cpp TrunkLink.cpp
   TwinLink.cpp
-  SatelliteLink.cpp SatelliteClient.cpp MqttPublisher.cpp RedisStore.cpp
-  RedisAsyncAdapter.cpp RedisLiveQueue.cpp
+  SatelliteLink.cpp SatelliteClient.cpp
 )
+if(WITH_MQTT)
+  list(APPEND REFLECTOR_SOURCES MqttPublisher.cpp)
+endif()
+if(WITH_REDIS)
+  list(APPEND REFLECTOR_SOURCES RedisStore.cpp RedisAsyncAdapter.cpp RedisLiveQueue.cpp)
+endif()
+
+add_executable(svxreflector ${REFLECTOR_SOURCES})
 target_link_libraries(svxreflector ${LIBS})
+if(WITH_MQTT)
+  target_compile_definitions(svxreflector PRIVATE WITH_MQTT)
+endif()
+if(WITH_REDIS)
+  target_compile_definitions(svxreflector PRIVATE WITH_REDIS)
+endif()
 set_target_properties(svxreflector PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${RUNTIME_OUTPUT_DIRECTORY}
 )

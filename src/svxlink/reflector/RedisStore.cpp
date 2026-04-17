@@ -329,6 +329,58 @@ void RedisStore::pushClientStatus(const std::string& callsign,
   m_live_queue->push(std::move(op));
 }
 
+void RedisStore::pushMeta(
+    const std::vector<std::pair<std::string,std::string>>& fields) {
+  if (!m_live_queue || fields.empty()) return;
+  RedisLiveQueue::Op op;
+  op.op  = RedisLiveQueue::OpType::HSET;
+  op.key = keyFor("live:meta");
+  m_live_keys.insert(op.key);
+  op.fields = fields;
+  op.fields.emplace_back("updated_at", std::to_string(std::time(nullptr)));
+  op.ttl_s = 60;
+  m_live_queue->push(std::move(op));
+}
+
+void RedisStore::pushSatelliteStatus(const std::string& sat_id,
+                                     const std::string& status_json) {
+  if (!m_live_queue || sat_id.empty()) return;
+  RedisLiveQueue::Op op;
+  op.op  = RedisLiveQueue::OpType::HSET;
+  op.key = keyFor("live:satellite:" + sat_id);
+  m_live_keys.insert(op.key);
+  op.fields = {
+    {"status",     status_json},
+    {"updated_at", std::to_string(std::time(nullptr))}
+  };
+  op.ttl_s = 60;
+  m_live_queue->push(std::move(op));
+}
+
+void RedisStore::clearSatelliteStatus(const std::string& sat_id) {
+  if (!m_live_queue || sat_id.empty()) return;
+  RedisLiveQueue::Op op;
+  op.op  = RedisLiveQueue::OpType::DEL;
+  op.key = keyFor("live:satellite:" + sat_id);
+  m_live_keys.erase(op.key);
+  m_live_queue->push(std::move(op));
+}
+
+void RedisStore::pushTrunkStatus(const std::string& section,
+                                 const std::string& status_json) {
+  if (!m_live_queue || section.empty()) return;
+  RedisLiveQueue::Op op;
+  op.op  = RedisLiveQueue::OpType::HSET;
+  op.key = keyFor("live:trunk:" + section);
+  m_live_keys.insert(op.key);
+  op.fields = {
+    {"status",     status_json},
+    {"updated_at", std::to_string(std::time(nullptr))}
+  };
+  op.ttl_s = 60;
+  m_live_queue->push(std::move(op));
+}
+
 void RedisStore::pushPeerNode(const std::string& peer_id,
                               const std::string& callsign,
                               uint32_t tg,

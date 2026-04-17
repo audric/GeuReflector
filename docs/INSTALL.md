@@ -11,15 +11,25 @@ plus a few config additions.
 
 - A working SvxReflector installation (any recent version)
 - Build tools: `git`, `cmake` (≥ 3.7), `g++` with C++11 support
-- Development libraries (same as SvxReflector itself):
+- Development libraries:
   ```bash
-  # Debian/Ubuntu
+  # Debian/Ubuntu — required
   sudo apt install build-essential cmake libsigc++-2.0-dev libssl-dev \
                    libjsoncpp-dev libpopt-dev
+
+  # Required for MQTT publishing (skip if building with -DWITH_MQTT=OFF)
+  sudo apt install libmosquitto-dev
+
+  # Required for Redis-backed config store (skip if building with -DWITH_REDIS=OFF)
+  sudo apt install libhiredis-dev
 
   # Optional codec support
   sudo apt install libopus-dev libgsm1-dev libspeex-dev
   ```
+
+The MQTT and Redis backends are enabled by default. If your deployment doesn't
+need them, see step 2 below for the opt-out CMake flags — that lets you skip
+the matching `*-dev` packages entirely.
 
 ---
 
@@ -40,6 +50,34 @@ cmake --build build
 ```
 
 The compiled binary is at `build/bin/svxreflector`.
+
+### Optional: build without MQTT or Redis
+
+The MQTT publisher and Redis-backed config store are enabled by default. To
+build without them — for example, on a host where you don't want to install
+`libmosquitto-dev` or `libhiredis-dev` — pass the matching CMake flags:
+
+```bash
+# build without MQTT support
+cmake -S src -B build -DLOCAL_STATE_DIR=/var -DWITH_MQTT=OFF
+
+# build without Redis support
+cmake -S src -B build -DLOCAL_STATE_DIR=/var -DWITH_REDIS=OFF
+
+# build without either
+cmake -S src -B build -DLOCAL_STATE_DIR=/var -DWITH_MQTT=OFF -DWITH_REDIS=OFF
+```
+
+CMake prints which mode it picked (`-- WITH_MQTT=ON: building with libmosquitto
+support`) at configure time.
+
+Behavior with the feature disabled:
+
+- **`WITH_MQTT=OFF`** + `[MQTT]` section in your conf → reflector logs a
+  warning and continues without publishing. Safe to leave `[MQTT]` in place.
+- **`WITH_REDIS=OFF`** + `[REDIS]` section in your conf → reflector aborts
+  startup (since Redis-mode auth would not work). Remove the `[REDIS]` section
+  before starting.
 
 ---
 

@@ -253,6 +253,8 @@ Each test writes directly to Redis via `redis-cli` inside the container, publish
 | 5 | `live:client` appears on auth | On V2 authentication, `live:client:<callsign>` hash is populated with `connected_at`, `ip`, `tg`, `codecs` |
 | 6 | `live:client` disappears on disconnect | After forceful TCP close the hash is removed within ~5 s |
 | 6b | `live:client` rich status blob | After the client sends `MsgNodeInfo`, `live:client:<callsign>.status` holds the full per-client JSON (qth, rx params, monitoredTGs) and `updated_at` |
+| 6c | `live:meta` populated | `live:meta` hash carries `mode`, `version`, `local_prefix`, `listen_port`, `cluster_tgs`, `updated_at` after a `config.changed all` republish |
+| 6d | `live:trunk` carries status blob | `live:trunk:<section>.status` is a serialized `TrunkLink::statusJson()` (host, port, connected, local/remote prefix, active_talkers, muted) |
 | 7 | Outage + resync | Stopping Redis keeps existing clients connected; on restart the reflector logs `config.changed: all` and accepts newly-written users |
 | 8 | `--import-conf-to-redis` idempotent | Running the importer twice against the same `.conf` produces identical keyspace dumps |
 | 9 | Peer node list populates + diffs | Inbound `MsgTrunkNodeList` creates `live:peer_node:<section>:<callsign>` hashes; a shrunk follow-up list DELs dropped callsigns and updates mutated fields (e.g. `tg`) |

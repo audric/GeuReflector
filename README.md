@@ -107,8 +107,9 @@ reflectors hear the same audio on TG 25 with no extra configuration.
 
 ## Build
 
-Requires the same dependencies as SvxReflector: libsigc++, OpenSSL, libjsoncpp,
-libpopt, libmosquitto. Optional: libopus, libgsm, libspeex.
+Required: libsigc++, OpenSSL, libjsoncpp, libpopt.
+Required by default (opt out with the CMake flags below): libmosquitto, libhiredis.
+Optional codecs: libopus, libgsm, libspeex.
 
 ```bash
 cd geureflector
@@ -116,6 +117,16 @@ cmake -S src -B build -DLOCAL_STATE_DIR=/var
 cmake --build build
 # binary at build/bin/svxreflector
 ```
+
+To skip the MQTT publisher or the Redis backend at compile time (e.g. on a
+host without `libmosquitto-dev` or `libhiredis-dev`):
+
+```bash
+cmake -S src -B build -DLOCAL_STATE_DIR=/var -DWITH_MQTT=OFF
+cmake -S src -B build -DLOCAL_STATE_DIR=/var -DWITH_REDIS=OFF
+```
+
+See [`docs/INSTALL.md`](docs/INSTALL.md) for the full step-by-step.
 
 ---
 

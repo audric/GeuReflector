@@ -526,6 +526,7 @@ bool Reflector::initialize(Async::Config &cfg)
       return false;
     }
     // Satellites don't participate in the trunk mesh
+    publishMetaToRedis();
     return true;
   }
 
@@ -546,6 +547,9 @@ bool Reflector::initialize(Async::Config &cfg)
   initTwinLink();
   initTwinServer();
   initSatelliteServer();
+
+  publishMetaToRedis();
+  for (auto* link : m_trunk_links) publishTrunkStatusToRedis(link);
 
   return true;
 } /* Reflector::initialize */
@@ -2618,7 +2622,10 @@ void Reflector::satelliteConnected(Async::FramedTcpConnection* con)
   auto* link = new SatelliteLink(this, con, m_satellite_secret);
   link->linkFailed.connect(
       sigc::mem_fun(*this, &Reflector::onSatelliteLinkFailed));
+  link->statusChanged.connect(
+      sigc::mem_fun(*this, &Reflector::publishSatelliteStatusToRedis));
   m_satellite_con_map[con] = link;
+  publishMetaToRedis();
 } /* Reflector::satelliteConnected */
 
 
@@ -2630,8 +2637,12 @@ void Reflector::satelliteDisconnected(Async::FramedTcpConnection* con,
   {
     std::cout << "SAT: Satellite '" << it->second->satelliteId()
               << "' disconnected" << std::endl;
+    if (m_redis != nullptr) {
+      m_redis->clearSatelliteStatus(it->second->satelliteId());
+    }
     delete it->second;
     m_satellite_con_map.erase(it);
+    publishMetaToRedis();
   }
 } /* Reflector::satelliteDisconnected */
 
@@ -2665,9 +2676,13 @@ void Reflector::processSatelliteCleanup(Async::Timer* t)
 
     std::cout << "SAT: Cleaning up timed-out satellite '"
               << link->satelliteId() << "'" << std::endl;
+    if (m_redis != nullptr) {
+      m_redis->clearSatelliteStatus(link->satelliteId());
+    }
     delete link;
     m_satellite_con_map.erase(con);
     con->disconnect();
+    publishMetaToRedis();
   }
 } /* Reflector::processSatelliteCleanup */
 
@@ -2829,6 +2844,7 @@ void Reflector::reloadClusterTgs(void)
     }
     std::cout << std::endl;
   }
+  publishMetaToRedis();
 }
 
 
@@ -2926,7 +2942,10 @@ void Reflector::onRedisConfigChanged(std::string scope)
     if (section.empty()) {
       // Full sweep — reload filters on every existing link; don't try
       // to add/remove here (startup already did that).
-      for (auto* link : m_trunk_links) link->reloadConfig();
+      for (auto* link : m_trunk_links) {
+        link->reloadConfig();
+        publishTrunkStatusToRedis(link);
+      }
     } else {
       // Per-section: check Redis for peer presence vs local state.
       auto peers = m_redis ? m_redis->loadTrunkPeers()
@@ -2977,6 +2996,76 @@ void Reflector::publishClientStatus(ReflectorClient* client)
   m_redis->pushClientStatus(cs,
       Json::writeString(wb, m_status["nodes"][cs]));
 } /* Reflector::publishClientStatus */
+
+
+void Reflector::publishMetaToRedis(void)
+{
+  if (m_redis == nullptr) return;
+
+  std::vector<std::pair<std::string,std::string>> fields;
+  fields.emplace_back("mode", m_is_satellite ? "satellite" : "reflector");
+  fields.emplace_back("version", SVXREFLECTOR_VERSION);
+
+  std::string s;
+  if (m_cfg->getValue("GLOBAL", "LOCAL_PREFIX", s)) {
+    fields.emplace_back("local_prefix", s);
+  }
+  std::string listen_port("5300");
+  m_cfg->getValue("GLOBAL", "LISTEN_PORT", listen_port);
+  fields.emplace_back("listen_port", listen_port);
+  std::string http_port;
+  if (m_cfg->getValue("GLOBAL", "HTTP_SRV_PORT", http_port)) {
+    fields.emplace_back("http_port", http_port);
+  }
+
+  std::string cluster_csv;
+  for (uint32_t tg : m_cluster_tgs) {
+    if (!cluster_csv.empty()) cluster_csv += ",";
+    cluster_csv += std::to_string(tg);
+  }
+  fields.emplace_back("cluster_tgs", cluster_csv);
+
+  if (m_is_satellite) {
+    std::string sat_of, sat_port_str, sat_id;
+    m_cfg->getValue("GLOBAL", "SATELLITE_OF", sat_of);
+    m_cfg->getValue("GLOBAL", "SATELLITE_PORT", sat_port_str);
+    m_cfg->getValue("GLOBAL", "SATELLITE_ID", sat_id);
+    if (!sat_of.empty())       fields.emplace_back("satellite_parent_host", sat_of);
+    if (!sat_port_str.empty()) fields.emplace_back("satellite_parent_port", sat_port_str);
+    if (!sat_id.empty())       fields.emplace_back("satellite_id", sat_id);
+  } else {
+    std::string sat_listen_port;
+    if (m_cfg->getValue("SATELLITE", "LISTEN_PORT", sat_listen_port)) {
+      fields.emplace_back("satellite_server_listen_port", sat_listen_port);
+      fields.emplace_back("satellite_server_connected_count",
+          std::to_string(m_satellite_con_map.size()));
+    }
+  }
+
+  m_redis->pushMeta(fields);
+} /* Reflector::publishMetaToRedis */
+
+
+void Reflector::publishSatelliteStatusToRedis(SatelliteLink* link)
+{
+  if (m_redis == nullptr || link == nullptr) return;
+  const std::string& sat_id = link->satelliteId();
+  if (sat_id.empty()) return;  // hello not yet received
+  Json::StreamWriterBuilder wb;
+  wb["indentation"] = "";
+  m_redis->pushSatelliteStatus(sat_id,
+      Json::writeString(wb, link->statusJson()));
+} /* Reflector::publishSatelliteStatusToRedis */
+
+
+void Reflector::publishTrunkStatusToRedis(TrunkLink* link)
+{
+  if (m_redis == nullptr || link == nullptr) return;
+  Json::StreamWriterBuilder wb;
+  wb["indentation"] = "";
+  m_redis->pushTrunkStatus(link->section(),
+      Json::writeString(wb, link->statusJson()));
+} /* Reflector::publishTrunkStatusToRedis */
 
 
 void Reflector::onClientAuthenticated(const std::string& callsign,
@@ -3094,6 +3183,10 @@ void Reflector::onTrunkStateChanged(const std::string& section,
   if (m_redis != nullptr)
   {
     m_redis->pushLiveTrunk(section, up ? "up" : "down", peer_id);
+    for (auto* l : m_trunk_links)
+    {
+      if (l->section() == section) { publishTrunkStatusToRedis(l); break; }
+    }
   }
 
   // When a trunk link is fully down (both directions), clear any node

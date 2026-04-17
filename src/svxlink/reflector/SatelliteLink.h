@@ -37,6 +37,14 @@ class SatelliteLink : public sigc::trackable
      */
     sigc::signal<void, SatelliteLink*> linkFailed;
 
+    /**
+     * Emitted whenever the per-satellite status (id, authentication,
+     * active TGs) changes. Reflector uses this to refresh the satellite's
+     * Redis snapshot. Carries `this`; ignore if satelliteId() is empty
+     * (hello not yet received).
+     */
+    sigc::signal<void, SatelliteLink*> statusChanged;
+
     // Events from local clients or trunk peers → send down to satellite
     void onParentTalkerStart(uint32_t tg, const std::string& callsign);
     void onParentTalkerStop(uint32_t tg);

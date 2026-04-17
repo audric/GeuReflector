@@ -7,9 +7,11 @@
 #include <json/json.h>
 #include "ReflectorMsg.h"
 
-struct mosquitto;
-
 namespace Async { class Config; }
+
+#ifdef WITH_MQTT
+
+struct mosquitto;
 
 class MqttPublisher
 {
@@ -66,5 +68,36 @@ class MqttPublisher
     MqttPublisher& operator=(const MqttPublisher&);
 
 };  /* class MqttPublisher */
+
+#else /* !WITH_MQTT */
+
+// Build-time no-op stub: lets the rest of the codebase compile and link
+// when libmosquitto is unavailable. initialize() returns false so
+// Reflector::initialize logs the existing "MQTT publisher failed to
+// initialize, continuing without MQTT" warning and proceeds with
+// m_mqtt = nullptr; every other call site is already null-guarded.
+class MqttPublisher
+{
+  public:
+    MqttPublisher(Async::Config&) {}
+    bool initialize(void) { return false; }
+    void shutdown(void) {}
+    void onTalkerStart(uint32_t, const std::string&, bool) {}
+    void onTalkerStop(uint32_t, const std::string&, bool) {}
+    void onClientConnected(const std::string&, uint32_t,
+                           const std::string&) {}
+    void onClientDisconnected(const std::string&) {}
+    void onTrunkUp(const std::string&, const std::string&,
+                   const std::string&, uint16_t) {}
+    void onTrunkDown(const std::string&, const std::string&) {}
+    void onRxUpdate(const std::string&, const Json::Value&) {}
+    void publishFullStatus(const Json::Value&) {}
+    void publishLocalNodes(
+        const std::vector<MsgTrunkNodeList::NodeEntry>&) {}
+    void publishPeerNodes(const std::string&,
+        const std::vector<MsgTrunkNodeList::NodeEntry>&) {}
+};
+
+#endif /* WITH_MQTT */
 
 #endif /* MQTT_PUBLISHER_INCLUDED */

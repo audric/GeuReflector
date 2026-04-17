@@ -189,6 +189,8 @@ void SatelliteLink::handleMsgTrunkHello(std::istream& is)
   // firewalls / NAT devices that drop idle TCP sessions.
   sendMsg(MsgTrunkHello("PARENT", "", 0, m_secret,
                          MsgTrunkHello::ROLE_PEER));
+
+  statusChanged(this);
 } /* SatelliteLink::handleMsgTrunkHello */
 
 
@@ -207,6 +209,8 @@ void SatelliteLink::handleMsgTrunkTalkerStart(std::istream& is)
 
   // Forward to trunk peers
   m_reflector->forwardSatelliteAudioToTrunks(tg, msg.callsign());
+
+  statusChanged(this);
 } /* SatelliteLink::handleMsgTrunkTalkerStart */
 
 
@@ -221,6 +225,8 @@ void SatelliteLink::handleMsgTrunkTalkerStop(std::istream& is)
 
   // Forward stop to trunk peers
   m_reflector->forwardSatelliteStopToTrunks(tg);
+
+  statusChanged(this);
 } /* SatelliteLink::handleMsgTrunkTalkerStop */
 
 

@@ -77,8 +77,10 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 #include "version/SVXREFLECTOR.h"
 #include "Reflector.h"
+#ifdef WITH_REDIS
 #include <hiredis/hiredis.h>
 #include "RedisStore.h"
+#endif
 
 
 /****************************************************************************
@@ -146,6 +148,7 @@ namespace {
   LogWriter             logwriter;
 };
 
+#ifdef WITH_REDIS
 static int import_to_redis = 0;
 static int dry_run = 0;
 
@@ -350,6 +353,7 @@ static bool runImportConfToRedis(Async::Config& cfg, bool dry_run)
   if (ctx) redisFree(ctx);
   return true;
 }
+#endif /* WITH_REDIS */
 
 
 /****************************************************************************
@@ -595,9 +599,11 @@ int main(int argc, const char *argv[])
     stdin_watch->activity.connect(sigc::ptr_fun(&stdinHandler));
   }
 
+#ifdef WITH_REDIS
   if (import_to_redis) {
     return runImportConfToRedis(cfg, dry_run != 0) ? 0 : 1;
   }
+#endif
 
   Reflector ref;
   if (ref.initialize(cfg))
@@ -664,10 +670,12 @@ static void parse_arguments(int argc, const char **argv)
 	    "Start " PROGRAM_NAME " as a daemon", NULL},
     {"version", 0, POPT_ARG_NONE, &print_version, 0,
 	    "Print the application version string", NULL},
+#ifdef WITH_REDIS
     {"import-conf-to-redis", 0, POPT_ARG_NONE, &import_to_redis, 0,
             "Import [USERS]/[PASSWORDS] from .conf into Redis, then exit", NULL},
     {"dry-run", 0, POPT_ARG_NONE, &dry_run, 0,
             "With --import-conf-to-redis: print commands without executing", NULL},
+#endif
     {NULL, 0, 0, NULL, 0}
   };
   int err;
