@@ -3,6 +3,7 @@
 
 #include <string>
 #include <cstdint>
+#include <ctime>
 #include <vector>
 #include <json/json.h>
 #include "ReflectorMsg.h"
@@ -60,6 +61,10 @@ class MqttPublisher
     std::string         m_tls_ca_cert;
     std::string         m_tls_client_cert;
     std::string         m_tls_client_key;
+
+    int                 m_last_pub_err_code   = 0;
+    time_t              m_last_pub_err_logged = 0;
+    uint64_t            m_pub_err_suppressed  = 0;
 
     void publish(const std::string& topic_suffix, const std::string& payload,
                  bool retain = false);

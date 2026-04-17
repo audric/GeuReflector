@@ -197,9 +197,38 @@ void MqttPublisher::publish(const std::string& topic_suffix,
     return;
   }
   string topic = m_topic_prefix + "/" + topic_suffix;
-  mosquitto_publish(m_mosq, nullptr, topic.c_str(),
-                    static_cast<int>(payload.size()), payload.c_str(),
-                    0, retain);
+  int rc = mosquitto_publish(m_mosq, nullptr, topic.c_str(),
+                             static_cast<int>(payload.size()), payload.c_str(),
+                             0, retain);
+  if (rc == MOSQ_ERR_SUCCESS)
+  {
+    return;
+  }
+
+  // Rate-limit: log first failure, log on error-code change, otherwise
+  // suppress for 60s. Include suppressed count when we do log.
+  const time_t now = time(nullptr);
+  const bool first        = (m_last_pub_err_logged == 0);
+  const bool code_changed = (rc != m_last_pub_err_code);
+  const bool cooldown_ok  = (now - m_last_pub_err_logged >= 60);
+
+  if (first || code_changed || cooldown_ok)
+  {
+    cerr << "*** WARNING: MQTT publish failed: topic=" << topic
+         << " rc=" << rc << " (" << mosquitto_strerror(rc) << ")";
+    if (m_pub_err_suppressed > 0)
+    {
+      cerr << " [suppressed " << m_pub_err_suppressed << " prior]";
+    }
+    cerr << endl;
+    m_last_pub_err_code   = rc;
+    m_last_pub_err_logged = now;
+    m_pub_err_suppressed  = 0;
+  }
+  else
+  {
+    ++m_pub_err_suppressed;
+  }
 }
 
 
