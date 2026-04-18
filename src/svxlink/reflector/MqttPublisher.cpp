@@ -4,6 +4,7 @@
 #include <sstream>
 #include <mosquitto.h>
 #include <AsyncConfig.h>
+#include <Log.h>
 
 using namespace std;
 
@@ -12,12 +13,12 @@ static void on_connect_cb(struct mosquitto*, void*, int rc)
 {
   if (rc == 0)
   {
-    cout << "MQTT: Connected to broker" << endl;
+    geulog::info("mqtt", "MQTT: Connected to broker");
   }
   else
   {
-    cerr << "*** WARNING: MQTT connection failed: "
-         << mosquitto_connack_string(rc) << endl;
+    geulog::warn("mqtt", "MQTT connection failed: ",
+                 mosquitto_connack_string(rc));
   }
 }
 
@@ -26,8 +27,8 @@ static void on_disconnect_cb(struct mosquitto*, void*, int rc)
 {
   if (rc != 0)
   {
-    cerr << "*** WARNING: MQTT disconnected unexpectedly (rc=" << rc
-         << "), will reconnect" << endl;
+    geulog::warn("mqtt", "MQTT disconnected unexpectedly (rc=", rc,
+                 "), will reconnect");
   }
 }
 
@@ -49,7 +50,7 @@ bool MqttPublisher::initialize(void)
   // Read required config values
   if (!m_cfg.getValue("MQTT", "HOST", m_host) || m_host.empty())
   {
-    cerr << "*** ERROR: MQTT/HOST not configured" << endl;
+    geulog::error("mqtt", "MQTT/HOST not configured");
     return false;
   }
 
@@ -60,26 +61,26 @@ bool MqttPublisher::initialize(void)
   }
   else
   {
-    cerr << "*** ERROR: MQTT/PORT not configured" << endl;
+    geulog::error("mqtt", "MQTT/PORT not configured");
     return false;
   }
 
   if (!m_cfg.getValue("MQTT", "USERNAME", m_username) || m_username.empty())
   {
-    cerr << "*** ERROR: MQTT/USERNAME not configured" << endl;
+    geulog::error("mqtt", "MQTT/USERNAME not configured");
     return false;
   }
 
   if (!m_cfg.getValue("MQTT", "PASSWORD", m_password) || m_password.empty())
   {
-    cerr << "*** ERROR: MQTT/PASSWORD not configured" << endl;
+    geulog::error("mqtt", "MQTT/PASSWORD not configured");
     return false;
   }
 
   if (!m_cfg.getValue("MQTT", "TOPIC_PREFIX", m_topic_prefix) ||
       m_topic_prefix.empty())
   {
-    cerr << "*** ERROR: MQTT/TOPIC_PREFIX not configured" << endl;
+    geulog::error("mqtt", "MQTT/TOPIC_PREFIX not configured");
     return false;
   }
 
@@ -107,7 +108,7 @@ bool MqttPublisher::initialize(void)
     if (!m_cfg.getValue("MQTT", "TLS_CA_CERT", m_tls_ca_cert) ||
         m_tls_ca_cert.empty())
     {
-      cerr << "*** ERROR: MQTT/TLS_CA_CERT required when TLS_ENABLED=1" << endl;
+      geulog::error("mqtt", "MQTT/TLS_CA_CERT required when TLS_ENABLED=1");
       return false;
     }
     m_cfg.getValue("MQTT", "TLS_CLIENT_CERT", m_tls_client_cert);
@@ -120,7 +121,7 @@ bool MqttPublisher::initialize(void)
   m_mosq = mosquitto_new(nullptr, true, nullptr);
   if (m_mosq == nullptr)
   {
-    cerr << "*** ERROR: mosquitto_new() failed" << endl;
+    geulog::error("mqtt", "mosquitto_new() failed");
     return false;
   }
 
@@ -141,8 +142,8 @@ bool MqttPublisher::initialize(void)
                                 client_cert, client_key, nullptr);
     if (rc != MOSQ_ERR_SUCCESS)
     {
-      cerr << "*** ERROR: MQTT TLS configuration failed: "
-           << mosquitto_strerror(rc) << endl;
+      geulog::error("mqtt", "MQTT TLS configuration failed: ",
+                    mosquitto_strerror(rc));
       return false;
     }
   }
@@ -154,8 +155,8 @@ bool MqttPublisher::initialize(void)
   int rc = mosquitto_loop_start(m_mosq);
   if (rc != MOSQ_ERR_SUCCESS)
   {
-    cerr << "*** ERROR: mosquitto_loop_start() failed: "
-         << mosquitto_strerror(rc) << endl;
+    geulog::error("mqtt", "mosquitto_loop_start() failed: ",
+                  mosquitto_strerror(rc));
     return false;
   }
 
@@ -163,13 +164,12 @@ bool MqttPublisher::initialize(void)
   rc = mosquitto_connect_async(m_mosq, m_host.c_str(), m_port, 60);
   if (rc != MOSQ_ERR_SUCCESS)
   {
-    cerr << "*** WARNING: MQTT initial connect failed: "
-         << mosquitto_strerror(rc)
-         << " -- will retry in background" << endl;
+    geulog::warn("mqtt", "MQTT initial connect failed: ",
+                 mosquitto_strerror(rc), " -- will retry in background");
   }
 
-  cout << "MQTT: Publisher initialized, broker=" << m_host << ":" << m_port
-       << " topic_prefix=" << m_topic_prefix << endl;
+  geulog::info("mqtt", "MQTT: Publisher initialized, broker=", m_host, ":",
+               m_port, " topic_prefix=", m_topic_prefix);
 
   return true;
 }
@@ -184,7 +184,7 @@ void MqttPublisher::shutdown(void)
     mosquitto_destroy(m_mosq);
     m_mosq = nullptr;
     mosquitto_lib_cleanup();
-    cout << "MQTT: Publisher shut down" << endl;
+    geulog::info("mqtt", "MQTT: Publisher shut down");
   }
 }
 
@@ -214,13 +214,17 @@ void MqttPublisher::publish(const std::string& topic_suffix,
 
   if (first || code_changed || cooldown_ok)
   {
-    cerr << "*** WARNING: MQTT publish failed: topic=" << topic
-         << " rc=" << rc << " (" << mosquitto_strerror(rc) << ")";
     if (m_pub_err_suppressed > 0)
     {
-      cerr << " [suppressed " << m_pub_err_suppressed << " prior]";
+      geulog::warn("mqtt", "MQTT publish failed: topic=", topic,
+                   " rc=", rc, " (", mosquitto_strerror(rc), ")",
+                   " [suppressed ", m_pub_err_suppressed, " prior]");
     }
-    cerr << endl;
+    else
+    {
+      geulog::warn("mqtt", "MQTT publish failed: topic=", topic,
+                   " rc=", rc, " (", mosquitto_strerror(rc), ")");
+    }
     m_last_pub_err_code   = rc;
     m_last_pub_err_logged = now;
     m_pub_err_suppressed  = 0;

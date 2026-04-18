@@ -411,9 +411,8 @@ void ReflectorClient::onSslConnectionReady(TcpConnection *con)
 
   if (m_con_state != STATE_EXPECT_SSL_CON_READY)
   {
-    std::cout << "*** ERROR[" << m_con->remoteHost() << ":"
-              << m_con->remotePort()
-              << "]: SSL connection ready event unexpected" << std::endl;
+    geulog::error("client", "[", m_con->remoteHost(), ":", m_con->remotePort(),
+                  "] SSL connection ready event unexpected");
     disconnect();
     return;
   }
@@ -423,9 +422,9 @@ void ReflectorClient::onSslConnectionReady(TcpConnection *con)
   Async::SslX509 peer_cert(con->sslPeerCertificate());
   if (peer_cert.isNull())
   {
-    std::cout << m_con->remoteHost() << ":" << m_con->remotePort()
-              << ": No client certificate. Requesting Certificate "
-                 "Signing Request from client." << std::endl;
+    geulog::info("client", m_con->remoteHost(), ":", m_con->remotePort(),
+                 ": No client certificate. Requesting Certificate "
+                 "Signing Request from client.");
     sendMsg(MsgClientCsrRequest());
     m_con_state = STATE_EXPECT_CSR;
     return;
@@ -442,17 +441,15 @@ void ReflectorClient::onSslConnectionReady(TcpConnection *con)
     //return;
   }
 
-  std::cout << "------------- Client Certificate --------------" << std::endl;
+  geulog::info("client", "------------- Client Certificate --------------");
   peer_cert.print();
-  std::cout << "-----------------------------------------------" << std::endl;
+  geulog::info("client", "-----------------------------------------------");
 
   std::string callsign = peer_cert.commonName();
   if (!m_reflector->callsignOk(callsign))
   {
-    std::cout << "*** WARNING[" << m_con->remoteHost() << ":"
-              << m_con->remotePort()
-              << "]: client certificate has invalid CN (callsign)"
-              << std::endl;
+    geulog::warn("client", "[", m_con->remoteHost(), ":", m_con->remotePort(),
+                 "] client certificate has invalid CN (callsign)");
     disconnect();
     return;
   }
@@ -471,7 +468,7 @@ void ReflectorClient::onSslConnectionReady(TcpConnection *con)
   m_renew_cert_timer.setTimeout(renew_time);
   m_renew_cert_timer.start();
 
-  std::cout << callsign << ": " << peer_cert.subjectNameString() << std::endl;
+  geulog::info("client", callsign, ": ", peer_cert.subjectNameString());
   connectionAuthenticated(callsign);
 } /* ReflectorClient::onSslConnectionReady */
 
@@ -662,9 +659,8 @@ void ReflectorClient::handleMsgCABundleRequest(std::istream& is)
 
   if (m_con_state != STATE_EXPECT_START_ENCRYPTION)
   {
-    std::cout << "*** ERROR[" << m_con->remoteHost() << ":"
-              << m_con->remotePort() << "]: Unexpected MsgCABundleRequest"
-              << std::endl;
+    geulog::error("client", "[", m_con->remoteHost(), ":", m_con->remotePort(),
+                  "] Unexpected MsgCABundleRequest");
     disconnect();
     return;
   }
@@ -683,9 +679,8 @@ void ReflectorClient::handleMsgStartEncryptionRequest(std::istream& is)
 
   if (m_con_state != STATE_EXPECT_START_ENCRYPTION)
   {
-    std::cout << "*** ERROR[" << m_con->remoteHost() << ":"
-              << m_con->remotePort()
-              << "]: Unexpected MsgStartEncryptionRequest" << std::endl;
+    geulog::error("client", "[", m_con->remoteHost(), ":", m_con->remotePort(),
+                  "] Unexpected MsgStartEncryptionRequest");
     disconnect();
     return;
   }
@@ -693,15 +688,14 @@ void ReflectorClient::handleMsgStartEncryptionRequest(std::istream& is)
   MsgStartEncryptionRequest msg;
   if (!msg.unpack(is))
   {
-    std::cerr << "*** ERROR[" << m_con->remoteHost() << ":"
-              << m_con->remotePort()
-              << "]: Could not unpack MsgStartEncryptionRequest" << std::endl;
+    geulog::error("client", "[", m_con->remoteHost(), ":", m_con->remotePort(),
+                  "] Could not unpack MsgStartEncryptionRequest");
     disconnect();
     return;
   }
 
-  std::cout << m_con->remoteHost() << ":" << m_con->remotePort()
-            << ": Starting encryption" << std::endl;
+  geulog::info("client", m_con->remoteHost(), ":", m_con->remotePort(),
+               ": Starting encryption");
 
   m_con->setMaxRxFrameSize(ReflectorMsg::MAX_SSL_SETUP_FRAME_SIZE);
   sendMsg(MsgStartEncryption());
@@ -714,9 +708,8 @@ void ReflectorClient::handleMsgAuthResponse(std::istream& is)
 {
   if (m_con_state != STATE_EXPECT_AUTH_RESPONSE)
   {
-    std::cerr << "*** ERROR[" << m_con->remoteHost() << ":"
-              << m_con->remotePort()
-              << "]: Authentication response unexpected" << std::endl;
+    geulog::error("client", "[", m_con->remoteHost(), ":", m_con->remotePort(),
+                  "] Authentication response unexpected");
     sendError("Authentication response unexpected");
     return;
   }
@@ -724,20 +717,17 @@ void ReflectorClient::handleMsgAuthResponse(std::istream& is)
   MsgAuthResponse msg;
   if (!msg.unpack(is))
   {
-    std::cerr << "*** ERROR[" << m_con->remoteHost() << ":"
-              << m_con->remotePort()
-              << "]: Could not unpack MsgAuthResponse" << std::endl;
+    geulog::error("client", "[", m_con->remoteHost(), ":", m_con->remotePort(),
+                  "] Could not unpack MsgAuthResponse");
     sendError("Illegal MsgAuthResponse protocol message received");
     return;
   }
 
   if (!m_reflector->callsignOk(msg.callsign()))
   {
-    std::cerr << "*** ERROR[" << m_con->remoteHost() << ":"
-              << m_con->remotePort()
-              << "]: Invalid node callsign '" << msg.callsign()
-              << "' in MsgAuthResponse"
-              << std::endl;
+    geulog::error("client", "[", m_con->remoteHost(), ":", m_con->remotePort(),
+                  "] Invalid node callsign '", msg.callsign(),
+                  "' in MsgAuthResponse");
     sendError("Invalid callsign");
     return;
   }
@@ -764,14 +754,13 @@ void ReflectorClient::handleMsgAuthResponse(std::istream& is)
   string auth_key = lookupUserKey(msg.callsign());
   if (!auth_key.empty() && msg.verify(auth_key, m_auth_challenge))
   {
-    std::cout << msg.callsign() << ": Received valid auth key" << std::endl;
+    geulog::info("client", msg.callsign(), ": Received valid auth key");
     connectionAuthenticated(msg.callsign());
   }
   else
   {
-    std::cerr << "*** ERROR[" << m_con->remoteHost() << ":"
-              << m_con->remotePort() << "]: Authentication failed for user '"
-              << msg.callsign() << "'" << std::endl;
+    geulog::error("client", "[", m_con->remoteHost(), ":", m_con->remotePort(),
+                  "] Authentication failed for user '", msg.callsign(), "'");
     sendError("Access denied");
   }
 } /* ReflectorClient::handleMsgAuthResponse */
@@ -791,8 +780,8 @@ void ReflectorClient::handleMsgClientCsr(std::istream& is)
 
   if ((m_con_state != STATE_CONNECTED) && (m_con_state != STATE_EXPECT_CSR))
   {
-    std::cerr << "*** ERROR[" << idss.str()
-              << "]: Certificate Signing Request unexpected" << std::endl;
+    geulog::error("client", "[", idss.str(),
+                  "] Certificate Signing Request unexpected");
     sendError("Certificate Signing Request unexpected");
     return;
   }
@@ -800,19 +789,19 @@ void ReflectorClient::handleMsgClientCsr(std::istream& is)
   MsgClientCsr msg;
   if (!msg.unpack(is))
   {
-    std::cout << "*** ERROR[" << idss.str()
-              << "]: Could not unpack MsgClientCsr" << std::endl;
+    geulog::error("client", "[", idss.str(),
+                  "] Could not unpack MsgClientCsr");
     sendError("Illegal MsgClientCsr protocol message received");
     return;
   }
 
-  std::cerr << idss.str() << ": Received CSR" << std::endl;
+  geulog::info("client", idss.str(), ": Received CSR");
 
   Async::SslCertSigningReq req;
   if (!req.readPem(msg.csrPem()) || req.isNull())
   {
-    std::cerr << "*** ERROR[" << idss.str() << "]: Invalid CSR received:\n"
-              << msg.csrPem() << std::endl;
+    geulog::error("client", "[", idss.str(), "] Invalid CSR received:\n",
+                  msg.csrPem());
     sendError("Invalid CSR received");
     return;
   }
@@ -820,7 +809,7 @@ void ReflectorClient::handleMsgClientCsr(std::istream& is)
   auto errstr = m_reflector->checkCsr(req);
   if (!errstr.empty())
   {
-    std::cerr << "*** ERROR[" << idss.str() << "]: " << errstr << std::endl;
+    geulog::error("client", "[", idss.str(), "] ", errstr);
     sendError(errstr);
     return;
   }
@@ -833,14 +822,14 @@ void ReflectorClient::handleMsgClientCsr(std::istream& is)
       ) &&
       sendClientCert(cert))
   {
-    std::cout << idss.str() << ": Sent certificate to peer" << std::endl;
+    geulog::info("client", idss.str(), ": Sent certificate to peer");
     //cert.print();
     m_con_state = STATE_EXPECT_DISCONNECT;
   }
   else if (m_con_state == STATE_EXPECT_CSR)
   {
-    std::cout << idss.str() << ": No valid certificate found matching CSR. "
-                 "Sending authentication challenge." << std::endl;
+    geulog::info("client", idss.str(), ": No valid certificate found matching CSR. "
+                 "Sending authentication challenge.");
     sendAuthChallenge();
     m_con_state = STATE_EXPECT_AUTH_RESPONSE;
   }
