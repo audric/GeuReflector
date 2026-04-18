@@ -1707,6 +1707,49 @@ class TestTrunkIntegration(unittest.TestCase):
             rx.close()
 
     # ------------------------------------------------------------------
+    # Test 27b: Trunk peer's roster visible in /status.trunks[X].nodes
+    # ------------------------------------------------------------------
+    def test_27b_trunk_peer_roster_in_status(self):
+        """A client logged in on the primary reflector appears under
+        /status.trunks.<SECTION>.nodes on a trunk peer — symmetric with the
+        twin-partner roster (trunks should expose the same info we already
+        push to MQTT and Redis).
+        """
+        # Pick any peer that trunks to the primary
+        peer = next(n for n in REFLECTOR_NAMES if n != self.PRIMARY)
+        section = T.trunk_section_name(peer, self.PRIMARY)
+
+        client = ClientPeer()
+        try:
+            port = T.mapped_client_port(self.PRIMARY)
+            client.connect(HOST, port)
+            client.authenticate(callsign=CLIENT_CALLSIGN,
+                                password=CLIENT_PASSWORD)
+
+            def callsign_on_peer():
+                status = get_status(*_http(peer))
+                trunk = status.get("trunks", {}).get(section, {})
+                nodes = trunk.get("nodes", [])
+                return any(n.get("callsign") == CLIENT_CALLSIGN for n in nodes)
+
+            wait_until(callsign_on_peer, timeout=5.0, interval=0.25,
+                msg=f"{CLIENT_CALLSIGN} did not appear in {peer}'s "
+                    f"/status.trunks.{section}.nodes after login on "
+                    f"{self.PRIMARY}")
+        finally:
+            client.close()
+
+        def callsign_gone_from_peer():
+            status = get_status(*_http(peer))
+            trunk = status.get("trunks", {}).get(section, {})
+            nodes = trunk.get("nodes", [])
+            return not any(n.get("callsign") == CLIENT_CALLSIGN for n in nodes)
+
+        wait_until(callsign_gone_from_peer, timeout=5.0, interval=0.25,
+            msg=f"{CLIENT_CALLSIGN} still in {peer}'s "
+                f"/status.trunks.{section}.nodes after disconnect")
+
+    # ------------------------------------------------------------------
     # Test 28: MQTT client connect/disconnect events
     # ------------------------------------------------------------------
     def test_28_mqtt_client_connect_disconnect(self):

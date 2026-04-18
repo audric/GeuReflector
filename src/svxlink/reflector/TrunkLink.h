@@ -204,6 +204,11 @@ class TrunkLink : public sigc::trackable
     // TGs currently held by this specific trunk peer (for scoped cleanup)
     std::set<uint32_t>  m_peer_active_tgs;
 
+    // Most recent MsgTrunkNodeList we received from the peer, sanitized.
+    // Surfaced in statusJson() so /status can attribute nodes to a peer.
+    // Cleared when the link goes fully inactive.
+    std::vector<MsgTrunkNodeList::NodeEntry> m_partner_nodes;
+
     // TGs the peer has shown interest in (sent TalkerStart for).
     // Maps TG number to last activity timestamp.  Entries expire after
     // PEER_INTEREST_TIMEOUT_S seconds of inactivity.
