@@ -342,7 +342,6 @@ class Reflector : public sigc::trackable
     std::map<std::string, std::set<std::string>> m_peer_node_cache;
     std::set<std::string>       m_redis_trunk_sections; // sections loaded from Redis
     std::set<uint32_t>          m_cluster_tgs;
-    bool                        m_trunk_debug = false;
     Async::Timer                m_nodelist_timer;
     static const size_t TRUNK_MAX_PENDING_CONS = 5;
 
