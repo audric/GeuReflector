@@ -300,7 +300,8 @@ int ReflectorClient::sendMsg(const ReflectorMsg& msg)
       return ret;
     }
   }
-  geulog::debug("client", "sendMsg: write failed: ", strerror(errno),
+  geulog::debug("client", "[", m_con->remoteHost(), ":", m_con->remotePort(),
+                "] sendMsg: write failed: ", strerror(errno),
                 " (msg type ", msg.type(), ")");
   disconnect();
   return -1;

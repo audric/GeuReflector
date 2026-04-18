@@ -759,32 +759,42 @@ static void sighup_handler(int signal)
 {
   if (logfile_name == 0)
   {
-    geulog::info("core", "Ignoring SIGHUP");
+    static const char MSG[] = "Ignoring SIGHUP\n";
+    (void)::write(STDERR_FILENO, MSG, sizeof(MSG) - 1);
     return;
   }
-  geulog::info("core", "SIGHUP received");
+  static const char MSG[] = "SIGHUP received\n";
+  (void)::write(STDERR_FILENO, MSG, sizeof(MSG) - 1);
   logwriter.reopenLogfile();
 } /* sighup_handler */
 
 
 static void sigterm_handler(int signal)
 {
-  const char *signame = 0;
   switch (signal)
   {
     case SIGTERM:
-      signame = "SIGTERM";
+    {
+      static const char MSG[] =
+          "NOTICE: SIGTERM received. Shutting down application...\n";
+      (void)::write(STDERR_FILENO, MSG, sizeof(MSG) - 1);
       break;
+    }
     case SIGINT:
-      signame = "SIGINT";
+    {
+      static const char MSG[] =
+          "NOTICE: SIGINT received. Shutting down application...\n";
+      (void)::write(STDERR_FILENO, MSG, sizeof(MSG) - 1);
       break;
+    }
     default:
-      signame = "Unknown signal";
+    {
+      static const char MSG[] =
+          "NOTICE: Unknown signal received. Shutting down application...\n";
+      (void)::write(STDERR_FILENO, MSG, sizeof(MSG) - 1);
       break;
+    }
   }
-
-  geulog::info("core", "NOTICE: ", signame,
-               " received. Shutting down application...");
   Application::app().quit();
 } /* sigterm_handler */
 

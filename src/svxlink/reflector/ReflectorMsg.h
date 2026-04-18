@@ -1439,13 +1439,13 @@ class MsgTrunkHello : public ReflectorMsgBase<115>
       int rc = RAND_bytes(&m_nonce.front(), NONCE_LEN);
       if (rc != 1)
       {
-        geulog::warn("core", "RAND_bytes failed in MsgTrunkHello");
+        geulog::warn("trunk", "RAND_bytes failed in MsgTrunkHello");
         m_nonce.clear();
         return;
       }
       if (!calcHMAC(m_digest, secret, m_nonce.data(), m_nonce.size()))
       {
-        geulog::error("core", "HMAC calculation failed in MsgTrunkHello");
+        geulog::error("trunk", "HMAC calculation failed in MsgTrunkHello");
       }
     }
 

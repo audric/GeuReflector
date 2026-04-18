@@ -216,7 +216,14 @@ boolean flag could not do.
   rules a line out, the call site checks one `std::atomic<int>` and
   returns without formatting arguments. Debug lines on per-frame paths
   cost nothing at runtime when the level is `warn`.
-- **The worker never drops.** If the queue grows unboundedly (writer
-  consumer is paused), the process accumulates memory rather than
-  losing lines. In practice this does not happen; if you ever observe
-  it, it is a sign of a genuinely stuck log consumer.
+- **The worker never drops a line intentionally.** Queue growth is
+  unbounded — if the log consumer stalls (full pipe, paused
+  `logrotate`), memory grows rather than lines being dropped. A rare
+  short `write(2)` to a stalled pipe can truncate the tail of one
+  line; the line header is preserved.
+- **Argument expressions are still evaluated** on every call, even when
+  the subsystem is filtered out — the gate skips formatting, not
+  evaluation. Call sites doing heavy work inside the argument list (an
+  RPC, a large string format) should guard with an explicit
+  `geulog::shouldLog(...)` check first. Not a concern at current call
+  sites (all pass cheap member accesses).

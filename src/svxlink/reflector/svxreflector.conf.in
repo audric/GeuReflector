@@ -97,7 +97,19 @@ CERT_CA_HOOK=@SVX_SHARE_INSTALL_DIR@/ca-hook.py
 #
 #LOCAL_PREFIX=1
 #TRUNK_LISTEN_PORT=5302
-#TRUNK_DEBUG=0              # verbose trunk logging (high log volume — disable after diagnosis)
+# Per-subsystem logging levels. Comma-separated <subsystem>=<level> pairs.
+# '*' sets the default for subsystems not explicitly listed.
+# Levels: trace, debug, info, warn, error, off.
+# Subsystems: trunk, satellite, twin, client, mqtt, redis, core.
+#
+# Absent or empty => *=info.
+# Live-reloadable via the command PTY:
+#     echo "LOG trunk=debug" > /dev/shm/reflector_ctrl
+#     echo "LOG SHOW"        > /dev/shm/reflector_ctrl
+#     echo "LOG RESET"       > /dev/shm/reflector_ctrl
+#
+# TRUNK_DEBUG is obsolete; use LOG=trunk=debug instead.
+#LOG=*=info
 
 #[TRUNK_AB]
 #HOST=reflector-b.example.com

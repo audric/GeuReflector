@@ -33,6 +33,7 @@ std::condition_variable g_queue_cv;
 std::deque<std::string> g_queue;
 bool g_stop = false;              // guarded by g_queue_mu
 std::thread g_worker;
+std::atomic<bool> g_worker_active{false};
 
 int subIndex(const char* sub) {
   for (std::size_t i = 0; i < NUM_SUBSYSTEMS; ++i) {
@@ -95,6 +96,7 @@ void startWorker() {
     g_stop = false;
   }
   g_worker = std::thread(workerLoop);
+  g_worker_active.store(true, std::memory_order_release);
 }
 
 } // anonymous namespace
@@ -118,6 +120,18 @@ void enqueue(Level lvl, const char* sub, std::string&& msg) {
   line += "] ";
   line += msg;
   line += "\n";
+
+  if (!g_worker_active.load(std::memory_order_acquire)) {
+    // Worker not running (pre-configure, post-shutdown, or configure
+    // aborted before startWorker). Write synchronously so startup
+    // errors and --version output still reach the sysop. warn/error
+    // go to stderr; info/debug/trace to stdout (matches the
+    // pre-facade std::cerr / std::cout split).
+    int fd = (lvl >= Level::Warn) ? STDERR_FILENO : STDOUT_FILENO;
+    (void)::write(fd, line.data(), line.size());
+    return;
+  }
+
   {
     std::lock_guard<std::mutex> lock(g_queue_mu);
     g_queue.push_back(std::move(line));
@@ -191,6 +205,7 @@ void shutdown() {
   }
   g_queue_cv.notify_all();
   if (g_worker.joinable()) g_worker.join();
+  g_worker_active.store(false, std::memory_order_release);
 }
 
 bool setLevel(const std::string& sub, const std::string& lvl_s) {

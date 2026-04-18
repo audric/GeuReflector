@@ -524,18 +524,6 @@ bool Reflector::initialize(Async::Config &cfg)
     return true;
   }
 
-  // TRUNK_DEBUG — verbose logging for diagnosing trunk connection issues
-  std::string trunk_debug_str;
-  if (cfg.getValue("GLOBAL", "TRUNK_DEBUG", trunk_debug_str))
-  {
-    m_trunk_debug = (trunk_debug_str == "1" || trunk_debug_str == "true"
-                     || trunk_debug_str == "yes");
-    if (m_trunk_debug)
-    {
-      geulog::info("core", "Trunk debug logging enabled");
-    }
-  }
-
   initTrunkLinks();
   initTrunkServer();
   initTwinLink();

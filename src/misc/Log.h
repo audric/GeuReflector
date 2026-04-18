@@ -71,6 +71,17 @@ namespace detail {
   }
 }
 
+// NOTE: argument expressions passed to geulog::debug/info/... are
+// evaluated at the call site BEFORE shouldLog() runs. The gate skips
+// formatting (the ostringstream + concat), not evaluation. For call
+// sites where argument evaluation is expensive, guard with an explicit
+// shouldLog() check:
+//
+//   if (geulog::shouldLog("trunk", geulog::Level::Debug))
+//     geulog::debug("trunk", expensive_rpc_call());
+//
+// All current call sites pass cheap member accesses, so this is only
+// a concern for future migrations with non-trivial argument work.
 #define _LOG_DEFINE(fnname, lvlenum) \
   template <typename... Args> \
   inline void fnname(const char* sub, Args&&... args) { \
