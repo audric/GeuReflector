@@ -512,6 +512,22 @@ Json::Value TrunkLink::statusJson(void) const
   for (const auto& cs : m_muted_callsigns) muted_arr.append(cs);
   obj["muted"] = muted_arr;
 
+  Json::Value nodes_arr(Json::arrayValue);
+  for (const auto& n : m_partner_nodes)
+  {
+    Json::Value entry(Json::objectValue);
+    entry["callsign"] = n.callsign;
+    entry["tg"]       = static_cast<Json::UInt>(n.tg);
+    if (n.lat != 0.0f || n.lon != 0.0f)
+    {
+      entry["lat"] = n.lat;
+      entry["lon"] = n.lon;
+    }
+    if (!n.qth_name.empty()) entry["qth_name"] = n.qth_name;
+    nodes_arr.append(entry);
+  }
+  obj["nodes"] = nodes_arr;
+
   return obj;
 } /* TrunkLink::statusJson */
 
@@ -644,6 +660,8 @@ void TrunkLink::onInboundDisconnected(Async::FramedTcpConnection* con,
   // Emit after state is cleared so isActive()-based cleanup in consumers
   // (e.g. Redis peer-node mirror) sees the correct post-disconnect state.
   m_reflector->onTrunkStateChanged(m_section, peerId(), "inbound", false);
+
+  if (!isActive()) m_partner_nodes.clear();
 } /* TrunkLink::onInboundDisconnected */
 
 
@@ -765,6 +783,8 @@ void TrunkLink::onDisconnected(TcpConnection* con,
   // Emit after state is cleared so isActive()-based cleanup in consumers
   // sees the correct post-disconnect state.
   m_reflector->onTrunkStateChanged(m_section, peerId(), "outbound", false);
+
+  if (!isActive()) m_partner_nodes.clear();
 
   // TcpPrioClient auto-reconnects — nothing else to do
 } /* TrunkLink::onDisconnected */
@@ -1450,6 +1470,8 @@ void TrunkLink::onPairedInboundDisconnected(Async::FramedTcpConnection* con,
   m_ib_cons.erase(m_ib_cons.begin() + idx);
   m_ib_states.erase(m_ib_states.begin() + idx);
   // Reflector owns the connection object — do NOT delete it here.
+
+  if (!isActive()) m_partner_nodes.clear();
 } /* TrunkLink::onPairedInboundDisconnected */
 
 
@@ -1494,6 +1516,8 @@ void TrunkLink::onPairedOutboundDisconnected(FramedTcpClient* client,
   {
     m_sticky_ob_idx = (idx + 1) % m_ob_cons.size();
   }
+
+  if (!isActive()) m_partner_nodes.clear();
   // TcpPrioClient auto-reconnects; sticky may switch back here next send.
 } /* TrunkLink::onPairedOutboundDisconnected */
 
@@ -1738,6 +1762,7 @@ void TrunkLink::handleMsgTrunkNodeList(std::istream& is)
   }
 
   m_reflector->onPeerNodeList(peerId(), sanitized);
+  m_partner_nodes = std::move(sanitized);
 } /* TrunkLink::handleMsgTrunkNodeList */
 
 
