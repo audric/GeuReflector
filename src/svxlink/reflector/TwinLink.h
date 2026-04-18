@@ -111,6 +111,11 @@ class TwinLink
     uint16_t partnerPort(void) const { return m_peer_port; }
     const std::string& secret(void) const { return m_secret; }
     const std::string& localPrefix(void) const { return m_local_prefix; }
+    const std::string& peerId(void) const
+    {
+      return m_peer_id_received.empty() ? m_peer_id_config
+                                        : m_peer_id_received;
+    }
 
     Json::Value statusJson(void) const;
 
@@ -158,6 +163,7 @@ class TwinLink
     void handleMsgTrunkFlush(std::istream& is);
     void handleMsgTrunkHeartbeat(void);
     void handleMsgTrunkNodeList(std::istream& is);
+    void clearPartnerRosterIfInactive(void);
     void handleMsgTwinExtTalkerStart(std::istream& is);
     void handleMsgTwinExtTalkerStop(std::istream& is);
     void heartbeatTick(Async::Timer*);

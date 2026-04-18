@@ -392,6 +392,8 @@ void TwinLink::onDisconnected(TcpConnection* /*con*/,
     m_heartbeat_timer.setEnable(false);
   }
 
+  clearPartnerRosterIfInactive();
+
   // TcpPrioClient auto-reconnects — nothing else to do
 } /* TwinLink::onDisconnected */
 
@@ -652,8 +654,24 @@ void TwinLink::handleMsgTrunkNodeList(std::istream& is)
                  " node list entrie(s) with empty/invalid callsign");
   }
 
+  // Fan out to MQTT / Redis via the same path TrunkLink uses, keyed on
+  // the twin's peer_id.  Keeps /status, MQTT and Redis consistent.
+  m_reflector->onPeerNodeList(peerId(), sanitized);
   m_partner_nodes = std::move(sanitized);
 } /* TwinLink::handleMsgTrunkNodeList */
+
+
+void TwinLink::clearPartnerRosterIfInactive(void)
+{
+  if (isActive()) return;
+  if (m_partner_nodes.empty()) return;
+  m_partner_nodes.clear();
+  // Empty roster drives onPeerNodeList's tombstone cleanup — it will
+  // clearPeerNode each callsign previously cached under peerId() in
+  // Redis and publish an empty list to MQTT.
+  m_reflector->onPeerNodeList(peerId(),
+      std::vector<MsgTrunkNodeList::NodeEntry>{});
+} /* TwinLink::clearPartnerRosterIfInactive */
 
 
 void TwinLink::heartbeatTick(Async::Timer* /*t*/)
@@ -697,6 +715,8 @@ void TwinLink::heartbeatTick(Async::Timer* /*t*/)
   {
     m_heartbeat_timer.setEnable(false);
   }
+
+  clearPartnerRosterIfInactive();
 } /* TwinLink::heartbeatTick */
 
 
