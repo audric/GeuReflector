@@ -489,6 +489,9 @@ The PTY path is set by `COMMAND_PTY` in `[GLOBAL]` (default
   format, configuration reference, and TLS setup
 - [`docs/REDIS.md`](docs/REDIS.md) — Redis-backed config store: schema,
   dashboard operations, pub/sub, migration from .conf
+- [`docs/LOGGING.md`](docs/LOGGING.md) — leveled, per-subsystem,
+  live-reloadable logger: `LOG=` config, PTY commands, Docker vs.
+  `--logfile` deployments, migration from `TRUNK_DEBUG`
 - [`docs/MESSAGING_IDEAS.md`](docs/MESSAGING_IDEAS.md) — ideas for consuming
   MQTT events via Telegram, SMS, Discord, webhooks, dashboards, and more
 - [`docs/DESIGN_SATELLITE_AND_CLUSTER.md`](docs/DESIGN_SATELLITE_AND_CLUSTER.md) — design
