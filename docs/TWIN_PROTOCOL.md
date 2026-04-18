@@ -1,8 +1,9 @@
 # GeuReflector — Twin (HA-Pair) Protocol
 
-> **Status:** Implemented in v1.3.x+twin1. See §Implementation for
+> **Status:** Implemented in v1.3.x+twin2. See §Implementation for
 > what shipped and `tests/test_twin.py` for integration test coverage
-> (8 tests including an end-to-end V2-client audio-mirror path).
+> (11 tests including end-to-end V2-client audio mirroring and
+> partner-roster propagation into `/status.twin.nodes`).
 
 ## Motivation
 

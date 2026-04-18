@@ -5,8 +5,8 @@
 The integration tests verify the trunk protocol, satellite links, twin (HA-pair) protocol, Redis-backed config store, and end-to-end audio routing by spinning up reflector meshes in Docker Compose and connecting fake peers and clients from a Python test harness.
 
 `run_tests.sh` runs in **two phases**:
-1. A 3-reflector trunk mesh + a satellite-mode reflector exercising `test_trunk.py` (31 tests).
-2. A 4-reflector twin topology exercising `test_twin.py` (10 tests).
+1. A 3-reflector trunk mesh + a satellite-mode reflector exercising `test_trunk.py` (32 tests).
+2. A 4-reflector twin topology exercising `test_twin.py` (11 tests).
 
 A separate harness (`run_redis_tests.sh`) runs `test_redis.py` (13 tests) against a single-reflector + Redis stack. See [Redis Integration Tests](#redis-integration-tests) below.
 
@@ -22,11 +22,11 @@ bash run_tests.sh
 This will:
 1. Generate the default configs and `docker-compose.test.yml` from `topology.py`
 2. Build and start the 3-reflector mesh
-3. Run 31 automated trunk/satellite/MQTT tests (`test_trunk.py`)
+3. Run 32 automated trunk/satellite/MQTT tests (`test_trunk.py`)
 4. Enter an interactive prompt to manually test any TG number
 5. Tear down the default mesh
 6. Regenerate with `--topology twin` (4-reflector twin topology)
-7. Rebuild the mesh and run 10 automated twin-protocol tests (`test_twin.py`)
+7. Rebuild the mesh and run 11 automated twin-protocol tests (`test_twin.py`)
 8. Restore the default topology files and tear everything down
 
 To regenerate configs without running tests:
@@ -212,6 +212,7 @@ each filter independently of the other trunk fixtures.
 | # | Test | What it verifies |
 |---|------|-----------------|
 | 27 | `MsgTrunkNodeList` emission | Connecting a V2 client triggers a debounced node-list send to trunk peers; the harness receives a `MsgTrunkNodeList` (type 121) containing the new client |
+| 27b | Trunk peer roster in `/status` | A client authenticated on the primary reflector appears in a peer's `/status.trunks[SECTION].nodes`; disappears after disconnect |
 
 ### Twin Protocol (HA-pair)
 
@@ -229,6 +230,7 @@ Run separately on the twin topology (`test_twin.py`). See `docs/TWIN_PROTOCOL.md
 | 8 | Audio mirror end-to-end | A V2 client on ref1 transmits on TG 26201; a V2 client on ref2 receives UDP audio and a flush marker, exercising the full `TGHandler.talkerUpdated` → `TwinLink.onLocalAudio` → `MsgTrunkAudio` → `broadcastUdpMsg` path |
 | 9 | Satellite + twin handshake | A satellite connects to ref1 (the `TWIN_SATELLITE_PARENT`) and is listed in `/status.satellites` after the two-way hello |
 | 10 | Satellite sees twin-mirrored audio | A V2 client on ref2 transmits on TG 26201; the satellite attached to ref1 receives `TalkerStart` and `MsgTrunkAudio` — verifies `TwinLink::handleMsgTrunkAudio` re-forwards to satellites, not just talker state |
+| 11 | Twin partner roster in `/status` | A V2 client authenticated on ref1 appears under ref2's `/status.twin.nodes`; disappears after disconnect. Exercises `MsgTrunkNodeList` over the `[TWIN]` socket and `TwinLink::m_partner_nodes` |
 
 ## Redis Integration Tests
 

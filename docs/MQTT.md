@@ -130,6 +130,36 @@ Down payload:
 {}
 ```
 
+### Node lists
+
+Published when the local node roster changes (debounced 500 ms after
+client login / logout / TG change) and when a roster arrives from a
+remote peer.
+
+```
+{TOPIC_PREFIX}/nodes/local           # this reflector's connected clients
+{TOPIC_PREFIX}/nodes/<peer_id>       # roster mirrored from a trunk peer
+                                     # or [TWIN] partner
+```
+
+Payload:
+```json
+{
+  "timestamp": 1712345678,
+  "nodes": [
+    {"callsign": "ON4ABC", "tg": 2620, "qth_name": "Brussels",
+     "lat": 50.85, "lon": 4.35},
+    {"callsign": "IK1XYZ", "tg": 2221}
+  ]
+}
+```
+
+`lat`, `lon`, and `qth_name` are omitted when the node has not supplied
+them. For trunk peers `<peer_id>` comes from the peer's `PEER_ID` (or
+section name as fallback); for `[TWIN]` partners the id is `TWIN`.
+Both topics are published with **retain** enabled so late-joining
+subscribers see the last-known roster immediately.
+
 ### Periodic full status
 
 Published at the configured `STATUS_INTERVAL` (default every 1 second). The
@@ -153,6 +183,8 @@ subscribers immediately receive the last known state.
 | `client/.../disconnected` | 0 | No |
 | `client/.../rx` | 0 | No |
 | `trunk/...` | 0 | No |
+| `nodes/local` | 0 | **Yes** |
+| `nodes/<peer_id>` | 0 | **Yes** |
 | `status` | 0 | **Yes** |
 
 QoS 0 (fire-and-forget) is used throughout. Event messages are ephemeral — a

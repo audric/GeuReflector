@@ -61,9 +61,12 @@ automatically.
   `[TRUNK_x]` section, with a shared filter syntax (exact, `24*` prefix,
   `2427-2438` range). Reloadable at runtime via the PTY admin channel
 - **Node-list broadcasting** — on local client login / logout / TG change the
-  reflector debounces (500 ms) and emits a `MsgTrunkNodeList` to every peer
-  carrying callsign + current TG + optional lat/lon/QTH. Inbound lists are
-  republished via MQTT under `nodes/<peer_id>`; the local list under
+  reflector debounces (500 ms) and emits a `MsgTrunkNodeList` to every trunk
+  peer (and, when configured, the `[TWIN]` partner) carrying callsign +
+  current TG + optional lat/lon/QTH. Inbound lists from trunk peers or twin
+  partners are republished via MQTT under `nodes/<peer_id>`, Redis under
+  `live:peer_node:…`, and surfaced in `/status` under
+  `trunks[SECTION].nodes` / `twin.nodes`. The local list is published on
   `nodes/local`
 - **PTY admin channel** — live commands written to `/dev/shm/reflector_ctrl`:
   `TRUNK MUTE|UNMUTE <section> <callsign>` (applied on the inbound audio path),
@@ -415,8 +418,27 @@ static configuration in a single response:
       "active_talkers": {
         "222": "IW1GEU",
         "25": "SM0ABC"
-      }
+      },
+      "muted": [],
+      "nodes": [
+        {"callsign": "SM0ABC", "tg": 25},
+        {"callsign": "SM1DEF", "tg": 2}
+      ]
     }
+  },
+  "twin": {
+    "host": "reflector-partner.example.com",
+    "port": 5304,
+    "connected": true,
+    "outbound_connected": true,
+    "outbound_hello": true,
+    "inbound_connected": true,
+    "inbound_hello": true,
+    "local_prefix": "1",
+    "peer_id": "TWIN",
+    "nodes": [
+      {"callsign": "IW1XYZ", "tg": 1234}
+    ]
   },
   "satellites": {
     "my-satellite": {
@@ -433,8 +455,10 @@ static configuration in a single response:
 ```
 
 `active_talkers` lists TGs with an active remote talker at query time (both
-prefix-based and cluster TGs). `satellites` and `satellite_server` appear only
-when applicable.
+prefix-based and cluster TGs). `trunks[SECTION].nodes` carries the roster
+received from each trunk peer; `twin.nodes` carries the partner's roster
+when a `[TWIN]` section is configured. `twin`, `satellites`, and
+`satellite_server` appear only when applicable.
 
 ---
 
