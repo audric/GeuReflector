@@ -37,6 +37,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <openssl/rand.h>
 #include <openssl/evp.h>
 #include <vector>
+#include <Log.h>
 
 
 /****************************************************************************
@@ -373,9 +374,8 @@ class MsgAuthChallenge : public ReflectorMsgBase<10>
       if (rc != 1)
       {
         unsigned long err = ERR_get_error();
-        std::cerr << "*** WARNING: Failed to generate challenge. "
-                     "RAND_bytes failed with error code " << err
-                  << std::endl;
+        geulog::warn("core", "Failed to generate challenge. "
+                     "RAND_bytes failed with error code ", err);
         m_challenge.clear();
       }
     }
@@ -427,8 +427,7 @@ class MsgAuthResponse : public ReflectorMsgBase<11>
     {
       if (!calcHMAC(m_digest, key, challenge))
       {
-        std::cerr << "*** ERROR: Digest calculation failed in MsgAuthResponse"
-                  << std::endl;
+        geulog::error("core", "Digest calculation failed in MsgAuthResponse");
         abort();
       }
     }
@@ -1440,15 +1439,13 @@ class MsgTrunkHello : public ReflectorMsgBase<115>
       int rc = RAND_bytes(&m_nonce.front(), NONCE_LEN);
       if (rc != 1)
       {
-        std::cerr << "*** WARNING: RAND_bytes failed in MsgTrunkHello"
-                  << std::endl;
+        geulog::warn("core", "RAND_bytes failed in MsgTrunkHello");
         m_nonce.clear();
         return;
       }
       if (!calcHMAC(m_digest, secret, m_nonce.data(), m_nonce.size()))
       {
-        std::cerr << "*** ERROR: HMAC calculation failed in MsgTrunkHello"
-                  << std::endl;
+        geulog::error("core", "HMAC calculation failed in MsgTrunkHello");
       }
     }
 

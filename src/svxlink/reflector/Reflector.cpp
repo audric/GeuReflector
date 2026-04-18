@@ -167,11 +167,10 @@ namespace {
       dirname += part + "/";
       if (access(dirname.c_str(), F_OK) != 0)
       {
-        std::cout << "Create directory '" << dirname << "'" << std::endl;
+        geulog::info("core", "Create directory '", dirname, "'");
         if (mkdir(dirname.c_str(), 0777) != 0)
         {
-          std::cerr << "*** ERROR: Could not create directory '"
-                    << dirname << "'" << std::endl;
+          geulog::error("core", "Could not create directory '", dirname, "'");
           return false;
         }
       }
@@ -268,8 +267,7 @@ Reflector::Reflector(void)
       {
         if (!loadServerCertificateFiles())
         {
-          std::cerr << "*** WARNING: Failed to renew server certificate"
-                    << std::endl;
+          geulog::warn("core", "Failed to renew server certificate");
         }
       });
   m_renew_issue_ca_cert_timer.expired.connect(
@@ -277,8 +275,7 @@ Reflector::Reflector(void)
       {
         if (!loadSigningCAFiles())
         {
-          std::cerr << "*** WARNING: Failed to renew issuing CA certificate"
-                    << std::endl;
+          geulog::warn("core", "Failed to renew issuing CA certificate");
         }
       });
   m_sat_cleanup_timer.setEnable(false);
@@ -369,8 +366,7 @@ bool Reflector::initialize(Async::Config &cfg)
       (err="initialization failure",  !m_udp_sock->initOk()) ||
       (err="unsupported cipher",      !m_udp_sock->setCipher(UdpCipher::NAME)))
   {
-    std::cerr << "*** ERROR: Could not initialize UDP socket due to "
-              << err << std::endl;
+    geulog::error("core", "Could not initialize UDP socket due to ", err);
     return false;
   }
   m_udp_sock->setCipherAADLength(UdpCipher::AADLEN);
@@ -397,8 +393,7 @@ bool Reflector::initialize(Async::Config &cfg)
     m_random_qsy_hi = m_random_qsy_lo + random_qsy_range.second-1;
     if ((m_random_qsy_lo < 1) || (m_random_qsy_hi < m_random_qsy_lo))
     {
-      cout << "*** WARNING: Illegal RANDOM_QSY_RANGE specified. Ignored."
-           << endl;
+      geulog::warn("core", "Illegal RANDOM_QSY_RANGE specified. Ignored.");
       m_random_qsy_hi = m_random_qsy_lo = 0;
     }
     m_random_qsy_tg = m_random_qsy_hi;
@@ -422,9 +417,8 @@ bool Reflector::initialize(Async::Config &cfg)
     m_cmd_pty = new Pty(pty_path);
     if ((m_cmd_pty == nullptr) || !m_cmd_pty->open())
     {
-      std::cerr << "*** ERROR: Could not open command PTY '" << pty_path
-                << "' as specified in configuration variable "
-                   "GLOBAL/COMMAND_PTY" << std::endl;
+      geulog::error("core", "Could not open command PTY '", pty_path,
+                    "' as specified in configuration variable GLOBAL/COMMAND_PTY");
       return false;
     }
     m_cmd_pty->setLineBuffered(true);
@@ -458,16 +452,16 @@ bool Reflector::initialize(Async::Config &cfg)
 
       m_redis = new RedisStore(rcfg);
       if (!m_redis->connect()) {
-        std::cerr << "*** ERROR: [REDIS] is configured but Redis is unreachable. "
-                  << "Aborting startup." << std::endl;
+        geulog::error("redis", "[REDIS] is configured but Redis is unreachable. "
+                      "Aborting startup.");
         return false;
       }
       auto warn_if_nonempty = [this](const char* section) {
         std::list<std::string> keys = m_cfg->listSection(section);
         if (!keys.empty()) {
-          std::cerr << "WARN: [" << section << "] in svxreflector.conf is "
+          geulog::warn("redis", "[", section, "] in svxreflector.conf is "
                        "ignored because [REDIS] is configured. "
-                    << "Run --import-conf-to-redis to migrate." << std::endl;
+                       "Run --import-conf-to-redis to migrate.");
         }
       };
       warn_if_nonempty("USERS");
@@ -492,7 +486,7 @@ bool Reflector::initialize(Async::Config &cfg)
     m_mqtt = new MqttPublisher(cfg);
     if (!m_mqtt->initialize())
     {
-      cerr << "*** WARNING: MQTT publisher failed to initialize, continuing without MQTT" << endl;
+      geulog::warn("mqtt", "MQTT publisher failed to initialize, continuing without MQTT");
       delete m_mqtt;
       m_mqtt = nullptr;
     }
@@ -522,8 +516,7 @@ bool Reflector::initialize(Async::Config &cfg)
     m_satellite_client = new SatelliteClient(this, cfg);
     if (!m_satellite_client->initialize())
     {
-      std::cerr << "*** ERROR: Failed to initialize satellite connection"
-                << std::endl;
+      geulog::error("core", "Failed to initialize satellite connection");
       return false;
     }
     // Satellites don't participate in the trunk mesh
@@ -539,7 +532,7 @@ bool Reflector::initialize(Async::Config &cfg)
                      || trunk_debug_str == "yes");
     if (m_trunk_debug)
     {
-      std::cout << "Trunk debug logging enabled" << std::endl;
+      geulog::info("core", "Trunk debug logging enabled");
     }
   }
 
@@ -714,8 +707,7 @@ bool Reflector::signClientCert(Async::SslX509& cert, const std::string& ca_op)
   auto cn = cert.commonName();
   if (!cert.sign(m_issue_ca_pkey))
   {
-    std::cerr << "*** ERROR: Certificate signing failed for client "
-              << cn << std::endl;
+    geulog::error("core", "Certificate signing failed for client ", cn);
     return false;
   }
   auto crtfile = m_certs_dir + "/" + cn + ".crt";
@@ -728,8 +720,8 @@ bool Reflector::signClientCert(Async::SslX509& cert, const std::string& ca_op)
   }
   else
   {
-    std::cerr << "*** WARNING: Failed to write client certificate file '"
-              << crtfile << "'" << std::endl;
+    geulog::warn("core", "Failed to write client certificate file '",
+                 crtfile, "'");
   }
   return true;
 } /* Reflector::signClientCert */
@@ -744,8 +736,7 @@ Async::SslX509 Reflector::signClientCsr(const std::string& cn)
   auto req = loadClientPendingCsr(cn);
   if (req.isNull())
   {
-    std::cerr << "*** ERROR: Cannot find CSR to sign '" << req.filePath()
-              << "'" << std::endl;
+    geulog::error("core", "Cannot find CSR to sign '", req.filePath(), "'");
     return cert;
   }
 
@@ -773,9 +764,8 @@ Async::SslX509 Reflector::signClientCsr(const std::string& cn)
   if (rename(req.filePath().c_str(), csr_path.c_str()) != 0)
   {
     auto errstr = SvxLink::strError(errno);
-    std::cerr << "*** WARNING: Failed to move signed CSR from '"
-              << req.filePath() << "' to '" << csr_path << "': "
-              << errstr << std::endl;
+    geulog::warn("core", "Failed to move signed CSR from '",
+                 req.filePath(), "' to '", csr_path, "': ", errstr);
   }
 
   auto client = ReflectorClient::lookup(cn);
@@ -1967,10 +1957,9 @@ void Reflector::ctrlPtyDataReceived(const void *buf, size_t count)
         m_cmd_pty->write("---------- Signed Client Certificate ----------\n");
         m_cmd_pty->write(cert.toString());
         m_cmd_pty->write("-----------------------------------------------\n");
-        std::cout << "---------- Signed Client Certificate ----------\n"
-                  << cert.toString()
-                  << "-----------------------------------------------"
-                  << std::endl;
+        geulog::info("core", "---------- Signed Client Certificate ----------");
+        geulog::info("core", cert.toString());
+        geulog::info("core", "-----------------------------------------------");
       }
       else
       {
@@ -1990,7 +1979,7 @@ void Reflector::ctrlPtyDataReceived(const void *buf, size_t count)
       {
         std::string msg(cn + ": Removed client certificate and CSR");
         m_cmd_pty->write(msg + "\n");
-        std::cout << msg << std::endl;
+        geulog::info("core", msg);
       }
       else
       {
@@ -2261,9 +2250,9 @@ void Reflector::initTrunkLinks(void)
       if (s.size() >= 6 && s.substr(0, 6) == "TRUNK_") { conf_has_trunk = true; break; }
     }
     if (conf_has_trunk) {
-      std::cerr << "WARN: [TRUNK_*] sections in svxreflector.conf are "
+      geulog::warn("core", "[TRUNK_*] sections in svxreflector.conf are "
                    "ignored because [REDIS] is configured. Run "
-                   "--import-conf-to-redis to migrate." << std::endl;
+                   "--import-conf-to-redis to migrate.");
     }
 
     auto peers = m_redis->loadTrunkPeers();
@@ -2316,8 +2305,8 @@ void Reflector::initTrunkLinks(void)
     }
     else
     {
-      std::cerr << "*** ERROR: Failed to initialize trunk link '"
-                << section << "'" << std::endl;
+      geulog::error("core", "Failed to initialize trunk link '",
+                    section, "'");
       delete link;
     }
   }
@@ -2331,10 +2320,9 @@ void Reflector::initTrunkLinks(void)
       if (s.size() >= prefix.size() &&
           s.compare(0, prefix.size(), prefix) == 0)
       {
-        std::cerr << "*** WARNING: Cluster TG " << tg
-                  << " conflicts with prefix " << prefix
-                  << " — this TG will be routed as cluster (broadcast to all)"
-                  << std::endl;
+        geulog::warn("core", "Cluster TG ", tg, " conflicts with prefix ",
+                     prefix,
+                     " — this TG will be routed as cluster (broadcast to all)");
       }
     }
   }
@@ -2357,7 +2345,7 @@ void Reflector::initTrunkServer(void)
   m_trunk_srv->clientDisconnected.connect(
       sigc::mem_fun(*this, &Reflector::trunkClientDisconnected));
 
-  std::cout << "Trunk server listening on port " << trunk_port << std::endl;
+  geulog::info("core", "Trunk server listening on port ", trunk_port);
 } /* Reflector::initTrunkServer */
 
 
@@ -2645,7 +2633,7 @@ void Reflector::initSatelliteServer(void)
   m_sat_srv->clientDisconnected.connect(
       sigc::mem_fun(*this, &Reflector::satelliteDisconnected));
 
-  std::cout << "Satellite server listening on port " << sat_port << std::endl;
+  geulog::info("core", "Satellite server listening on port ", sat_port);
 } /* Reflector::initSatelliteServer */
 
 
@@ -3275,15 +3263,15 @@ bool Reflector::loadCertificateFiles(void)
     if (!ensureDirectoryExist(m_ca_bundle_file) ||
         !m_ca_cert.writePemFile(m_ca_bundle_file))
     {
-      std::cout << "*** ERROR: Failed to write CA bundle file '"
-                << m_ca_bundle_file << "'" << std::endl;
+      geulog::error("core", "Failed to write CA bundle file '",
+                    m_ca_bundle_file, "'");
       return false;
     }
   }
   if (!m_ssl_ctx.setCaCertificateFile(m_ca_bundle_file))
   {
-    std::cout << "*** ERROR: Failed to read CA certificate bundle '"
-              << m_ca_bundle_file << "'" << std::endl;
+    geulog::error("core", "Failed to read CA certificate bundle '",
+                  m_ca_bundle_file, "'");
     return false;
   }
 
@@ -3291,8 +3279,8 @@ bool Reflector::loadCertificateFiles(void)
   if (stat(m_ca_bundle_file.c_str(), &st) != 0)
   {
     auto errstr = SvxLink::strError(errno);
-    std::cerr << "*** ERROR: Failed to read CA file from '"
-              << m_ca_bundle_file << "': " << errstr << std::endl;
+    geulog::error("core", "Failed to read CA file from '",
+                  m_ca_bundle_file, "': ", errstr);
     return false;
   }
   auto bundle = caBundlePem();
@@ -3300,8 +3288,7 @@ bool Reflector::loadCertificateFiles(void)
   Async::Digest ca_dgst;
   if (!ca_dgst.md(m_ca_md, MsgCABundle::MD_ALG, bundle))
   {
-    std::cerr << "*** ERROR: CA bundle checksumming failed"
-              << std::endl;
+    geulog::error("core", "CA bundle checksumming failed");
     return false;
   }
   ca_dgst.signInit(MsgCABundle::MD_ALG, m_issue_ca_pkey);
@@ -3319,9 +3306,9 @@ bool Reflector::loadServerCertificateFiles(void)
   if (!m_cfg->getValue("SERVER_CERT", "COMMON_NAME", cert_cn) ||
       cert_cn.empty())
   {
-    std::cerr << "*** ERROR: The 'SERVER_CERT/COMMON_NAME' variable is "
-                 "unset which is needed for certificate signing request "
-                 "generation." << std::endl;
+    geulog::error("core", "The 'SERVER_CERT/COMMON_NAME' variable is "
+                  "unset which is needed for certificate signing request "
+                  "generation.");
     return false;
   }
 
@@ -3333,8 +3320,8 @@ bool Reflector::loadServerCertificateFiles(void)
   Async::SslKeypair pkey;
   if (access(keyfile.c_str(), F_OK) != 0)
   {
-    std::cout << "Server private key file not found. Generating '"
-              << keyfile << "'" << std::endl;
+    geulog::info("core", "Server private key file not found. Generating '",
+                 keyfile, "'");
     if (!generateKeyFile(pkey, keyfile))
     {
       return false;
@@ -3342,8 +3329,8 @@ bool Reflector::loadServerCertificateFiles(void)
   }
   else if (!pkey.readPrivateKeyFile(keyfile))
   {
-    std::cerr << "*** ERROR: Failed to read private key file from '"
-              << keyfile << "'" << std::endl;
+    geulog::error("core", "Failed to read private key file from '",
+                  keyfile, "'");
     return false;
   }
 
@@ -3359,9 +3346,9 @@ bool Reflector::loadServerCertificateFiles(void)
                     !cert.verify(m_issue_ca_pkey);
     if (generate_cert)
     {
-      std::cerr << "*** WARNING: Failed to read server certificate "
-                   "from '" << m_crtfile << "' or the cert is invalid. "
-                   "Generating new certificate." << std::endl;
+      geulog::warn("core", "Failed to read server certificate from '",
+                   m_crtfile, "' or the cert is invalid. "
+                   "Generating new certificate.");
       cert.clear();
     }
     else
@@ -3374,9 +3361,9 @@ bool Reflector::loadServerCertificateFiles(void)
       time_t renew_time = tnow + (days*24*3600 + seconds)*RENEW_AFTER;
       if (!cert.timeIsWithinRange(tnow, renew_time))
       {
-        std::cerr << "Time to renew the server certificate '" << m_crtfile
-                  << "'. It's valid until "
-                  << cert.notAfterLocaltimeString() << "." << std::endl;
+        geulog::info("core", "Time to renew the server certificate '",
+                     m_crtfile, "'. It's valid until ",
+                     cert.notAfterLocaltimeString(), ".");
         cert.clear();
         generate_cert = true;
       }
@@ -3395,8 +3382,8 @@ bool Reflector::loadServerCertificateFiles(void)
       csrfile = m_csrs_dir + "/" + cert_cn + ".csr";
     }
     Async::SslCertSigningReq req;
-    std::cout << "Generating server certificate signing request file '"
-              << csrfile << "'" << std::endl;
+    geulog::info("core", "Generating server certificate signing request file '",
+                 csrfile, "'");
     req.setVersion(Async::SslCertSigningReq::VERSION_1);
     req.addSubjectName("CN", cert_cn);
     Async::SslX509Extensions req_exts;
@@ -3426,17 +3413,14 @@ bool Reflector::loadServerCertificateFiles(void)
     {
       // FIXME: Read SSL error stack
 
-      std::cerr << "*** WARNING: Failed to write server certificate "
-                   "signing request file to '" << csrfile << "'"
-                << std::endl;
+      geulog::warn("core", "Failed to write server certificate "
+                   "signing request file to '", csrfile, "'");
       //return false;
     }
-    std::cout << "-------- Certificate Signing Request -------" << std::endl;
+    geulog::info("core", "-------- Certificate Signing Request -------");
     req.print();
-    std::cout << "--------------------------------------------" << std::endl;
-
-    std::cout << "Generating server certificate file '" << m_crtfile << "'"
-              << std::endl;
+    geulog::info("core", "--------------------------------------------");
+    geulog::info("core", "Generating server certificate file '", m_crtfile, "'");
     cert.setSerialNumber();
     cert.setVersion(Async::SslX509::VERSION_3);
     cert.setIssuerName(m_issue_ca_cert.subjectName());
@@ -3449,27 +3433,25 @@ bool Reflector::loadServerCertificateFiles(void)
     if (!ensureDirectoryExist(m_crtfile) || !cert.writePemFile(m_crtfile) ||
         !m_issue_ca_cert.appendPemFile(m_crtfile))
     {
-      std::cout << "*** ERROR: Failed to write server certificate file '"
-                << m_crtfile << "'" << std::endl;
+      geulog::error("core", "Failed to write server certificate file '",
+                    m_crtfile, "'");
       return false;
     }
   }
-  std::cout << "------------ Server Certificate ------------" << std::endl;
+  geulog::info("core", "------------ Server Certificate ------------");
   cert.print();
-  std::cout << "--------------------------------------------" << std::endl;
+  geulog::info("core", "--------------------------------------------");
 
   if (!m_ssl_ctx.setCertificateFiles(keyfile, m_crtfile))
   {
-      std::cout << "*** ERROR: Failed to read and verify key ('"
-                << keyfile << "') and certificate ('"
-                << m_crtfile << "') files. "
-                << "If key- and cert-file does not match, the certificate "
-                   "is invalid for any other reason, you need "
-                   "to remove the cert file in order to trigger the "
-                   "generation of a new certificate signing request."
-                   "Then the CSR need to be signed by the CA which creates a "
-                   "valid certificate."
-                << std::endl;
+      geulog::error("core", "Failed to read and verify key ('",
+                    keyfile, "') and certificate ('", m_crtfile, "') files. "
+                    "If key- and cert-file does not match, the certificate "
+                    "is invalid for any other reason, you need "
+                    "to remove the cert file in order to trigger the "
+                    "generation of a new certificate signing request."
+                    "Then the CSR need to be signed by the CA which creates a "
+                    "valid certificate.");
       return false;
   }
 
@@ -3485,8 +3467,8 @@ bool Reflector::generateKeyFile(Async::SslKeypair& pkey,
   pkey.generate(2048);
   if (!ensureDirectoryExist(keyfile) || !pkey.writePrivateKeyFile(keyfile))
   {
-    std::cerr << "*** ERROR: Failed to write private key file to '"
-              << keyfile << "'" << std::endl;
+    geulog::error("core", "Failed to write private key file to '",
+                  keyfile, "'");
     return false;
   }
   return true;
@@ -3503,25 +3485,25 @@ bool Reflector::loadRootCAFiles(void)
   }
   if (access(ca_keyfile.c_str(), F_OK) != 0)
   {
-    std::cout << "Root CA private key file not found. Generating '"
-              << ca_keyfile << "'" << std::endl;
+    geulog::info("core", "Root CA private key file not found. Generating '",
+                 ca_keyfile, "'");
     if (!m_ca_pkey.generate(4096))
     {
-      std::cout << "*** ERROR: Failed to generate root CA key" << std::endl;
+      geulog::error("core", "Failed to generate root CA key");
       return false;
     }
     if (!ensureDirectoryExist(ca_keyfile) ||
         !m_ca_pkey.writePrivateKeyFile(ca_keyfile))
     {
-      std::cerr << "*** ERROR: Failed to write root CA private key file to '"
-                << ca_keyfile << "'" << std::endl;
+      geulog::error("core", "Failed to write root CA private key file to '",
+                    ca_keyfile, "'");
       return false;
     }
   }
   else if (!m_ca_pkey.readPrivateKeyFile(ca_keyfile))
   {
-    std::cerr << "*** ERROR: Failed to read root CA private key file from '"
-              << ca_keyfile << "'" << std::endl;
+    geulog::error("core", "Failed to read root CA private key file from '",
+                  ca_keyfile, "'");
     return false;
   }
 
@@ -3538,16 +3520,15 @@ bool Reflector::loadRootCAFiles(void)
         !m_ca_cert.verify(m_ca_pkey) ||
         !m_ca_cert.timeIsWithinRange())
     {
-      std::cerr << "*** ERROR: Failed to read root CA certificate file "
-                   "from '" << ca_crtfile << "' or the cert is invalid."
-                << std::endl;
+      geulog::error("core", "Failed to read root CA certificate file from '",
+                    ca_crtfile, "' or the cert is invalid.");
       return false;
     }
   }
   if (generate_ca_cert)
   {
-    std::cout << "Generating root CA certificate file '" << ca_crtfile << "'"
-              << std::endl;
+    geulog::info("core", "Generating root CA certificate file '",
+                 ca_crtfile, "'");
     m_ca_cert.setSerialNumber();
     m_ca_cert.setVersion(Async::SslX509::VERSION_3);
 
@@ -3556,9 +3537,8 @@ bool Reflector::loadRootCAFiles(void)
     (void)m_cfg->getValue("ROOT_CA", "COMMON_NAME", value);
     if (value.empty())
     {
-      std::cerr << "*** ERROR: The 'ROOT_CA/COMMON_NAME' variable is "
-                   "unset which is needed for root CA certificate generation."
-                << std::endl;
+      geulog::error("core", "The 'ROOT_CA/COMMON_NAME' variable is "
+                    "unset which is needed for root CA certificate generation.");
       return false;
     }
     m_ca_cert.addIssuerName("CN", value);
@@ -3599,14 +3579,14 @@ bool Reflector::loadRootCAFiles(void)
     m_ca_cert.sign(m_ca_pkey);
     if (!m_ca_cert.writePemFile(ca_crtfile))
     {
-      std::cout << "*** ERROR: Failed to write root CA certificate file '"
-                << ca_crtfile << "'" << std::endl;
+      geulog::error("core", "Failed to write root CA certificate file '",
+                    ca_crtfile, "'");
       return false;
     }
   }
-  std::cout << "----------- Root CA Certificate ------------" << std::endl;
+  geulog::info("core", "----------- Root CA Certificate ------------");
   m_ca_cert.print();
-  std::cout << "--------------------------------------------" << std::endl;
+  geulog::info("core", "--------------------------------------------");
 
   return true;
 } /* Reflector::loadRootCAFiles */
@@ -3622,25 +3602,25 @@ bool Reflector::loadSigningCAFiles(void)
   }
   if (access(ca_keyfile.c_str(), F_OK) != 0)
   {
-    std::cout << "Issuing CA private key file not found. Generating '"
-              << ca_keyfile << "'" << std::endl;
+    geulog::info("core", "Issuing CA private key file not found. Generating '",
+                 ca_keyfile, "'");
     if (!m_issue_ca_pkey.generate(2048))
     {
-      std::cout << "*** ERROR: Failed to generate CA key" << std::endl;
+      geulog::error("core", "Failed to generate CA key");
       return false;
     }
     if (!ensureDirectoryExist(ca_keyfile) ||
         !m_issue_ca_pkey.writePrivateKeyFile(ca_keyfile))
     {
-      std::cerr << "*** ERROR: Failed to write issuing CA private key file "
-                   "to '" << ca_keyfile << "'" << std::endl;
+      geulog::error("core", "Failed to write issuing CA private key file to '",
+                    ca_keyfile, "'");
       return false;
     }
   }
   else if (!m_issue_ca_pkey.readPrivateKeyFile(ca_keyfile))
   {
-    std::cerr << "*** ERROR: Failed to read issuing CA private key file "
-                 "from '" << ca_keyfile << "'" << std::endl;
+    geulog::error("core", "Failed to read issuing CA private key file from '",
+                  ca_keyfile, "'");
     return false;
   }
 
@@ -3658,9 +3638,9 @@ bool Reflector::loadSigningCAFiles(void)
                        !m_issue_ca_cert.timeIsWithinRange();
     if (generate_ca_cert)
     {
-      std::cerr << "*** WARNING: Failed to read issuing CA certificate "
-                   "from '" << ca_crtfile << "' or the cert is invalid. "
-                   "Generating new certificate." << std::endl;
+      geulog::warn("core", "Failed to read issuing CA certificate from '",
+                   ca_crtfile, "' or the cert is invalid. "
+                   "Generating new certificate.");
       m_issue_ca_cert.clear();
     }
     else
@@ -3671,10 +3651,9 @@ bool Reflector::loadSigningCAFiles(void)
       time_t renew_time = tnow + (days*24*3600 + seconds)*RENEW_AFTER;
       if (!m_issue_ca_cert.timeIsWithinRange(tnow, renew_time))
       {
-        std::cerr << "Time to renew the issuing CA certificate '"
-                  << ca_crtfile << "'. It's valid until "
-                  << m_issue_ca_cert.notAfterLocaltimeString() << "."
-                  << std::endl;
+        geulog::info("core", "Time to renew the issuing CA certificate '",
+                     ca_crtfile, "'. It's valid until ",
+                     m_issue_ca_cert.notAfterLocaltimeString(), ".");
         m_issue_ca_cert.clear();
         generate_ca_cert = true;
       }
@@ -3688,8 +3667,8 @@ bool Reflector::loadSigningCAFiles(void)
     {
       ca_csrfile = m_csrs_dir + "/svxreflector_issuing_ca.csr";
     }
-    std::cout << "Generating issuing CA CSR file '" << ca_csrfile
-              << "'" << std::endl;
+    geulog::info("core", "Generating issuing CA CSR file '",
+                 ca_csrfile, "'");
     Async::SslCertSigningReq csr;
     csr.setVersion(Async::SslCertSigningReq::VERSION_1);
     std::string value;
@@ -3697,9 +3676,9 @@ bool Reflector::loadSigningCAFiles(void)
     (void)m_cfg->getValue("ISSUING_CA", "COMMON_NAME", value);
     if (value.empty())
     {
-      std::cerr << "*** ERROR: The 'ISSUING_CA/COMMON_NAME' variable is "
-                   "unset which is needed for issuing CA certificate "
-                   "generation." << std::endl;
+      geulog::error("core", "The 'ISSUING_CA/COMMON_NAME' variable is "
+                    "unset which is needed for issuing CA certificate "
+                    "generation.");
       return false;
     }
     csr.addSubjectName("CN", value);
@@ -3738,13 +3717,13 @@ bool Reflector::loadSigningCAFiles(void)
     //csr.print();
     if (!csr.writePemFile(ca_csrfile))
     {
-      std::cout << "*** ERROR: Failed to write issuing CA CSR file '"
-                << ca_csrfile << "'" << std::endl;
+      geulog::error("core", "Failed to write issuing CA CSR file '",
+                    ca_csrfile, "'");
       return false;
     }
 
-    std::cout << "Generating issuing CA certificate file '" << ca_crtfile
-              << "'" << std::endl;
+    geulog::info("core", "Generating issuing CA certificate file '",
+                 ca_crtfile, "'");
     m_issue_ca_cert.setSerialNumber();
     m_issue_ca_cert.setVersion(Async::SslX509::VERSION_3);
     m_issue_ca_cert.setSubjectName(csr.subjectName());
@@ -3755,14 +3734,14 @@ bool Reflector::loadSigningCAFiles(void)
     m_issue_ca_cert.sign(m_ca_pkey);
     if (!m_issue_ca_cert.writePemFile(ca_crtfile))
     {
-      std::cout << "*** ERROR: Failed to write issuing CA certificate file '"
-                << ca_crtfile << "'" << std::endl;
+      geulog::error("core", "Failed to write issuing CA certificate file '",
+                    ca_crtfile, "'");
       return false;
     }
   }
-  std::cout << "---------- Issuing CA Certificate ----------" << std::endl;
+  geulog::info("core", "---------- Issuing CA Certificate ----------");
   m_issue_ca_cert.print();
-  std::cout << "--------------------------------------------" << std::endl;
+  geulog::info("core", "--------------------------------------------");
 
   startCertRenewTimer(m_issue_ca_cert, m_renew_issue_ca_cert_timer);
 
@@ -3781,11 +3760,10 @@ bool Reflector::onVerifyPeer(TcpConnection *con, bool preverify_ok,
   preverify_ok = preverify_ok && !cert.commonName().empty();
   if (!preverify_ok)
   {
-    std::cout << "*** ERROR: Certificate verification failed for client"
-              << std::endl;
-    std::cout << "------------ Client Certificate -------------" << std::endl;
+    geulog::error("client", "Certificate verification failed for client");
+    geulog::info("client", "------------ Client Certificate -------------");
     cert.print();
-    std::cout << "---------------------------------------------" << std::endl;
+    geulog::info("client", "---------------------------------------------");
   }
 
   return preverify_ok;
@@ -3827,7 +3805,7 @@ bool Reflector::removeClientCertFiles(const std::string& cn)
 {
   if (!isCallsignPathSafe(cn))
   {
-    std::cerr << "*** ERROR: Unsafe callsign in removeClientCertFiles" << std::endl;
+    geulog::error("core", "Unsafe callsign in removeClientCertFiles");
     return false;
   }
 
@@ -3849,8 +3827,7 @@ bool Reflector::removeClientCertFiles(const std::string& cn)
     {
       success = false;
       auto errstr = SvxLink::strError(errno);
-      std::cerr << "*** WARNING: Failed to remove file '" << path << "': "
-                << errstr << std::endl;
+      geulog::warn("core", "Failed to remove file '", path, "': ", errstr);
     }
   }
 
@@ -3867,14 +3844,14 @@ void Reflector::runCAHook(const Async::Exec::Environment& env)
     ca_hook->addEnvironmentVars(env);
     ca_hook->setTimeout(300); // Five minutes timeout
     ca_hook->stdoutData.connect(
-        [=](const char* buf, int cnt)
+        [=](const char* buf, int /*cnt*/)
         {
-          std::cout << buf;
+          geulog::info("core", buf);
         });
     ca_hook->stderrData.connect(
-        [=](const char* buf, int cnt)
+        [=](const char* buf, int /*cnt*/)
         {
-          std::cerr << buf;
+          geulog::warn("core", buf);
         });
     ca_hook->exited.connect(
         [=](void) {
@@ -3882,14 +3859,14 @@ void Reflector::runCAHook(const Async::Exec::Environment& env)
           {
             if (ca_hook->exitStatus() != 0)
             {
-              std::cerr << "*** ERROR: CA hook exited with exit status "
-                        << ca_hook->exitStatus() << std::endl;
+              geulog::error("core", "CA hook exited with exit status ",
+                            ca_hook->exitStatus());
             }
           }
           else if (ca_hook->ifSignaled())
           {
-            std::cerr << "*** ERROR: CA hook exited with signal "
-                      << ca_hook->termSig() << std::endl;
+            geulog::error("core", "CA hook exited with signal ",
+                          ca_hook->termSig());
           }
           Async::Application::app().runTask([=]{ delete ca_hook; });
         });
@@ -4143,8 +4120,7 @@ void Reflector::initTwinServer(void)
   m_twin_srv->clientDisconnected.connect(
       sigc::mem_fun(*this, &Reflector::twinClientDisconnected));
 
-  std::cout << "TWIN: server listening on port " << m_twin_listen_port
-            << std::endl;
+  geulog::info("twin", "TWIN: server listening on port ", m_twin_listen_port);
 } /* Reflector::initTwinServer */
 
 

@@ -122,7 +122,7 @@ bool TwinLink::initialize(void)
   if (!m_cfg.getValue(m_peer_id_config, "HOST", m_peer_host)
       || m_peer_host.empty())
   {
-    cerr << "*** ERROR[TWIN]: Missing HOST in [TWIN] section" << endl;
+    geulog::error("twin", "[TWIN] Missing HOST in [TWIN] section");
     return false;
   }
 
@@ -137,7 +137,7 @@ bool TwinLink::initialize(void)
   if (!m_cfg.getValue(m_peer_id_config, "SECRET", m_secret)
       || m_secret.empty())
   {
-    cerr << "*** ERROR[TWIN]: Missing SECRET in [TWIN] section" << endl;
+    geulog::error("twin", "[TWIN] Missing SECRET in [TWIN] section");
     return false;
   }
 
@@ -145,13 +145,13 @@ bool TwinLink::initialize(void)
   if (!m_cfg.getValue("GLOBAL", "LOCAL_PREFIX", m_local_prefix)
       || m_local_prefix.empty())
   {
-    cerr << "*** ERROR[TWIN]: Missing LOCAL_PREFIX in [GLOBAL]" << endl;
+    geulog::error("twin", "[TWIN] Missing LOCAL_PREFIX in [GLOBAL]");
     return false;
   }
 
-  cout << "TWIN: partner=" << m_peer_host << ":" << m_peer_port
-       << " local_prefix=" << m_local_prefix
-       << " priority=" << m_priority << endl;
+  geulog::info("twin", "TWIN: partner=", m_peer_host, ":", m_peer_port,
+               " local_prefix=", m_local_prefix,
+               " priority=", m_priority);
 
   m_con.addStaticSRVRecord(0, 0, 0, m_peer_port, m_peer_host);
   m_con.setReconnectMinTime(2000);

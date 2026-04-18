@@ -172,8 +172,7 @@ static bool runImportConfToRedis(Async::Config& cfg, bool dry_run)
   cfg.getValue("REDIS", "KEY_PREFIX", rcfg.key_prefix);
   cfg.getValue("REDIS", "UNIX_SOCKET", rcfg.unix_socket);
   if (rcfg.host.empty() && rcfg.unix_socket.empty()) {
-    std::cerr << "*** ERROR: --import-conf-to-redis requires [REDIS] in conf"
-              << std::endl;
+    geulog::error("core", "--import-conf-to-redis requires [REDIS] in conf");
     return false;
   }
 
@@ -184,8 +183,8 @@ static bool runImportConfToRedis(Async::Config& cfg, bool dry_run)
         ? redisConnectWithTimeout(rcfg.host.c_str(), rcfg.port, tv)
         : redisConnectUnixWithTimeout(rcfg.unix_socket.c_str(), tv);
     if (!ctx || ctx->err) {
-      std::cerr << "*** ERROR: import: Redis connect failed: "
-                << (ctx ? ctx->errstr : "alloc failed") << std::endl;
+      geulog::error("core", "import: Redis connect failed: ",
+                    (ctx ? ctx->errstr : "alloc failed"));
       if (ctx) redisFree(ctx);
       return false;
     }
@@ -210,8 +209,8 @@ static bool runImportConfToRedis(Async::Config& cfg, bool dry_run)
     if (!cfg.getValue("USERS", cs, group) || group.empty()) continue;
     std::string ukey = kf("user:" + cs);
     if (dry_run) {
-      std::cout << "[dry-run] HSET " << ukey << " group " << group
-                << " enabled 1" << std::endl;
+      geulog::info("core", "[dry-run] HSET ", ukey, " group ", group,
+                   " enabled 1");
     } else {
       redisReply* r = (redisReply*)redisCommand(ctx,
           "HSET %s group %s enabled 1", ukey.c_str(), group.c_str());
@@ -225,8 +224,7 @@ static bool runImportConfToRedis(Async::Config& cfg, bool dry_run)
     if (!cfg.getValue("PASSWORDS", g, pw) || pw.empty()) continue;
     std::string gkey = kf("group:" + g);
     if (dry_run) {
-      std::cout << "[dry-run] HSET " << gkey << " password <REDACTED>"
-                << std::endl;
+      geulog::info("core", "[dry-run] HSET ", gkey, " password <REDACTED>");
     } else {
       redisReply* r = (redisReply*)redisCommand(ctx,
           "HSET %s password %s", gkey.c_str(), pw.c_str());
@@ -248,7 +246,7 @@ static bool runImportConfToRedis(Async::Config& cfg, bool dry_run)
       tok.erase(tok.find_last_not_of(" \t") + 1);
       if (tok.empty()) continue;
       if (dry_run) {
-        std::cout << "[dry-run] SADD " << ck << " " << tok << std::endl;
+        geulog::info("core", "[dry-run] SADD ", ck, " ", tok);
       } else {
         redisReply* r = (redisReply*)redisCommand(ctx, "SADD %s %s",
                                                   ck.c_str(), tok.c_str());
@@ -279,9 +277,8 @@ static bool runImportConfToRedis(Async::Config& cfg, bool dry_run)
       auto setField = [&](const char* field, const std::string& value) {
         if (value.empty()) return;
         if (dry_run) {
-          std::cout << "[dry-run] HSET " << pk << " " << field
-                    << " " << (std::string(field) == "secret" ? "<REDACTED>" : value)
-                    << std::endl;
+          geulog::info("core", "[dry-run] HSET ", pk, " ", field, " ",
+                       (std::string(field) == "secret" ? "<REDACTED>" : value));
         } else {
           redisReply* r = (redisReply*)redisCommand(ctx, "HSET %s %s %s",
               pk.c_str(), field, value.c_str());
@@ -307,7 +304,7 @@ static bool runImportConfToRedis(Async::Config& cfg, bool dry_run)
         tok.erase(tok.find_last_not_of(" \t") + 1);
         if (tok.empty()) continue;
         if (dry_run) {
-          std::cout << "[dry-run] SADD " << k << " " << tok << std::endl;
+          geulog::info("core", "[dry-run] SADD ", k, " ", tok);
         } else {
           redisReply* r = (redisReply*)redisCommand(ctx, "SADD %s %s",
                                                     k.c_str(), tok.c_str());
@@ -336,8 +333,7 @@ static bool runImportConfToRedis(Async::Config& cfg, bool dry_run)
         local.erase(0, local.find_first_not_of(" \t"));
         local.erase(local.find_last_not_of(" \t") + 1);
         if (dry_run) {
-          std::cout << "[dry-run] HSET " << k << " " << peer
-                    << " " << local << std::endl;
+          geulog::info("core", "[dry-run] HSET ", k, " ", peer, " ", local);
         } else {
           redisReply* r = (redisReply*)redisCommand(ctx, "HSET %s %s %s",
               k.c_str(), peer.c_str(), local.c_str());
@@ -347,9 +343,8 @@ static bool runImportConfToRedis(Async::Config& cfg, bool dry_run)
     }
   }
 
-  std::cout << "Imported " << users << " users, " << groups << " groups, "
-            << cluster_n << " cluster TGs, " << trunks_n << " trunks."
-            << std::endl;
+  geulog::info("core", "Imported ", users, " users, ", groups, " groups, ",
+               cluster_n, " cluster TGs, ", trunks_n, " trunks.");
 
   if (ctx) redisFree(ctx);
   return true;
@@ -491,8 +486,7 @@ int main(int argc, const char *argv[])
     cfg_filename = string(config);
     if (!cfg.open(cfg_filename))
     {
-      cerr << "*** ERROR: Could not open configuration file: "
-           << config << endl;
+      geulog::error("core", "Could not open configuration file: ", config);
       exit(1);
     }
   }
@@ -505,18 +499,19 @@ int main(int argc, const char *argv[])
       cfg_filename = SVX_SYSCONF_INSTALL_DIR "/svxreflector.conf";
       if (!cfg.open(cfg_filename))
       {
-        cerr << "*** ERROR: Could not open configuration file";
-        if (errno != 0)
         {
-          cerr << " (" << strerror(errno) << ")";
+          std::ostringstream _cfg_oss;
+          _cfg_oss << "Could not open configuration file";
+          if (errno != 0) _cfg_oss << " (" << strerror(errno) << ")";
+          _cfg_oss << ".\n"
+                   << "Tried the following paths:\n"
+                   << "\t" << home_dir << "/.svxlink/svxreflector.conf\n"
+                   << "\t" SVX_SYSCONF_INSTALL_DIR "/svxreflector.conf\n"
+                   << "Possible reasons for failure are: None of the files exist,\n"
+                   << "you do not have permission to read the file or there was a\n"
+                   << "syntax error in the file.";
+          geulog::error("core", _cfg_oss.str());
         }
-        cerr << ".\n";
-        cerr << "Tried the following paths:\n"
-             << "\t" << home_dir << "/.svxlink/svxreflector.conf\n"
-             << "\t" SVX_SYSCONF_INSTALL_DIR "/svxreflector.conf\n"
-             << "Possible reasons for failure are: None of the files exist,\n"
-             << "you do not have permission to read the file or there was a\n"
-             << "syntax error in the file.\n";
         exit(1);
       }
     }
@@ -541,8 +536,8 @@ int main(int argc, const char *argv[])
     DIR *dir = opendir(cfg_dir.c_str());
     if (dir == NULL)
     {
-      cerr << "*** ERROR: Could not read from directory spcified by "
-           << "configuration variable GLOBAL/CFG_DIR=" << cfg_dir << endl;
+      geulog::error("core", "Could not read from directory specified by "
+                    "configuration variable GLOBAL/CFG_DIR=", cfg_dir);
       exit(1);
     }
 
@@ -558,16 +553,16 @@ int main(int argc, const char *argv[])
       cfg_filename = cfg_dir + "/" + dirent->d_name;
       if (!cfg.open(cfg_filename))
        {
-	 cerr << "*** ERROR: Could not open configuration file: "
-	      << cfg_filename << endl;
+         geulog::error("core", "Could not open configuration file: ",
+                       cfg_filename);
 	 exit(1);
        }
     }
 
     if (closedir(dir) == -1)
     {
-      cerr << "*** ERROR: Error closing directory specified by"
-           << "configuration variable GLOBAL/CFG_DIR=" << cfg_dir << endl;
+      geulog::error("core", "Error closing directory specified by "
+                    "configuration variable GLOBAL/CFG_DIR=", cfg_dir);
       exit(1);
     }
   }
@@ -578,20 +573,19 @@ int main(int argc, const char *argv[])
 
   if (!geulog::configure(cfg))
   {
-    cerr << "*** ERROR: logging facade configuration failed" << endl;
+    geulog::error("core", "logging facade configuration failed");
     exit(1);
   }
 
-  cout << PROGRAM_NAME " v" SVXREFLECTOR_VERSION
-          " Copyright (C) 2003-2025 Tobias Blomberg / SM0SVX\n";
-  cout << "Modified with server-to-server trunk support by IW1GEU.\n\n";
-  cout << PROGRAM_NAME " comes with ABSOLUTELY NO WARRANTY. "
-          "This is free software, and you are\n";
-  cout << "welcome to redistribute it in accordance with the "
-          "terms and conditions in the\n";
-  cout << "GNU GPL (General Public License) version 2 or later.\n";
-
-  cout << "\nUsing configuration file: " << main_cfg_filename << endl;
+  geulog::info("core", PROGRAM_NAME " v" SVXREFLECTOR_VERSION
+               " Copyright (C) 2003-2025 Tobias Blomberg / SM0SVX");
+  geulog::info("core", "Modified with server-to-server trunk support by IW1GEU.");
+  geulog::info("core", PROGRAM_NAME " comes with ABSOLUTELY NO WARRANTY. "
+               "This is free software, and you are");
+  geulog::info("core", "welcome to redistribute it in accordance with the "
+               "terms and conditions in the");
+  geulog::info("core", "GNU GPL (General Public License) version 2 or later.");
+  geulog::info("core", "Using configuration file: ", main_cfg_filename);
 
   struct termios org_termios = {0};
   if (logfile_name == 0)
@@ -615,13 +609,12 @@ int main(int argc, const char *argv[])
   Reflector ref;
   if (ref.initialize(cfg))
   {
-    std::cout << "NOTICE: Initialization done. Starting main application."
-              << std::endl;
+    geulog::info("core", "NOTICE: Initialization done. Starting main application.");
     app.exec();
   }
   else
   {
-    cerr << ":-(" << endl;
+    geulog::error("core", ":-( Initialization failed");
   }
 
   if (stdin_watch != 0)
@@ -722,7 +715,7 @@ static void parse_arguments(int argc, const char **argv)
 
   if (print_version)
   {
-    std::cout << SVXREFLECTOR_VERSION << std::endl;
+    geulog::info("core", SVXREFLECTOR_VERSION);
     exit(0);
   }
 } /* parse_arguments */
@@ -766,10 +759,10 @@ static void sighup_handler(int signal)
 {
   if (logfile_name == 0)
   {
-    cout << "Ignoring SIGHUP\n";
+    geulog::info("core", "Ignoring SIGHUP");
     return;
   }
-  std::cout << "SIGHUP received" << std::endl;
+  geulog::info("core", "SIGHUP received");
   logwriter.reopenLogfile();
 } /* sighup_handler */
 
@@ -790,9 +783,8 @@ static void sigterm_handler(int signal)
       break;
   }
 
-  std::cout << "\nNOTICE: " << signame
-            << " received. Shutting down application..."
-            << std::endl;
+  geulog::info("core", "NOTICE: ", signame,
+               " received. Shutting down application...");
   Application::app().quit();
 } /* sigterm_handler */
 

@@ -203,7 +203,7 @@ bool TrunkLink::initialize(void)
   std::string host_str;
   if (!m_cfg.getValue(m_section, "HOST", host_str) || host_str.empty())
   {
-    cerr << "*** ERROR[" << m_section << "]: Missing HOST" << endl;
+    geulog::error("trunk", "[", m_section, "] Missing HOST");
     return false;
   }
 
@@ -220,9 +220,9 @@ bool TrunkLink::initialize(void)
     }
     if (m_peer_hosts.size() < 2)
     {
-      cerr << "*** ERROR[" << m_section
-           << "]: PAIRED=1 requires HOST to list at least 2 hosts, got '"
-           << host_str << "'" << endl;
+      geulog::error("trunk", "[", m_section,
+                    "] PAIRED=1 requires HOST to list at least 2 hosts, got '",
+                    host_str, "'");
       return false;
     }
   }
@@ -237,7 +237,7 @@ bool TrunkLink::initialize(void)
   // SECRET
   if (!m_cfg.getValue(m_section, "SECRET", m_secret) || m_secret.empty())
   {
-    cerr << "*** ERROR[" << m_section << "]: Missing SECRET" << endl;
+    geulog::error("trunk", "[", m_section, "] Missing SECRET");
     return false;
   }
 
@@ -247,7 +247,7 @@ bool TrunkLink::initialize(void)
   m_local_prefix = splitPrefixes(local_prefix_str);
   if (m_local_prefix.empty())
   {
-    cerr << "*** ERROR: Missing or empty LOCAL_PREFIX in [GLOBAL]" << endl;
+    geulog::error("trunk", "Missing or empty LOCAL_PREFIX in [GLOBAL]");
     return false;
   }
 
@@ -256,13 +256,13 @@ bool TrunkLink::initialize(void)
   if (!m_cfg.getValue(m_section, "REMOTE_PREFIX", remote_prefix_str) ||
       remote_prefix_str.empty())
   {
-    cerr << "*** ERROR[" << m_section << "]: Missing REMOTE_PREFIX" << endl;
+    geulog::error("trunk", "[", m_section, "] Missing REMOTE_PREFIX");
     return false;
   }
   m_remote_prefix = splitPrefixes(remote_prefix_str);
   if (m_remote_prefix.empty())
   {
-    cerr << "*** ERROR[" << m_section << "]: Invalid REMOTE_PREFIX" << endl;
+    geulog::error("trunk", "[", m_section, "] Invalid REMOTE_PREFIX");
     return false;
   }
 
@@ -281,8 +281,8 @@ bool TrunkLink::initialize(void)
   {
     m_blacklist_filter = TgFilter::parse(blacklist_str);
     if (!m_blacklist_filter.empty())
-      cout << m_section << ": Blacklisted TGs: "
-           << m_blacklist_filter.toString() << endl;
+      geulog::info("trunk", m_section, ": Blacklisted TGs: ",
+                   m_blacklist_filter.toString());
   }
 
   // ALLOW_TGS — flexible whitelist (empty = allow all)
@@ -291,8 +291,8 @@ bool TrunkLink::initialize(void)
   {
     m_allow_filter = TgFilter::parse(allow_str);
     if (!m_allow_filter.empty())
-      cout << m_section << ": Allowed TGs: "
-           << m_allow_filter.toString() << endl;
+      geulog::info("trunk", m_section, ": Allowed TGs: ",
+                   m_allow_filter.toString());
   }
 
   // TG_MAP — bidirectional TG remap, syntax "peer:local,peer2:local2"
@@ -314,25 +314,29 @@ bool TrunkLink::initialize(void)
     }
     if (!m_tg_map_in.empty())
     {
-      cout << m_section << ": TG mappings (peer<->local):";
+      std::ostringstream _tgmap_oss;
+      _tgmap_oss << m_section << ": TG mappings (peer<->local):";
       for (const auto& kv : m_tg_map_in)
-        cout << " " << kv.first << "<->" << kv.second;
-      cout << endl;
+        _tgmap_oss << " " << kv.first << "<->" << kv.second;
+      geulog::info("trunk", _tgmap_oss.str());
     }
   }
 
   if (m_paired)
   {
-    cout << m_section << ": PAIRED=1, " << m_peer_hosts.size()
-         << " partner hosts:";
-    for (const auto& x : m_peer_hosts) cout << " " << x;
-    cout << " port=" << m_peer_port
-         << " local_prefix=" << joinPrefixes(m_local_prefix)
-         << " remote_prefix=" << joinPrefixes(m_remote_prefix)
-         << (m_blacklist_filter.empty() ? "" : " [blacklist]")
-         << (m_allow_filter.empty()     ? "" : " [whitelist]")
-         << (m_tg_map_in.empty()        ? "" : " [tg_map]")
-         << endl;
+    {
+      std::ostringstream _paired_oss;
+      _paired_oss << m_section << ": PAIRED=1, " << m_peer_hosts.size()
+                  << " partner hosts:";
+      for (const auto& x : m_peer_hosts) _paired_oss << " " << x;
+      _paired_oss << " port=" << m_peer_port
+                  << " local_prefix=" << joinPrefixes(m_local_prefix)
+                  << " remote_prefix=" << joinPrefixes(m_remote_prefix)
+                  << (m_blacklist_filter.empty() ? "" : " [blacklist]")
+                  << (m_allow_filter.empty()     ? "" : " [whitelist]")
+                  << (m_tg_map_in.empty()        ? "" : " [tg_map]");
+      geulog::info("trunk", _paired_oss.str());
+    }
 
     // Create one outbound client per host
     m_ob_cons.reserve(m_peer_hosts.size());
@@ -359,20 +363,18 @@ bool TrunkLink::initialize(void)
       client->connect();
       m_ob_cons.push_back(client);
 
-      cout << m_section << ": paired outbound #" << i
-           << " connecting to " << m_peer_hosts[i] << ":" << m_peer_port
-           << endl;
+      geulog::info("trunk", m_section, ": paired outbound #", i,
+                   " connecting to ", m_peer_hosts[i], ":", m_peer_port);
     }
     return true;
   }
 
-  cout << m_section << ": Trunk to " << m_peer_host << ":" << m_peer_port
-       << " local_prefix=" << joinPrefixes(m_local_prefix)
-       << " remote_prefix=" << joinPrefixes(m_remote_prefix)
-       << (m_blacklist_filter.empty() ? "" : " [blacklist]")
-       << (m_allow_filter.empty()     ? "" : " [whitelist]")
-       << (m_tg_map_in.empty()        ? "" : " [tg_map]")
-       << endl;
+  geulog::info("trunk", m_section, ": Trunk to ", m_peer_host, ":", m_peer_port,
+               " local_prefix=", joinPrefixes(m_local_prefix),
+               " remote_prefix=", joinPrefixes(m_remote_prefix),
+               (m_blacklist_filter.empty() ? "" : " [blacklist]"),
+               (m_allow_filter.empty()     ? "" : " [whitelist]"),
+               (m_tg_map_in.empty()        ? "" : " [tg_map]"));
 
   m_con.addStaticSRVRecord(0, 0, 0, m_peer_port, m_peer_host);
   m_con.setReconnectMinTime(2000);

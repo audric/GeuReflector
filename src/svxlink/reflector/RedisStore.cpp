@@ -6,6 +6,7 @@
 #include "RedisLiveQueue.h"
 #include <iostream>
 #include <ctime>
+#include <Log.h>
 
 namespace {
 
@@ -52,15 +53,15 @@ bool RedisStore::connectSync(void) {
     m_sync = redisConnectWithTimeout(m_cfg.host.c_str(), m_cfg.port, tv);
   }
   if (!m_sync || m_sync->err) {
-    std::cerr << "*** ERROR: Redis sync connect failed: "
-              << (m_sync ? m_sync->errstr : "alloc failed") << std::endl;
+    geulog::error("redis", "Redis sync connect failed: ",
+                  (m_sync ? m_sync->errstr : "alloc failed"));
     if (m_sync) { redisFree(m_sync); m_sync = nullptr; }
     return false;
   }
   if (!m_cfg.password.empty()) {
     redisReply* r = (redisReply*)redisCommand(m_sync, "AUTH %s", m_cfg.password.c_str());
     if (!r || r->type == REDIS_REPLY_ERROR) {
-      std::cerr << "*** ERROR: Redis AUTH failed" << std::endl;
+      geulog::error("redis", "Redis AUTH failed");
       if (r) freeReplyObject(r);
       redisFree(m_sync); m_sync = nullptr;
       return false;
@@ -70,7 +71,7 @@ bool RedisStore::connectSync(void) {
   if (m_cfg.db != 0) {
     redisReply* r = (redisReply*)redisCommand(m_sync, "SELECT %d", m_cfg.db);
     if (!r || r->type == REDIS_REPLY_ERROR) {
-      std::cerr << "*** ERROR: Redis SELECT failed" << std::endl;
+      geulog::error("redis", "Redis SELECT failed");
       if (r) freeReplyObject(r);
       redisFree(m_sync); m_sync = nullptr;
       return false;
@@ -95,8 +96,8 @@ bool RedisStore::connect(void) {
   m_heartbeat_timer->expired.connect(
       sigc::mem_fun(*this, &RedisStore::refreshLiveExpire));
 
-  std::cout << "RedisStore: connected sync+async, subscribed to "
-            << channelName() << std::endl;
+  geulog::info("redis", "RedisStore: connected sync+async, subscribed to ",
+               channelName());
   return true;
 }
 
@@ -122,7 +123,7 @@ std::string RedisStore::lookupUserKey(const std::string& callsign) {
   }
   freeReplyObject(r);
   if (!enabled) {
-    std::cout << "RedisStore: user " << callsign << " disabled" << std::endl;
+    geulog::info("redis", "RedisStore: user ", callsign, " disabled");
     return "";
   }
 
@@ -130,7 +131,7 @@ std::string RedisStore::lookupUserKey(const std::string& callsign) {
   r = (redisReply*)redisCommand(m_sync, "HGET %s password", group_key.c_str());
   if (!r || r->type != REDIS_REPLY_STRING) {
     if (r) freeReplyObject(r);
-    std::cout << "*** WARNING: group " << group << " missing password" << std::endl;
+    geulog::warn("redis", "group ", group, " missing password");
     return "";
   }
   std::string pw(r->str, r->len);
@@ -243,9 +244,9 @@ RedisStore::loadTrunkPeers(void)
 
     // Require host + secret + remote_prefix
     if (cfg.host.empty() || cfg.secret.empty() || cfg.remote_prefix.empty()) {
-      std::cerr << "*** WARN: RedisStore: trunk peer " << section
-                << " missing required fields (host/secret/remote_prefix); "
-                << "skipping" << std::endl;
+      geulog::warn("redis", "RedisStore: trunk peer ", section,
+                   " missing required fields (host/secret/remote_prefix); "
+                   "skipping");
       continue;
     }
     out[section] = std::move(cfg);
@@ -446,8 +447,8 @@ bool RedisStore::connectAsync(void) {
     m_async = redisAsyncConnect(m_cfg.host.c_str(), m_cfg.port);
   }
   if (!m_async || m_async->err) {
-    std::cerr << "*** ERROR: Redis async connect failed: "
-              << (m_async ? m_async->errstr : "alloc failed") << std::endl;
+    geulog::error("redis", "Redis async connect failed: ",
+                  (m_async ? m_async->errstr : "alloc failed"));
     if (m_async) { redisAsyncFree(m_async); m_async = nullptr; }
     return false;
   }
@@ -474,9 +475,8 @@ bool RedisStore::connectAsyncWrite(void) {
     m_async_write = redisAsyncConnect(m_cfg.host.c_str(), m_cfg.port);
   }
   if (!m_async_write || m_async_write->err) {
-    std::cerr << "*** ERROR: Redis async-write connect failed: "
-              << (m_async_write ? m_async_write->errstr : "alloc failed")
-              << std::endl;
+    geulog::error("redis", "Redis async-write connect failed: ",
+                  (m_async_write ? m_async_write->errstr : "alloc failed"));
     if (m_async_write) { redisAsyncFree(m_async_write); m_async_write = nullptr; }
     return false;
   }
@@ -504,7 +504,7 @@ void RedisStore::subscribe(void) {
 }
 void RedisStore::onAsyncDisconnect(int /*status*/) {
   if (m_shutting_down) return;
-  std::cerr << "*** WARN: Redis async disconnect" << std::endl;
+  geulog::warn("redis", "Redis async disconnect");
   // hiredis will free the context after this returns — just null out.
   m_async = nullptr;
   scheduleReconnect();
@@ -512,7 +512,7 @@ void RedisStore::onAsyncDisconnect(int /*status*/) {
 
 void RedisStore::onAsyncWriteDisconnect(int /*status*/) {
   if (m_shutting_down) return;
-  std::cerr << "*** WARN: Redis async-write disconnect" << std::endl;
+  geulog::warn("redis", "Redis async-write disconnect");
   m_async_write = nullptr;
   scheduleReconnect();
 }
@@ -540,14 +540,14 @@ void RedisStore::scheduleReconnect(void) {
     // Rebuild sync context too — its TCP socket is likely dead.
     if (m_sync) { redisFree(m_sync); m_sync = nullptr; }
     if (!connectSync()) {
-      std::cerr << "*** WARN: Redis sync reconnect failed" << std::endl;
+      geulog::warn("redis", "Redis sync reconnect failed");
       // async is up but sync isn't — schedule another retry so we fix sync.
       m_reconnect_backoff_s = std::min(m_reconnect_backoff_s * 2, 30);
       scheduleReconnect();
       return;
     }
-    std::cout << "RedisStore: reconnected, re-subscribing and requesting "
-                 "full reload" << std::endl;
+    geulog::info("redis", "RedisStore: reconnected, re-subscribing and requesting "
+                          "full reload");
     m_reconnect_backoff_s = 1;
     configChanged.emit("all");
   });
