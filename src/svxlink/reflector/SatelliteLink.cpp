@@ -1,6 +1,8 @@
 #include <iostream>
 #include <sstream>
 
+#include <Log.h>
+
 #include "SatelliteLink.h"
 #include "ReflectorMsg.h"
 #include "Reflector.h"
@@ -96,8 +98,7 @@ void SatelliteLink::onFrameReceived(FramedTcpConnection* con,
   ReflectorMsg header;
   if (!header.unpack(ss))
   {
-    cerr << "*** ERROR[SAT]: Failed to unpack satellite message header"
-         << endl;
+    geulog::error("satellite", "Failed to unpack satellite message header");
     return;
   }
 
@@ -105,8 +106,8 @@ void SatelliteLink::onFrameReceived(FramedTcpConnection* con,
       header.type() != MsgTrunkHello::TYPE &&
       header.type() != MsgTrunkHeartbeat::TYPE)
   {
-    cerr << "*** WARNING[SAT]: Ignoring message type=" << header.type()
-         << " before hello" << endl;
+    geulog::warn("satellite", "Ignoring message type=", header.type(),
+                 " before hello");
     return;
   }
 
@@ -133,8 +134,7 @@ void SatelliteLink::onFrameReceived(FramedTcpConnection* con,
       handleMsgTrunkFlush(ss);
       break;
     default:
-      cerr << "*** WARNING[SAT]: Unknown message type=" << header.type()
-           << endl;
+      geulog::warn("satellite", "Unknown message type=", header.type());
       break;
   }
 } /* SatelliteLink::onFrameReceived */
@@ -150,29 +150,29 @@ void SatelliteLink::handleMsgTrunkHello(std::istream& is)
   MsgTrunkHello msg;
   if (!msg.unpack(is))
   {
-    cerr << "*** ERROR[SAT]: Failed to unpack MsgTrunkHello" << endl;
+    geulog::error("satellite", "Failed to unpack MsgTrunkHello");
     return;
   }
 
   if (msg.id().empty())
   {
-    cerr << "*** ERROR[SAT]: Satellite sent empty ID" << endl;
+    geulog::error("satellite", "Satellite sent empty ID");
     m_con->disconnect();
     return;
   }
 
   if (msg.role() != MsgTrunkHello::ROLE_SATELLITE)
   {
-    cerr << "*** ERROR[SAT]: Expected ROLE_SATELLITE from '" << msg.id()
-         << "' but got role=" << (int)msg.role() << endl;
+    geulog::error("satellite", "Expected ROLE_SATELLITE from '", msg.id(),
+                  "' but got role=", (int)msg.role());
     m_con->disconnect();
     return;
   }
 
   if (!msg.verify(m_secret))
   {
-    cerr << "*** ERROR[SAT]: Authentication failed for satellite '"
-         << msg.id() << "'" << endl;
+    geulog::error("satellite", "Authentication failed for satellite '",
+                  msg.id(), "'");
     m_con->disconnect();
     return;
   }
@@ -180,8 +180,7 @@ void SatelliteLink::handleMsgTrunkHello(std::istream& is)
   m_satellite_id = msg.id();
   m_hello_received = true;
 
-  cout << "SAT: Satellite '" << m_satellite_id
-       << "' authenticated" << endl;
+  geulog::info("satellite", "Satellite '", m_satellite_id, "' authenticated");
 
   // Send hello reply so the satellite client can set m_hello_received
   // and start forwarding local events.  This also generates early
@@ -272,8 +271,7 @@ void SatelliteLink::sendMsg(const ReflectorMsg& msg)
   ReflectorMsg header(msg.type());
   if (!header.pack(ss) || !msg.pack(ss))
   {
-    cerr << "*** ERROR[SAT]: Failed to pack message type=" << msg.type()
-         << endl;
+    geulog::error("satellite", "Failed to pack message type=", msg.type());
     return;
   }
   m_hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
@@ -291,8 +289,8 @@ void SatelliteLink::heartbeatTick(Async::Timer* t)
 
   if (--m_hb_rx_cnt == 0)
   {
-    cerr << "*** ERROR[SAT '" << m_satellite_id
-         << "']: Heartbeat timeout — disconnecting" << endl;
+    geulog::error("satellite", "Satellite '", m_satellite_id,
+                  "': Heartbeat timeout — disconnecting");
     m_heartbeat_timer.setEnable(false);
     linkFailed(this);
   }

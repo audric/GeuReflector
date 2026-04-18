@@ -56,6 +56,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "ReflectorMsg.h"
 #include "Reflector.h"
 #include "TGHandler.h"
+#include <Log.h>
 
 
 /****************************************************************************
@@ -172,14 +173,13 @@ void TwinLink::acceptInboundConnection(Async::FramedTcpConnection* con,
     // without a clean FIN).
     if (!m_inbound_con->isConnected())
     {
-      cout << "TWIN: replacing stale inbound connection" << endl;
+      geulog::info("twin", "TWIN: replacing stale inbound connection");
       m_inbound_con = nullptr;
       m_ib_hello_received = false;
     }
     else
     {
-      cerr << "*** WARNING[TWIN]: Already have an inbound connection, "
-              "rejecting new one" << endl;
+      geulog::warn("twin", "TWIN: Already have an inbound connection, rejecting new one");
       con->disconnect();
       return;
     }
@@ -201,7 +201,7 @@ void TwinLink::acceptInboundConnection(Async::FramedTcpConnection* con,
              Async::TcpConnection::DisconnectReason /*reason*/) {
         if (m_inbound_con == c)
         {
-          cout << "TWIN: inbound disconnected" << endl;
+          geulog::info("twin", "TWIN: inbound disconnected");
           m_inbound_con = nullptr;
           m_ib_hello_received = false;
           m_ib_hb_tx_cnt = 0;
@@ -210,9 +210,9 @@ void TwinLink::acceptInboundConnection(Async::FramedTcpConnection* con,
       });
 
   m_peer_id_received = hello.id();
-  cout << "TWIN: Accepted inbound from " << con->remoteHost() << ":"
-       << con->remotePort() << " peer='" << hello.id()
-       << "' priority=" << m_peer_priority << endl;
+  geulog::info("twin", "TWIN: Accepted inbound from ", con->remoteHost(), ":",
+      con->remotePort(), " peer='", hello.id(),
+      "' priority=", m_peer_priority);
 
   // Send our hello back on the inbound connection
   sendMsgOnInbound(MsgTrunkHello(m_peer_id_config, m_local_prefix,
@@ -283,8 +283,7 @@ bool TwinLink::isActive(void) const
 
 void TwinLink::onConnected(void)
 {
-  cout << "TWIN: outbound connected to " << m_peer_host << ":"
-       << m_peer_port << endl;
+  geulog::info("twin", "TWIN: outbound connected to ", m_peer_host, ":", m_peer_port);
   m_ob_hello_received = false;
   m_ob_hb_tx_cnt = 0;
   m_ob_hb_rx_cnt = 0;
@@ -299,8 +298,8 @@ void TwinLink::onConnected(void)
 void TwinLink::onDisconnected(TcpConnection* /*con*/,
                               TcpConnection::DisconnectReason reason)
 {
-  cout << "TWIN: outbound disconnected: "
-       << TcpConnection::disconnectReasonStr(reason) << endl;
+  geulog::info("twin", "TWIN: outbound disconnected: ",
+      TcpConnection::disconnectReasonStr(reason));
   m_ob_hello_received = false;
   m_ob_hb_tx_cnt = 0;
   m_ob_hb_rx_cnt = 0;
@@ -328,7 +327,7 @@ void TwinLink::onFrameReceived(FramedTcpConnection* con,
   ReflectorMsg header;
   if (!header.unpack(ss))
   {
-    cerr << "*** ERROR[TWIN]: Failed to unpack frame header" << endl;
+    geulog::error("twin", "TWIN: Failed to unpack frame header");
     return;
   }
 
@@ -337,8 +336,7 @@ void TwinLink::onFrameReceived(FramedTcpConnection* con,
       header.type() != MsgTrunkHello::TYPE &&
       header.type() != MsgTrunkHeartbeat::TYPE)
   {
-    cerr << "*** WARNING[TWIN]: Ignoring message type=" << header.type()
-         << " before hello" << endl;
+    geulog::warn("twin", "TWIN: Ignoring message type=", header.type(), " before hello");
     return;
   }
 
@@ -398,14 +396,14 @@ void TwinLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
   MsgTrunkHello msg;
   if (!msg.unpack(is))
   {
-    cerr << "*** ERROR[TWIN]: Failed to unpack MsgTrunkHello" << endl;
+    geulog::error("twin", "TWIN: Failed to unpack MsgTrunkHello");
     return;
   }
 
   if (msg.role() != MsgTrunkHello::ROLE_TWIN)
   {
-    cerr << "*** ERROR[TWIN]: peer sent role=" << int(msg.role())
-         << " but we expect ROLE_TWIN" << endl;
+    geulog::error("twin", "TWIN: peer sent role=", int(msg.role()),
+        " but we expect ROLE_TWIN");
     m_con.disconnect();
     return;
   }
@@ -413,8 +411,8 @@ void TwinLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
   // Verify shared secret via HMAC
   if (!msg.verify(m_secret))
   {
-    cerr << "*** ERROR[TWIN]: HMAC authentication failed — peer '" << msg.id()
-         << "' sent invalid secret" << endl;
+    geulog::error("twin", "TWIN: HMAC authentication failed — peer '", msg.id(),
+        "' sent invalid secret");
     m_con.disconnect();
     return;
   }
@@ -422,9 +420,8 @@ void TwinLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
   // Both partners must share the same LOCAL_PREFIX
   if (msg.localPrefix() != m_local_prefix)
   {
-    cerr << "*** ERROR[TWIN]: local_prefix mismatch: ours='"
-         << m_local_prefix << "' theirs='" << msg.localPrefix() << "'"
-         << endl;
+    geulog::error("twin", "TWIN: local_prefix mismatch: ours='",
+        m_local_prefix, "' theirs='", msg.localPrefix(), "'");
     m_con.disconnect();
     return;
   }
@@ -433,8 +430,8 @@ void TwinLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
   m_peer_id_received = msg.id();
   m_ob_hello_received = true;
 
-  cout << "TWIN: hello from partner '" << msg.id()
-       << "' priority=" << m_peer_priority << " (authenticated)" << endl;
+  geulog::info("twin", "TWIN: hello from partner '", msg.id(),
+      "' priority=", m_peer_priority, " (authenticated)");
 } /* TwinLink::handleMsgTrunkHello */
 
 
@@ -443,7 +440,7 @@ void TwinLink::handleMsgTrunkTalkerStart(std::istream& is)
   MsgTrunkTalkerStart msg;
   if (!msg.unpack(is))
   {
-    cerr << "*** ERROR[TWIN]: Failed to unpack MsgTrunkTalkerStart" << endl;
+    geulog::error("twin", "TWIN: Failed to unpack MsgTrunkTalkerStart");
     return;
   }
   // setTrunkTalkerForTG fires trunkTalkerUpdated → onTrunkTalkerUpdated in
@@ -457,7 +454,7 @@ void TwinLink::handleMsgTrunkTalkerStop(std::istream& is)
   MsgTrunkTalkerStop msg;
   if (!msg.unpack(is))
   {
-    cerr << "*** ERROR[TWIN]: Failed to unpack MsgTrunkTalkerStop" << endl;
+    geulog::error("twin", "TWIN: Failed to unpack MsgTrunkTalkerStop");
     return;
   }
   // clearTrunkTalkerForTG fires trunkTalkerUpdated → onTrunkTalkerUpdated,
@@ -471,7 +468,7 @@ void TwinLink::handleMsgTrunkAudio(std::istream& is)
   MsgTrunkAudio msg;
   if (!msg.unpack(is))
   {
-    cerr << "*** ERROR[TWIN]: Failed to unpack MsgTrunkAudio" << endl;
+    geulog::error("twin", "TWIN: Failed to unpack MsgTrunkAudio");
     return;
   }
   if (msg.audio().empty()) return;
@@ -486,7 +483,7 @@ void TwinLink::handleMsgTrunkFlush(std::istream& is)
   MsgTrunkFlush msg;
   if (!msg.unpack(is))
   {
-    cerr << "*** ERROR[TWIN]: Failed to unpack MsgTrunkFlush" << endl;
+    geulog::error("twin", "TWIN: Failed to unpack MsgTrunkFlush");
     return;
   }
   m_reflector->broadcastUdpMsg(MsgUdpFlushSamples(),
@@ -506,7 +503,7 @@ void TwinLink::handleMsgTwinExtTalkerStart(std::istream& is)
   MsgTwinExtTalkerStart msg;
   if (!msg.unpack(is))
   {
-    cerr << "*** ERROR[TWIN]: Failed to unpack MsgTwinExtTalkerStart" << endl;
+    geulog::error("twin", "TWIN: Failed to unpack MsgTwinExtTalkerStart");
     return;
   }
   // setTrunkTalkerForTGViaPeer records peer attribution and fires
@@ -544,7 +541,7 @@ void TwinLink::heartbeatTick(Async::Timer* /*t*/)
     }
     if (++m_ob_hb_rx_cnt >= TWIN_HB_RX_THRESHOLD)
     {
-      cerr << "*** TWIN: outbound RX timeout, disconnecting" << endl;
+      geulog::warn("twin", "TWIN: outbound RX timeout, disconnecting");
       m_con.disconnect();
       m_ob_hb_rx_cnt = 0;
     }
@@ -560,7 +557,7 @@ void TwinLink::heartbeatTick(Async::Timer* /*t*/)
     }
     if (++m_ib_hb_rx_cnt >= TWIN_HB_RX_THRESHOLD)
     {
-      cerr << "*** TWIN: inbound RX timeout, disconnecting" << endl;
+      geulog::warn("twin", "TWIN: inbound RX timeout, disconnecting");
       m_inbound_con->disconnect();
       m_inbound_con = nullptr;
       m_ib_hb_rx_cnt = 0;
@@ -600,8 +597,7 @@ void TwinLink::sendMsgOnOutbound(const ReflectorMsg& msg)
   ReflectorMsg header(msg.type());
   if (!header.pack(ss) || !msg.pack(ss))
   {
-    cerr << "*** ERROR[TWIN]: Failed to pack message type=" << msg.type()
-         << endl;
+    geulog::error("twin", "TWIN: Failed to pack message type=", msg.type());
     return;
   }
   m_ob_hb_tx_cnt = 0;
@@ -616,8 +612,7 @@ void TwinLink::sendMsgOnInbound(const ReflectorMsg& msg)
   ReflectorMsg header(msg.type());
   if (!header.pack(ss) || !msg.pack(ss))
   {
-    cerr << "*** ERROR[TWIN]: Failed to pack message type=" << msg.type()
-         << endl;
+    geulog::error("twin", "TWIN: Failed to pack message type=", msg.type());
     return;
   }
   m_ib_hb_tx_cnt = 0;

@@ -35,6 +35,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <algorithm>
 #include <sstream>
 #include <regex>
+#include <Log.h>
 
 
 /****************************************************************************
@@ -164,9 +165,9 @@ bool TGHandler::switchTo(ReflectorClient *client, uint32_t tg)
     {
       if (m_id_map.size() >= MAX_ACTIVE_TGS)
       {
-        std::cerr << "*** WARNING: Maximum active TG limit ("
-                  << MAX_ACTIVE_TGS << ") reached, rejecting TG #"
-                  << tg << std::endl;
+        geulog::warn("core", "Maximum active TG limit (",
+                     static_cast<size_t>(MAX_ACTIVE_TGS),
+                     ") reached, rejecting TG #", tg);
         return false;
       }
       tg_info = new TGInfo(tg);
@@ -286,9 +287,9 @@ void TGHandler::setTrunkTalkerForTG(uint32_t tg, const std::string& callsign)
     if (m_trunk_talkers.find(tg) == m_trunk_talkers.end() &&
         m_trunk_talkers.size() >= MAX_TRUNK_TALKERS)
     {
-      std::cerr << "*** WARNING: Maximum trunk talker limit ("
-                << MAX_TRUNK_TALKERS << ") reached, ignoring TG #"
-                << tg << std::endl;
+      geulog::warn("trunk", "Maximum trunk talker limit (",
+                   static_cast<size_t>(MAX_TRUNK_TALKERS),
+                   ") reached, ignoring TG #", tg);
       return;
     }
     m_trunk_talkers[tg] = callsign;
@@ -393,8 +394,8 @@ bool TGHandler::allowTgSelection(ReflectorClient *client, uint32_t tg)
   }
   catch (std::regex_error& e)
   {
-    std::cerr << "*** WARNING: Regular expression parsing error in "
-              << ss.str() << "/ALLOW: " << e.what() << std::endl;
+    geulog::warn("core", "Regular expression parsing error in ",
+                 ss.str(), "/ALLOW: ", e.what());
   }
   return false;
 } /* TGHandler::allowTgSelection */
@@ -423,8 +424,8 @@ bool TGHandler::allowTgMonitoring(ReflectorClient *client, uint32_t tg)
   }
   catch (std::regex_error& e)
   {
-    std::cerr << "*** WARNING: Regular expression parsing error in "
-              << ss.str() << "/ALLOW_MONITOR: " << e.what() << std::endl;
+    geulog::warn("core", "Regular expression parsing error in ",
+                 ss.str(), "/ALLOW_MONITOR: ", e.what());
   }
   return false;
 } /* TGHandler::allowTgMonitoring */
@@ -477,15 +478,15 @@ void TGHandler::checkTimers(Async::Timer *t)
       timersub(&now, &tg_info->last_talker_timestamp, &diff);
       if (diff.tv_sec > TALKER_AUDIO_TIMEOUT)
       {
-        cout << tg_info->talker->callsign() << ": Talker audio timeout on TG #"
-             << tg_info->id << endl;
+        geulog::info("core", tg_info->talker->callsign(),
+                     ": Talker audio timeout on TG #", tg_info->id);
         setTalkerForTG(tg_info->id, 0);
       }
 
       if ((tg_info->sql_timeout_cnt > 0) && (--tg_info->sql_timeout_cnt == 0))
       {
-        cout << tg_info->talker->callsign() << ": Talker audio timeout on TG #"
-             << tg_info->id << endl;
+        geulog::info("core", tg_info->talker->callsign(),
+                     ": Talker audio timeout on TG #", tg_info->id);
         tg_info->talker->setBlock(m_sql_timeout_blocktime);
         setTalkerForTG(tg_info->id, 0);
       }
@@ -514,25 +515,26 @@ void TGHandler::removeClientP(TGInfo *tg_info, ReflectorClient* client)
 
 void TGHandler::printTGStatus(void)
 {
-  std::cout << "### ----------- BEGIN ----------------" << std::endl;
+  geulog::debug("core", "----------- BEGIN ----------------");
   for (IdMap::const_iterator it = m_id_map.begin();
        it != m_id_map.end(); ++it)
   {
     TGInfo *tg_info = it->second;
-    std::cout << "### " << tg_info->id << ": ";
+    std::ostringstream line;
+    line << tg_info->id << ": ";
     for (ClientSet::const_iterator it = tg_info->clients.begin();
          it != tg_info->clients.end(); ++it)
     {
       ReflectorClient* client = *it;
       if (client == tg_info->talker)
       {
-        std::cout << "*";
+        line << "*";
       }
-      std::cout << client->callsign() << " ";
+      line << client->callsign() << " ";
     }
-    std::cout << std::endl;
+    geulog::debug("core", line.str());
   }
-  std::cout << "### ------------ END -----------------" << std::endl;
+  geulog::debug("core", "------------ END -----------------");
 } /* TGHandler::printTGStatus */
 
 

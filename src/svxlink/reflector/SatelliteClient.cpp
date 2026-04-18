@@ -4,6 +4,8 @@
 
 #include <AsyncTcpConnection.h>
 
+#include <Log.h>
+
 #include "SatelliteClient.h"
 #include "ReflectorMsg.h"
 #include "Reflector.h"
@@ -47,7 +49,7 @@ bool SatelliteClient::initialize(void)
   if (!m_cfg.getValue("GLOBAL", "SATELLITE_OF", m_parent_host) ||
       m_parent_host.empty())
   {
-    cerr << "*** ERROR: Missing SATELLITE_OF in [GLOBAL]" << endl;
+    geulog::error("satellite", "Missing SATELLITE_OF in [GLOBAL]");
     return false;
   }
 
@@ -56,7 +58,7 @@ bool SatelliteClient::initialize(void)
   if (!m_cfg.getValue("GLOBAL", "SATELLITE_SECRET", m_secret) ||
       m_secret.empty())
   {
-    cerr << "*** ERROR: Missing SATELLITE_SECRET in [GLOBAL]" << endl;
+    geulog::error("satellite", "Missing SATELLITE_SECRET in [GLOBAL]");
     return false;
   }
 
@@ -64,8 +66,8 @@ bool SatelliteClient::initialize(void)
   m_satellite_id = "satellite";
   m_cfg.getValue("GLOBAL", "SATELLITE_ID", m_satellite_id);
 
-  cout << "SATELLITE: Connecting to parent " << m_parent_host
-       << ":" << m_parent_port << " as '" << m_satellite_id << "'" << endl;
+  geulog::info("satellite", "Connecting to parent ", m_parent_host,
+               ":", m_parent_port, " as '", m_satellite_id, "'");
 
   m_con.addStaticSRVRecord(0, 0, 0, m_parent_port, m_parent_host);
   m_con.connect();
@@ -106,8 +108,8 @@ void SatelliteClient::onLocalFlush(uint32_t tg)
 
 void SatelliteClient::onConnected(void)
 {
-  cout << "SATELLITE: Connected to parent " << m_con.remoteHost()
-       << ":" << m_con.remotePort() << endl;
+  geulog::info("satellite", "Connected to parent ", m_con.remoteHost(),
+               ":", m_con.remotePort());
 
   m_hello_received = false;
   m_hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
@@ -123,8 +125,8 @@ void SatelliteClient::onConnected(void)
 void SatelliteClient::onDisconnected(TcpConnection* con,
                                       TcpConnection::DisconnectReason reason)
 {
-  cout << "SATELLITE: Disconnected from parent: "
-       << TcpConnection::disconnectReasonStr(reason) << endl;
+  geulog::info("satellite", "Disconnected from parent: ",
+               TcpConnection::disconnectReasonStr(reason));
 
   m_heartbeat_timer.setEnable(false);
   m_hello_received = false;
@@ -142,7 +144,7 @@ void SatelliteClient::onFrameReceived(FramedTcpConnection* con,
   ReflectorMsg header;
   if (!header.unpack(ss))
   {
-    cerr << "*** ERROR[SATELLITE]: Failed to unpack message header" << endl;
+    geulog::error("satellite", "Failed to unpack message header");
     return;
   }
 
@@ -191,19 +193,19 @@ void SatelliteClient::handleMsgTrunkHello(std::istream& is)
   MsgTrunkHello msg;
   if (!msg.unpack(is))
   {
-    cerr << "*** ERROR[SATELLITE]: Failed to unpack MsgTrunkHello" << endl;
+    geulog::error("satellite", "Failed to unpack MsgTrunkHello");
     return;
   }
 
   if (!msg.verify(m_secret))
   {
-    cerr << "*** ERROR[SATELLITE]: Parent authentication failed" << endl;
+    geulog::error("satellite", "Parent authentication failed");
     m_con.disconnect();
     return;
   }
 
   m_hello_received = true;
-  cout << "SATELLITE: Parent authenticated (id='" << msg.id() << "')" << endl;
+  geulog::info("satellite", "Parent authenticated (id='", msg.id(), "')");
 } /* SatelliteClient::handleMsgTrunkHello */
 
 
@@ -256,8 +258,7 @@ void SatelliteClient::sendMsg(const ReflectorMsg& msg)
   ReflectorMsg header(msg.type());
   if (!header.pack(ss) || !msg.pack(ss))
   {
-    cerr << "*** ERROR[SATELLITE]: Failed to pack message type="
-         << msg.type() << endl;
+    geulog::error("satellite", "Failed to pack message type=", msg.type());
     return;
   }
   m_hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
@@ -275,7 +276,7 @@ void SatelliteClient::heartbeatTick(Async::Timer* t)
 
   if (--m_hb_rx_cnt == 0)
   {
-    cerr << "*** ERROR[SATELLITE]: Heartbeat timeout — disconnecting" << endl;
+    geulog::error("satellite", "Heartbeat timeout — disconnecting");
     m_con.disconnect();
   }
 } /* SatelliteClient::heartbeatTick */

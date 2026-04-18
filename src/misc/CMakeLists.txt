@@ -1,6 +1,6 @@
 set(LIBNAME svxmisc)
-set(EXPINC common.h CppStdCompat.h LogWriter.h)
-set(LIBSRC common.cpp LogWriter.cpp)
+set(EXPINC common.h CppStdCompat.h LogWriter.h Log.h)
+set(LIBSRC common.cpp LogWriter.cpp Log.cpp)
 
 # Copy exported include files to the global include directory
 foreach(incfile ${EXPINC})

@@ -64,6 +64,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "Reflector.h"
 #include "TGHandler.h"
 #include "RedisStore.h"
+#include <Log.h>
 
 
 /****************************************************************************
@@ -219,9 +220,9 @@ ReflectorClient::ReflectorClient(Reflector *ref, Async::FramedTcpConnection *con
   {
     m_supported_codecs.erase(m_supported_codecs.begin()+1,
                              m_supported_codecs.end());
-    cout << "*** WARNING: The GLOBAL/CODECS configuration "
-            "variable can only take one codec at the moment. Using the first "
-            "one: \"" << m_supported_codecs.front() << "\"" << endl;
+    geulog::warn("client", "The GLOBAL/CODECS configuration variable can only "
+                 "take one codec at the moment. Using the first one: \"",
+                 m_supported_codecs.front(), "\"");
   }
   else if (m_supported_codecs.empty())
   {
@@ -286,7 +287,7 @@ int ReflectorClient::sendMsg(const ReflectorMsg& msg)
     ReflectorMsg header(msg.type());
     if (!header.pack(ss) || !msg.pack(ss))
     {
-      cerr << "*** ERROR: Failed to pack TCP message\n";
+      geulog::error("client", "Failed to pack TCP message");
       errno = EBADMSG;
     }
   }
@@ -299,10 +300,8 @@ int ReflectorClient::sendMsg(const ReflectorMsg& msg)
       return ret;
     }
   }
-  std::cerr << "*** ERROR[" << m_con->remoteHost() << ":"
-            << m_con->remotePort() << "]: Write to client failed due to '"
-            << strerror(errno) << "'. Message type=" << msg.type() << "."
-            << std::endl;
+  geulog::debug("client", "sendMsg: write failed: ", strerror(errno),
+                " (msg type ", msg.type(), ")");
   disconnect();
   return -1;
 } /* ReflectorClient::sendMsg */
@@ -336,12 +335,12 @@ void ReflectorClient::setBlock(unsigned blocktime)
 {
   if (blocktime > 0)
   {
-    std::cout << m_callsign << ": Blocking talker for " << blocktime
-              << " seconds" << std::endl;
+    geulog::info("client", m_callsign, ": Blocking talker for ", blocktime,
+                 " seconds");
   }
   else if (m_blocktime > 0)
   {
-    std::cout << m_callsign << ": Unblocking talker" << std::endl;
+    geulog::info("client", m_callsign, ": Unblocking talker");
   }
   m_blocktime = blocktime;
   m_remaining_blocktime = blocktime;
@@ -505,9 +504,8 @@ void ReflectorClient::onFrameReceived(FramedTcpConnection *con,
   ReflectorMsg header;
   if (!header.unpack(ss))
   {
-    std::cout << "*** ERROR[" << idss.str()
-              << "]: Unpacking failed for TCP message header"
-              << std::endl;
+    geulog::error("client", "[", idss.str(),
+                  "]: Unpacking failed for TCP message header");
     sendError("Protocol error");
     return;
   }
@@ -517,10 +515,8 @@ void ReflectorClient::onFrameReceived(FramedTcpConnection *con,
       // FIXME: This should really be an error and the client should be
       // disconnected but it will cause too much problems in existing
       // misbeaving clients at the moment.
-    std::cout << "*** WARNING[" << idss.str()
-              << "]: User message " << header.type()
-              << " received in unauthenticated state"
-              << std::endl;
+    geulog::warn("client", "[", idss.str(), "]: User message ", header.type(),
+                 " received in unauthenticated state");
     //sendError("Protocol error");
     // Do not reset heartbeat — unauthenticated clients must not stay alive
     return;
@@ -598,9 +594,8 @@ void ReflectorClient::handleMsgProtoVer(std::istream& is)
   MsgProtoVer msg;
   if (!msg.unpack(is))
   {
-    std::cout << "*** ERROR[" << m_con->remoteHost() << ":"
-              << m_con->remotePort() << "]: Could not unpack MsgProtoVer"
-              << std::endl;
+    geulog::error("client", "[", m_con->remoteHost(), ":",
+                  m_con->remotePort(), "]: Could not unpack MsgProtoVer");
     sendError("Illegal MsgProtoVer protocol message received");
     return;
   }
@@ -608,36 +603,36 @@ void ReflectorClient::handleMsgProtoVer(std::istream& is)
   ProtoVer max_proto_ver(MsgProtoVer::MAJOR, MsgProtoVer::MINOR);
   if (m_client_proto_ver > max_proto_ver)
   {
-    std::cout << m_con->remoteHost() << ":" << m_con->remotePort()
-              << ": Using protocol version "
-              << msg.majorVer() << "." << msg.minorVer()
-              << " which is newer than we can handle.";
     if (m_con_state == STATE_EXPECT_PROTO_VER)
     {
-      std::cout << " Asking for downgrade to "
-                << MsgProtoVer::MAJOR << "." << MsgProtoVer::MINOR << ".";
+      geulog::warn("client", m_con->remoteHost(), ":", m_con->remotePort(),
+                   ": Using protocol version ", msg.majorVer(), ".",
+                   msg.minorVer(), " which is newer than we can handle."
+                   " Asking for downgrade to ",
+                   MsgProtoVer::MAJOR, ".", MsgProtoVer::MINOR, ".");
       sendMsg(MsgProtoVerDowngrade());
     }
     else
     {
-      std::cout << " Downgrade failed.";
+      geulog::warn("client", m_con->remoteHost(), ":", m_con->remotePort(),
+                   ": Using protocol version ", msg.majorVer(), ".",
+                   msg.minorVer(), " which is newer than we can handle."
+                   " Downgrade failed.");
       std::ostringstream ss;
       ss << "Unsupported protocol version " << msg.majorVer() << "."
          << msg.minorVer() << ". May be at most "
          << MsgProtoVer::MAJOR << "." << MsgProtoVer::MINOR << ".";
       sendError(ss.str());
     }
-    std::cout << std::endl;
     return;
   }
   else if (m_client_proto_ver < ProtoVer(MIN_MAJOR_VER, MIN_MINOR_VER))
   {
-    std::cout << "*** ERROR[" << m_con->remoteHost() << ":"
-              << m_con->remotePort()
-              << "]: Client is using protocol version "
-              << msg.majorVer() << "." << msg.minorVer()
-              << " which is too old. Must at least be version "
-              << MIN_MAJOR_VER << "." << MIN_MINOR_VER << "." << std::endl;
+    geulog::error("client", "[", m_con->remoteHost(), ":", m_con->remotePort(),
+                  "]: Client is using protocol version ",
+                  msg.majorVer(), ".", msg.minorVer(),
+                  " which is too old. Must at least be version ",
+                  MIN_MAJOR_VER, ".", MIN_MINOR_VER, ".");
     std::ostringstream ss;
     ss << "Unsupported protocol version " << msg.majorVer() << "."
        << msg.minorVer() << ". Must be at least "
@@ -857,8 +852,8 @@ void ReflectorClient::handleSelectTG(std::istream& is)
   MsgSelectTG msg;
   if (!msg.unpack(is))
   {
-    cout << "Client " << m_con->remoteHost() << ":" << m_con->remotePort()
-         << " ERROR: Could not unpack MsgSelectTG" << endl;
+    geulog::error("client", "Client ", m_con->remoteHost(), ":",
+                  m_con->remotePort(), ": Could not unpack MsgSelectTG");
     sendError("Illegal MsgSelectTG protocol message received");
     return;
   }
@@ -887,8 +882,8 @@ void ReflectorClient::handleTgMonitor(std::istream& is)
   MsgTgMonitor msg;
   if (!msg.unpack(is))
   {
-    cout << "Client " << m_con->remoteHost() << ":" << m_con->remotePort()
-         << " ERROR: Could not unpack MsgTgMonitor" << endl;
+    geulog::error("client", "Client ", m_con->remoteHost(), ":",
+                  m_con->remotePort(), ": Could not unpack MsgTgMonitor");
     sendError("Illegal MsgTgMonitor protocol message received");
     return;
   }
@@ -899,16 +894,18 @@ void ReflectorClient::handleTgMonitor(std::istream& is)
     const auto& tg = *it;
     if (!TGHandler::instance()->allowTgMonitoring(this, tg) || (tg == 0))
     {
-      std::cout << m_callsign << ": Not allowed to monitor TG #"
-                << tg << std::endl;
+      geulog::info("client", m_callsign, ": Not allowed to monitor TG #", tg);
       tgs.erase(it++);
       continue;
     }
     ++it;
   }
-  cout << m_callsign << ": Monitor TG#: [ ";
-  std::copy(tgs.begin(), tgs.end(), std::ostream_iterator<uint32_t>(cout, " "));
-  cout << "]" << endl;
+  {
+    std::ostringstream tglist;
+    std::copy(tgs.begin(), tgs.end(),
+              std::ostream_iterator<uint32_t>(tglist, " "));
+    geulog::info("client", m_callsign, ": Monitor TG#: [ ", tglist.str(), "]");
+  }
 
   setMonitoredTGs(tgs);
 } /* ReflectorClient::handleTgMonitor */
@@ -922,8 +919,8 @@ void ReflectorClient::handleNodeInfo(std::istream& is)
     MsgNodeInfo msg;
     if (!msg.unpack(is))
     {
-      cout << "Client " << m_con->remoteHost() << ":" << m_con->remotePort()
-           << " ERROR: Could not unpack MsgNodeInfo" << endl;
+      geulog::error("client", "Client ", m_con->remoteHost(), ":",
+                    m_con->remotePort(), ": Could not unpack MsgNodeInfo");
       sendError("Illegal MsgNodeInfo protocol message received");
       return;
     }
@@ -941,9 +938,8 @@ void ReflectorClient::handleNodeInfo(std::istream& is)
     MsgNodeInfoV2 msg;
     if (!msg.unpack(is))
     {
-      std::cout << "Client " << m_con->remoteHost() << ":"
-                << m_con->remotePort()
-                << " ERROR: Could not unpack MsgNodeInfoV2" << std::endl;
+      geulog::error("client", "Client ", m_con->remoteHost(), ":",
+                    m_con->remotePort(), ": Could not unpack MsgNodeInfoV2");
       sendError("Illegal MsgNodeInfo protocol message received");
       return;
     }
@@ -1012,9 +1008,8 @@ void ReflectorClient::handleNodeInfo(std::istream& is)
   }
   catch (const Json::Exception& e)
   {
-    std::cerr << "*** WARNING[" << m_callsign
-              << "]: Failed to parse MsgNodeInfo JSON object: "
-              << e.what() << std::endl;
+    geulog::warn("client", "[", m_callsign,
+                 "]: Failed to parse MsgNodeInfo JSON object: ", e.what());
   }
   if (m_reflector != nullptr) m_reflector->publishClientStatus(this);
 } /* ReflectorClient::handleNodeInfo */
@@ -1025,9 +1020,8 @@ void ReflectorClient::handleMsgSignalStrengthValues(std::istream& is)
   MsgSignalStrengthValues msg;
   if (!msg.unpack(is))
   {
-    cerr << "*** WARNING[" << callsign()
-         << "]: Could not unpack incoming "
-            "MsgSignalStrengthValues message" << endl;
+    geulog::warn("client", "[", callsign(),
+                 "]: Could not unpack incoming MsgSignalStrengthValues message");
     return;
   }
   typedef MsgSignalStrengthValues::Rxs::const_iterator RxsIter;
@@ -1055,8 +1049,8 @@ void ReflectorClient::handleMsgTxStatus(std::istream& is)
   MsgTxStatus msg;
   if (!msg.unpack(is))
   {
-    cerr << "*** WARNING[" << callsign()
-         << "]: Could not unpack incoming MsgTxStatus message" << endl;
+    geulog::warn("client", "[", callsign(),
+                 "]: Could not unpack incoming MsgTxStatus message");
     return;
   }
   typedef MsgTxStatus::Txs::const_iterator TxsIter;
@@ -1077,8 +1071,8 @@ void ReflectorClient::handleRequestQsy(std::istream& is)
   MsgRequestQsy msg;
   if (!msg.unpack(is))
   {
-    cout << "Client " << m_con->remoteHost() << ":" << m_con->remotePort()
-         << " ERROR: Could not unpack MsgRequestQsy" << endl;
+    geulog::error("client", "Client ", m_con->remoteHost(), ":",
+                  m_con->remotePort(), ": Could not unpack MsgRequestQsy");
     sendError("Illegal MsgRequestQsy protocol message received");
     return;
   }
@@ -1091,16 +1085,13 @@ void ReflectorClient::handleStateEvent(std::istream& is)
   MsgStateEvent msg;
   if (!msg.unpack(is))
   {
-    cout << "Client " << m_con->remoteHost() << ":" << m_con->remotePort()
-         << " ERROR: Could not unpack MsgStateEvent" << endl;
+    geulog::error("client", "Client ", m_con->remoteHost(), ":",
+                  m_con->remotePort(), ": Could not unpack MsgStateEvent");
     sendError("Illegal MsgStateEvent protocol message received");
     return;
   }
-  cout << "### ReflectorClient::handleStateEvent:"
-       << " src=" << msg.src()
-       << " name=" << msg.name()
-       << " msg=" << msg.msg()
-       << std::endl;
+  geulog::debug("client", "StateEvent: src=", msg.src(),
+                " name=", msg.name(), " msg=", msg.msg());
 } /* ReflectorClient::handleStateEvent */
 
 
@@ -1194,15 +1185,14 @@ void ReflectorClient::handleMsgError(std::istream& is)
   {
     message = msg.message();
   }
-  if (!m_callsign.empty())
   {
-    cout << m_callsign << ": ";
+    const std::string id = m_callsign.empty()
+        ? (m_con->remoteHost().toString() + ":" +
+           std::to_string(m_con->remotePort()))
+        : m_callsign;
+    geulog::info("client", id, ": Error message received from client: ",
+                 message);
   }
-  else
-  {
-    cout << m_con->remoteHost() << ":" << m_con->remotePort() << " ";
-  }
-  cout << "Error message received from client: " << message << endl;
   disconnect();
 } /* ReflectorClient::handleMsgError */
 
@@ -1248,31 +1238,21 @@ void ReflectorClient::handleHeartbeat(Async::Timer *t)
 
   if (--m_heartbeat_rx_cnt == 0)
   {
-    if (!callsign().empty())
-    {
-      cout << callsign() << ": ";
-    }
-    else
-    {
-      cout << "Client " << m_con->remoteHost() << ":"
-           << m_con->remotePort() << " ";
-    }
-    cout << "TCP heartbeat timeout" << endl;
+    const std::string id = callsign().empty()
+        ? ("Client " + m_con->remoteHost().toString() + ":" +
+           std::to_string(m_con->remotePort()))
+        : callsign();
+    geulog::info("client", id, ": TCP heartbeat timeout");
     sendError("TCP heartbeat timeout");
   }
 
   if (--m_udp_heartbeat_rx_cnt == 0)
   {
-    if (!callsign().empty())
-    {
-      cout << callsign() << ": ";
-    }
-    else
-    {
-      cout << "Client " << m_con->remoteHost() << ":"
-           << m_con->remotePort() << " ";
-    }
-    cout << "UDP heartbeat timeout" << endl;
+    const std::string id = callsign().empty()
+        ? ("Client " + m_con->remoteHost().toString() + ":" +
+           std::to_string(m_con->remotePort()))
+        : callsign();
+    geulog::info("client", id, ": UDP heartbeat timeout");
     sendError("UDP heartbeat timeout");
   }
 
@@ -1295,24 +1275,23 @@ std::string ReflectorClient::lookupUserKey(const std::string& callsign)
   if (m_reflector->redisStore() != nullptr) {
     std::string key = m_reflector->redisStore()->lookupUserKey(callsign);
     if (key.empty()) {
-      cout << "*** WARNING: Redis lookup failed for user \""
-           << callsign << "\"" << endl;
+      geulog::warn("client", "Redis lookup failed for user \"",
+                   callsign, "\"");
     }
     return key;
   }
   string auth_group;
   if (!m_cfg->getValue("USERS", callsign, auth_group) || auth_group.empty())
   {
-    cout << "*** WARNING: Unknown user \"" << callsign << "\""
-         << endl;
+    geulog::warn("client", "Unknown user \"", callsign, "\"");
     return "";
   }
   string auth_key;
   if (!m_cfg->getValue("PASSWORDS", auth_group, auth_key) || auth_key.empty())
   {
-    cout << "*** ERROR: User \"" << callsign << "\" found in SvxReflector "
-         << "configuration but password with groupname \"" << auth_group
-         << "\" not found." << endl;
+    geulog::error("client", "User \"", callsign, "\" found in SvxReflector "
+                  "configuration but password with groupname \"", auth_group,
+                  "\" not found.");
     return "";
   }
   return auth_key;
@@ -1329,11 +1308,10 @@ void ReflectorClient::connectionAuthenticated(const std::string& callsign)
     m_con->setMaxRxFrameSize(ReflectorMsg::MAX_POSTAUTH_FRAME_SIZE);
     m_callsign = callsign;
     sendMsg(MsgAuthOk());
-    cout << m_callsign << ": Login OK from "
-         << m_con->remoteHost() << ":" << m_con->remotePort()
-         << " with protocol version " << m_client_proto_ver.majorVer()
-         << "." << m_client_proto_ver.minorVer()
-         << endl;
+    geulog::info("client", m_callsign, ": Login OK from ",
+                 m_con->remoteHost(), ":", m_con->remotePort(),
+                 " with protocol version ", m_client_proto_ver.majorVer(),
+                 ".", m_client_proto_ver.minorVer());
     m_con_state = STATE_CONNECTED;
 
     assert(client_callsign_map.find(m_callsign) == client_callsign_map.end());
@@ -1360,7 +1338,7 @@ void ReflectorClient::connectionAuthenticated(const std::string& callsign)
   }
   else
   {
-    cout << callsign << ": Already connected" << endl;
+    geulog::info("client", callsign, ": Already connected");
     sendError("Access denied");
   }
 } /* ReflectorClient::connectionAuthenticated */
@@ -1406,11 +1384,10 @@ void ReflectorClient::renewClientCertificate(void)
   auto cert = m_con->sslPeerCertificate();
   if (cert.isNull() || !m_reflector->renewedClientCert(cert))
   {
-    std::cerr << "*** WARNING: Certificate renewal for '"
-              << m_callsign << "' failed" << std::endl;
+    geulog::warn("client", "Certificate renewal for '", m_callsign, "' failed");
     return;
   }
-  std::cout << m_callsign << ": Send renewed client certificate" << std::endl;
+  geulog::info("client", m_callsign, ": Send renewed client certificate");
   sendClientCert(cert);
   m_con_state = STATE_EXPECT_DISCONNECT;
 } /* ReflectorClient::renewClientCertificate */
@@ -1444,12 +1421,12 @@ void ReflectorClient::setTg(uint32_t tg)
   {
     if (TGHandler::instance()->switchTo(this, tg))
     {
-      std::cout << m_callsign << ": Select TG #" << tg << std::endl;
+      geulog::info("client", m_callsign, ": Select TG #", tg);
     }
     else
     {
       // FIXME: Notify the client that the TG selection was not allowed
-      std::cout << m_callsign << ": Not allowed to use TG #" << tg << std::endl;
+      geulog::info("client", m_callsign, ": Not allowed to use TG #", tg);
       TGHandler::instance()->switchTo(this, 0);
       tg = 0;
     }

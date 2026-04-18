@@ -67,6 +67,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <AsyncConfig.h>
 #include <config.h>
 #include <LogWriter.h>
+#include <Log.h>
 
 
 /****************************************************************************
@@ -575,6 +576,12 @@ int main(int argc, const char *argv[])
   cfg.getValue("GLOBAL", "TIMESTAMP_FORMAT", tstamp_format);
   logwriter.setTimestampFormat(tstamp_format);
 
+  if (!geulog::configure(cfg))
+  {
+    cerr << "*** ERROR: logging facade configuration failed" << endl;
+    exit(1);
+  }
+
   cout << PROGRAM_NAME " v" SVXREFLECTOR_VERSION
           " Copyright (C) 2003-2025 Tobias Blomberg / SM0SVX\n";
   cout << "Modified with server-to-server trunk support by IW1GEU.\n\n";
@@ -623,6 +630,7 @@ int main(int argc, const char *argv[])
     tcsetattr(STDIN_FILENO, TCSANOW, &org_termios);
   }
 
+  geulog::shutdown();
   return 0;
 } /* main */
 

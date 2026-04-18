@@ -48,6 +48,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 #include <AsyncConfig.h>
 #include <AsyncTcpConnection.h>
+#include <Log.h>
 
 
 /****************************************************************************
@@ -265,13 +266,6 @@ bool TrunkLink::initialize(void)
     return false;
   }
 
-  // TRUNK_DEBUG — verbose logging for connection diagnostics
-  std::string debug_str;
-  if (m_cfg.getValue("GLOBAL", "TRUNK_DEBUG", debug_str))
-  {
-    m_debug = (debug_str == "1" || debug_str == "true" || debug_str == "yes");
-  }
-
   // PEER_ID — name we advertise in our hello (defaults to section name).
   // Used by the receiving peer as the MQTT topic component for this link.
   if (!m_cfg.getValue(m_section, "PEER_ID", m_peer_id_config)
@@ -335,7 +329,6 @@ bool TrunkLink::initialize(void)
     cout << " port=" << m_peer_port
          << " local_prefix=" << joinPrefixes(m_local_prefix)
          << " remote_prefix=" << joinPrefixes(m_remote_prefix)
-         << (m_debug ? " [debug on]" : "")
          << (m_blacklist_filter.empty() ? "" : " [blacklist]")
          << (m_allow_filter.empty()     ? "" : " [whitelist]")
          << (m_tg_map_in.empty()        ? "" : " [tg_map]")
@@ -376,7 +369,6 @@ bool TrunkLink::initialize(void)
   cout << m_section << ": Trunk to " << m_peer_host << ":" << m_peer_port
        << " local_prefix=" << joinPrefixes(m_local_prefix)
        << " remote_prefix=" << joinPrefixes(m_remote_prefix)
-       << (m_debug ? " [debug on]" : "")
        << (m_blacklist_filter.empty() ? "" : " [blacklist]")
        << (m_allow_filter.empty()     ? "" : " [whitelist]")
        << (m_tg_map_in.empty()        ? "" : " [tg_map]")
@@ -547,10 +539,10 @@ void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
     if (m_peer_id_received.empty())
       m_peer_id_received = sanitizeIdent(hello.id(), 64);
 
-    cout << m_section << ": paired inbound accepted from peer '"
-         << hello.id() << "' " << con->remoteHost() << ":"
-         << con->remotePort() << " priority=" << hello.priority()
-         << " total_inbound=" << m_ib_cons.size() << endl;
+    geulog::info("trunk", m_section, ": paired inbound accepted from peer '",
+                 hello.id(), "' ", con->remoteHost(), ":",
+                 con->remotePort(), " priority=", hello.priority(),
+                 " total_inbound=", m_ib_cons.size());
 
     m_heartbeat_timer.setEnable(true);
 
@@ -564,18 +556,15 @@ void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
   // Non-paired mode: only one inbound allowed
   if (m_inbound_con != nullptr)
   {
-    cerr << "*** WARNING[" << m_section
-         << "]: Already have an inbound connection, rejecting new one" << endl;
-    if (m_debug)
-    {
-      cerr << m_section << " [DEBUG]: existing inbound from "
-           << m_inbound_con->remoteHost() << ":"
-           << m_inbound_con->remotePort()
-           << " ib_hello=" << m_ib_hello_received
-           << " ib_hb_rx=" << m_ib_hb_rx_cnt
-           << " new inbound from " << con->remoteHost() << ":"
-           << con->remotePort() << endl;
-    }
+    geulog::warn("trunk", "[", m_section,
+                 "]: Already have an inbound connection, rejecting new one");
+    geulog::debug("trunk", m_section, ": existing inbound from ",
+                  m_inbound_con->remoteHost(), ":",
+                  m_inbound_con->remotePort(),
+                  " ib_hello=", m_ib_hello_received,
+                  " ib_hb_rx=", m_ib_hb_rx_cnt,
+                  " new inbound from ", con->remoteHost(), ":",
+                  con->remotePort());
     con->disconnect();
     return;
   }
@@ -594,20 +583,16 @@ void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
       mem_fun(*this, &TrunkLink::onFrameReceived));
 
   m_peer_id_received = sanitizeIdent(hello.id(), 64);
-  cout << m_section << ": Accepted inbound from " << con->remoteHost()
-       << ":" << con->remotePort() << " peer='" << hello.id()
-       << "' priority=" << m_peer_priority << endl;
+  geulog::info("trunk", m_section, ": Accepted inbound from ",
+               con->remoteHost(), ":", con->remotePort(),
+               " peer='", hello.id(), "' priority=", m_peer_priority);
   m_reflector->onTrunkStateChanged(m_section, peerId(), "inbound", true,
                                    con->remoteHost().toString(),
                                    con->remotePort());
 
-  if (m_debug)
-  {
-    cout << m_section << " [DEBUG]: inbound state: ob_connected="
-         << m_con.isConnected() << " ob_hello=" << m_ob_hello_received
-         << " ib_hb_tx=" << m_ib_hb_tx_cnt
-         << " ib_hb_rx=" << m_ib_hb_rx_cnt << endl;
-  }
+  geulog::debug("trunk", m_section, ": inbound state: ob_connected=",
+                m_con.isConnected(), " ob_hello=", m_ob_hello_received,
+                " ib_hb_tx=", m_ib_hb_tx_cnt, " ib_hb_rx=", m_ib_hb_rx_cnt);
 
   // Send our hello back on the inbound connection
   sendMsgOnInbound(MsgTrunkHello(m_peer_id_config,
@@ -627,26 +612,18 @@ void TrunkLink::onInboundDisconnected(Async::FramedTcpConnection* con,
 
   if (con != m_inbound_con)
   {
-    if (m_debug)
-    {
-      cerr << m_section << " [DEBUG]: onInboundDisconnected for unknown con "
-           << con->remoteHost() << ":" << con->remotePort()
-           << " (m_inbound_con="
-           << (m_inbound_con ? "set" : "null") << ")" << endl;
-    }
+    geulog::debug("trunk", m_section, ": onInboundDisconnected for unknown con ",
+                  con->remoteHost(), ":", con->remotePort(),
+                  " (m_inbound_con=", (m_inbound_con ? "set" : "null"), ")");
     return;
   }
 
-  cout << m_section << ": Inbound trunk connection lost" << endl;
-
-  if (m_debug)
-  {
-    cout << m_section << " [DEBUG]: inbound lost: ib_hello=" << m_ib_hello_received
-         << " ib_hb_rx=" << m_ib_hb_rx_cnt
-         << " ob_connected=" << m_con.isConnected()
-         << " ob_hello=" << m_ob_hello_received
-         << " peer_active_tgs=" << m_peer_active_tgs.size() << endl;
-  }
+  geulog::info("trunk", m_section, ": Inbound trunk connection lost");
+  geulog::debug("trunk", m_section, ": inbound lost: ib_hello=",
+                m_ib_hello_received, " ib_hb_rx=", m_ib_hb_rx_cnt,
+                " ob_connected=", m_con.isConnected(),
+                " ob_hello=", m_ob_hello_received,
+                " peer_active_tgs=", m_peer_active_tgs.size());
 
   m_inbound_con = nullptr;
   m_ib_hello_received = false;
@@ -742,18 +719,15 @@ void TrunkLink::onLocalFlush(uint32_t tg)
 
 void TrunkLink::onConnected(void)
 {
-  cout << m_section << ": Outbound connected to " << m_con.remoteHost()
-       << ":" << m_con.remotePort() << endl;
+  geulog::info("trunk", m_section, ": Outbound connected to ",
+               m_con.remoteHost(), ":", m_con.remotePort());
   m_reflector->onTrunkStateChanged(m_section, peerId(), "outbound", true,
                                    m_con.remoteHost().toString(),
                                    m_con.remotePort());
 
-  if (m_debug)
-  {
-    cout << m_section << " [DEBUG]: outbound up: ib_connected="
-         << (m_inbound_con != nullptr) << " ib_hello=" << m_ib_hello_received
-         << " sending hello with priority=" << m_priority << endl;
-  }
+  geulog::debug("trunk", m_section, ": outbound up: ib_connected=",
+                (m_inbound_con != nullptr), " ib_hello=", m_ib_hello_received,
+                " sending hello with priority=", m_priority);
 
   m_ob_hello_received = false;
   m_ob_hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
@@ -769,16 +743,12 @@ void TrunkLink::onConnected(void)
 void TrunkLink::onDisconnected(TcpConnection* con,
                                TcpConnection::DisconnectReason reason)
 {
-  cout << m_section << ": Outbound disconnected: "
-       << TcpConnection::disconnectReasonStr(reason) << endl;
-
-  if (m_debug)
-  {
-    cout << m_section << " [DEBUG]: outbound lost: ob_hello=" << m_ob_hello_received
-         << " ob_hb_rx=" << m_ob_hb_rx_cnt
-         << " ib_connected=" << (m_inbound_con != nullptr)
-         << " ib_hello=" << m_ib_hello_received << endl;
-  }
+  geulog::info("trunk", m_section, ": Outbound disconnected: ",
+               TcpConnection::disconnectReasonStr(reason));
+  geulog::debug("trunk", m_section, ": outbound lost: ob_hello=",
+                m_ob_hello_received, " ob_hb_rx=", m_ob_hb_rx_cnt,
+                " ib_connected=", (m_inbound_con != nullptr),
+                " ib_hello=", m_ib_hello_received);
 
   m_ob_hello_received = false;
   m_ob_hb_tx_cnt = 0;
@@ -808,8 +778,7 @@ void TrunkLink::onFrameReceived(FramedTcpConnection* con,
   ReflectorMsg header;
   if (!header.unpack(ss))
   {
-    cerr << "*** ERROR[" << m_section << "]: Failed to unpack trunk message "
-            "header" << endl;
+    geulog::error("trunk", "[", m_section, "] Failed to unpack trunk message header");
     return;
   }
 
@@ -822,9 +791,8 @@ void TrunkLink::onFrameReceived(FramedTcpConnection* con,
       header.type() != MsgTrunkHello::TYPE &&
       header.type() != MsgTrunkHeartbeat::TYPE)
   {
-    cerr << "*** WARNING[" << m_section
-         << "]: Ignoring trunk message type=" << header.type()
-         << " before hello" << endl;
+    geulog::warn("trunk", "[", m_section, "] Ignoring trunk message type=",
+                 header.type(), " before hello");
     return;
   }
 
@@ -838,27 +806,10 @@ void TrunkLink::onFrameReceived(FramedTcpConnection* con,
     m_ob_hb_rx_cnt = HEARTBEAT_RX_CNT_RESET;
   }
 
-  if (m_debug && header.type() != MsgTrunkHeartbeat::TYPE)
+  if (header.type() != MsgTrunkHeartbeat::TYPE)
   {
-    if (header.type() == MsgTrunkAudio::TYPE ||
-        header.type() == MsgTrunkFlush::TYPE)
-    {
-      if (m_debug_frame_cnt < 500)
-      {
-        cout << m_section << " [DEBUG]: rx " << (is_inbound ? "IB" : "OB")
-             << " type=" << header.type() << " len=" << data.size() << endl;
-        if (++m_debug_frame_cnt == 500)
-        {
-          cout << m_section << " [DEBUG]: audio frame log limit reached (500)"
-               << " — suppressing further audio/flush debug" << endl;
-        }
-      }
-    }
-    else
-    {
-      cout << m_section << " [DEBUG]: rx " << (is_inbound ? "IB" : "OB")
-           << " type=" << header.type() << " len=" << data.size() << endl;
-    }
+    geulog::debug("trunk", m_section, ": rx ", (is_inbound ? "IB" : "OB"),
+                  " type=", header.type(), " len=", data.size());
   }
 
   switch (header.type())
@@ -885,8 +836,8 @@ void TrunkLink::onFrameReceived(FramedTcpConnection* con,
       handleMsgTrunkNodeList(ss);
       break;
     default:
-      cerr << "*** WARNING[" << m_section
-           << "]: Unknown trunk message type=" << header.type() << endl;
+      geulog::warn("trunk", "[", m_section, "] Unknown trunk message type=",
+                   header.type());
       break;
   }
 } /* TrunkLink::onFrameReceived */
@@ -905,11 +856,7 @@ void TrunkLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
   // background reconnect) — ignore it silently.
   if (is_inbound)
   {
-    if (m_debug)
-    {
-      cout << m_section << " [DEBUG]: ignoring duplicate hello on inbound"
-           << endl;
-    }
+    geulog::debug("trunk", m_section, ": ignoring duplicate hello on inbound");
     return;
   }
 
@@ -917,15 +864,14 @@ void TrunkLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
   MsgTrunkHello msg;
   if (!msg.unpack(is))
   {
-    cerr << "*** ERROR[" << m_section << "]: Failed to unpack MsgTrunkHello"
-         << endl;
+    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgTrunkHello");
     return;
   }
 
   if (msg.id().empty())
   {
-    cerr << "*** ERROR[" << m_section
-         << "]: Peer sent empty trunk ID in MsgTrunkHello" << endl;
+    geulog::error("trunk", "[", m_section,
+                  "] Peer sent empty trunk ID in MsgTrunkHello");
     m_con.disconnect();
     return;
   }
@@ -933,9 +879,9 @@ void TrunkLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
   // Verify shared secret via HMAC
   if (!msg.verify(m_secret))
   {
-    cerr << "*** ERROR[" << m_section
-         << "]: Trunk authentication failed — peer '" << msg.id()
-         << "' sent invalid secret (HMAC mismatch)" << endl;
+    geulog::error("trunk", "[", m_section,
+                  "] Trunk authentication failed — peer '", msg.id(),
+                  "' sent invalid secret (HMAC mismatch)");
     m_con.disconnect();
     return;
   }
@@ -944,18 +890,14 @@ void TrunkLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
   m_peer_id_received = sanitizeIdent(msg.id(), 64);
   m_ob_hello_received = true;
 
-  cout << m_section << ": Trunk hello from peer '" << msg.id()
-       << "' local_prefix=" << msg.localPrefix()
-       << " priority=" << m_peer_priority
-       << " (authenticated)" << endl;
-
-  if (m_debug)
-  {
-    cout << m_section << " [DEBUG]: hello done: ob_hello=" << m_ob_hello_received
-         << " ib_connected=" << (m_inbound_con != nullptr)
-         << " ib_hello=" << m_ib_hello_received
-         << " isActive=" << isActive() << endl;
-  }
+  geulog::info("trunk", m_section, ": Trunk hello from peer '", msg.id(),
+               "' local_prefix=", msg.localPrefix(),
+               " priority=", m_peer_priority, " (authenticated)");
+  geulog::debug("trunk", m_section, ": hello done: ob_hello=",
+                m_ob_hello_received,
+                " ib_connected=", (m_inbound_con != nullptr),
+                " ib_hello=", m_ib_hello_received,
+                " isActive=", isActive());
 } /* TrunkLink::handleMsgTrunkHello */
 
 
@@ -964,8 +906,7 @@ void TrunkLink::handleMsgTrunkTalkerStart(std::istream& is)
   MsgTrunkTalkerStart msg;
   if (!msg.unpack(is))
   {
-    cerr << "*** ERROR[" << m_section
-         << "]: Failed to unpack MsgTrunkTalkerStart" << endl;
+    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgTrunkTalkerStart");
     return;
   }
 
@@ -989,15 +930,15 @@ void TrunkLink::handleMsgTrunkTalkerStart(std::istream& is)
     if (m_priority <= m_peer_priority)
     {
       // We win — ignore peer's claim
-      cout << m_section << ": TG #" << local_tg
-           << " conflict — local wins (our priority=" << m_priority
-           << " <= peer=" << m_peer_priority << ")" << endl;
+      geulog::info("trunk", m_section, ": TG #", local_tg,
+                   " conflict — local wins (our priority=", m_priority,
+                   " <= peer=", m_peer_priority, ")");
       return;
     }
     // We defer — clear local talker and accept remote
-    cout << m_section << ": TG #" << local_tg
-         << " conflict — deferring to peer (our priority=" << m_priority
-         << " > peer=" << m_peer_priority << ")" << endl;
+    geulog::info("trunk", m_section, ": TG #", local_tg,
+                 " conflict — deferring to peer (our priority=", m_priority,
+                 " > peer=", m_peer_priority, ")");
     m_yielded_tgs.insert(local_tg);
     TGHandler::instance()->setTalkerForTG(local_tg, nullptr);
     // onTalkerUpdated will fire; Reflector must not re-send TrunkTalkerStart
@@ -1016,8 +957,7 @@ void TrunkLink::handleMsgTrunkTalkerStop(std::istream& is)
   MsgTrunkTalkerStop msg;
   if (!msg.unpack(is))
   {
-    cerr << "*** ERROR[" << m_section
-         << "]: Failed to unpack MsgTrunkTalkerStop" << endl;
+    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgTrunkTalkerStop");
     return;
   }
 
@@ -1045,8 +985,7 @@ void TrunkLink::handleMsgTrunkAudio(std::istream& is)
   MsgTrunkAudio msg;
   if (!msg.unpack(is))
   {
-    cerr << "*** ERROR[" << m_section
-         << "]: Failed to unpack MsgTrunkAudio" << endl;
+    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgTrunkAudio");
     return;
   }
 
@@ -1093,8 +1032,7 @@ void TrunkLink::handleMsgTrunkFlush(std::istream& is)
   MsgTrunkFlush msg;
   if (!msg.unpack(is))
   {
-    cerr << "*** ERROR[" << m_section
-         << "]: Failed to unpack MsgTrunkFlush" << endl;
+    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgTrunkFlush");
     return;
   }
 
@@ -1133,8 +1071,8 @@ void TrunkLink::sendMsg(const ReflectorMsg& msg)
         {
           if (idx != m_sticky_ob_idx)
           {
-            cout << m_section << ": sticky OB switched from #"
-                 << m_sticky_ob_idx << " to #" << idx << endl;
+            geulog::info("trunk", m_section, ": sticky OB switched from #",
+                       m_sticky_ob_idx, " to #", idx);
             m_sticky_ob_idx = idx;
           }
           sendMsgOnPairedOutbound(idx, msg);
@@ -1147,20 +1085,14 @@ void TrunkLink::sendMsg(const ReflectorMsg& msg)
     {
       if (m_ib_cons[i]->isConnected() && m_ib_states[i].hello_received)
       {
-        if (m_debug)
-        {
-          cout << m_section << " [DEBUG]: paired tx fallback to IB#" << i
-               << " type=" << msg.type() << endl;
-        }
+        geulog::debug("trunk", m_section, ": paired tx fallback to IB#", i,
+                      " type=", msg.type());
         sendMsgOnPairedInbound(i, msg);
         return;
       }
     }
-    if (m_debug)
-    {
-      cerr << m_section << " [DEBUG]: paired tx dropped type=" << msg.type()
-           << " (no active connection)" << endl;
-    }
+    geulog::debug("trunk", m_section, ": paired tx dropped type=", msg.type(),
+                  " (no active connection)");
     return;
   }
 
@@ -1170,17 +1102,13 @@ void TrunkLink::sendMsg(const ReflectorMsg& msg)
   }
   else if (isInboundReady())
   {
-    if (m_debug)
-    {
-      cout << m_section << " [DEBUG]: tx fallback to IB type="
-           << msg.type() << endl;
-    }
+    geulog::debug("trunk", m_section, ": tx fallback to IB type=", msg.type());
     sendMsgOnInbound(msg);
   }
-  else if (m_debug)
+  else
   {
-    cerr << m_section << " [DEBUG]: tx dropped type=" << msg.type()
-         << " (no active connection)" << endl;
+    geulog::debug("trunk", m_section, ": tx dropped type=", msg.type(),
+                  " (no active connection)");
   }
 } /* TrunkLink::sendMsg */
 
@@ -1191,8 +1119,8 @@ void TrunkLink::sendMsgOnOutbound(const ReflectorMsg& msg)
   ReflectorMsg header(msg.type());
   if (!header.pack(ss) || !msg.pack(ss))
   {
-    cerr << "*** ERROR[" << m_section << "]: Failed to pack trunk message "
-            "type=" << msg.type() << endl;
+    geulog::error("trunk", "[", m_section, "] Failed to pack trunk message type=",
+                  msg.type());
     return;
   }
   m_ob_hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
@@ -1207,8 +1135,8 @@ void TrunkLink::sendMsgOnInbound(const ReflectorMsg& msg)
   ReflectorMsg header(msg.type());
   if (!header.pack(ss) || !msg.pack(ss))
   {
-    cerr << "*** ERROR[" << m_section << "]: Failed to pack trunk message "
-            "type=" << msg.type() << endl;
+    geulog::error("trunk", "[", m_section, "] Failed to pack trunk message type=",
+                  msg.type());
     return;
   }
   m_ib_hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
@@ -1229,23 +1157,20 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
       any_ob_connected = true;
       if (--m_ob_states[i].hb_tx_cnt == 0)
       {
-        if (m_debug)
-        {
-          cout << m_section << " [DEBUG]: paired OB#" << i << " heartbeat tx"
-               << " hb_rx=" << m_ob_states[i].hb_rx_cnt << endl;
-        }
+        geulog::debug("trunk", m_section, ": paired OB#", i, " heartbeat tx",
+                      " hb_rx=", m_ob_states[i].hb_rx_cnt);
         sendMsgOnPairedOutbound(i, MsgTrunkHeartbeat());
       }
       if (--m_ob_states[i].hb_rx_cnt == 0)
       {
-        cerr << "*** ERROR[" << m_section
-             << "]: Paired outbound #" << i << " heartbeat timeout" << endl;
+        geulog::error("trunk", "[", m_section, "] Paired outbound #", i,
+                      " heartbeat timeout");
         m_ob_cons[i]->disconnect();
       }
-      else if (m_debug && m_ob_states[i].hb_rx_cnt <= 5)
+      else if (m_ob_states[i].hb_rx_cnt <= 5)
       {
-        cerr << m_section << " [DEBUG]: paired OB#" << i
-             << " heartbeat rx countdown: " << m_ob_states[i].hb_rx_cnt << endl;
+        geulog::debug("trunk", m_section, ": paired OB#", i,
+                      " heartbeat rx countdown: ", m_ob_states[i].hb_rx_cnt);
       }
     }
 
@@ -1258,23 +1183,20 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
       any_ib_connected = true;
       if (--m_ib_states[i].hb_tx_cnt == 0)
       {
-        if (m_debug)
-        {
-          cout << m_section << " [DEBUG]: paired IB#" << i << " heartbeat tx"
-               << " hb_rx=" << m_ib_states[i].hb_rx_cnt << endl;
-        }
+        geulog::debug("trunk", m_section, ": paired IB#", i, " heartbeat tx",
+                      " hb_rx=", m_ib_states[i].hb_rx_cnt);
         sendMsgOnPairedInbound(i, MsgTrunkHeartbeat());
       }
       if (--m_ib_states[i].hb_rx_cnt == 0)
       {
-        cerr << "*** ERROR[" << m_section
-             << "]: Paired inbound #" << i << " heartbeat timeout" << endl;
+        geulog::error("trunk", "[", m_section, "] Paired inbound #", i,
+                      " heartbeat timeout");
         m_ib_cons[i]->disconnect();
       }
-      else if (m_debug && m_ib_states[i].hb_rx_cnt <= 5)
+      else if (m_ib_states[i].hb_rx_cnt <= 5)
       {
-        cerr << m_section << " [DEBUG]: paired IB#" << i
-             << " heartbeat rx countdown: " << m_ib_states[i].hb_rx_cnt << endl;
+        geulog::debug("trunk", m_section, ": paired IB#", i,
+                      " heartbeat rx countdown: ", m_ib_states[i].hb_rx_cnt);
       }
     }
 
@@ -1302,23 +1224,19 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
   {
     if (--m_ob_hb_tx_cnt == 0)
     {
-      if (m_debug)
-      {
-        cout << m_section << " [DEBUG]: OB heartbeat tx"
-             << " ob_hb_rx=" << m_ob_hb_rx_cnt << endl;
-      }
+      geulog::debug("trunk", m_section, ": OB heartbeat tx ob_hb_rx=",
+                    m_ob_hb_rx_cnt);
       sendMsgOnOutbound(MsgTrunkHeartbeat());
     }
     if (--m_ob_hb_rx_cnt == 0)
     {
-      cerr << "*** ERROR[" << m_section
-           << "]: Outbound heartbeat timeout" << endl;
+      geulog::error("trunk", "[", m_section, "] Outbound heartbeat timeout");
       m_con.disconnect();
     }
-    else if (m_debug && m_ob_hb_rx_cnt <= 5)
+    else if (m_ob_hb_rx_cnt <= 5)
     {
-      cerr << m_section << " [DEBUG]: OB heartbeat rx countdown: "
-           << m_ob_hb_rx_cnt << endl;
+      geulog::debug("trunk", m_section, ": OB heartbeat rx countdown: ",
+                    m_ob_hb_rx_cnt);
     }
   }
 
@@ -1327,23 +1245,19 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
   {
     if (--m_ib_hb_tx_cnt == 0)
     {
-      if (m_debug)
-      {
-        cout << m_section << " [DEBUG]: IB heartbeat tx"
-             << " ib_hb_rx=" << m_ib_hb_rx_cnt << endl;
-      }
+      geulog::debug("trunk", m_section, ": IB heartbeat tx ib_hb_rx=",
+                    m_ib_hb_rx_cnt);
       sendMsgOnInbound(MsgTrunkHeartbeat());
     }
     if (--m_ib_hb_rx_cnt == 0)
     {
-      cerr << "*** ERROR[" << m_section
-           << "]: Inbound heartbeat timeout" << endl;
+      geulog::error("trunk", "[", m_section, "] Inbound heartbeat timeout");
       m_inbound_con->disconnect();
     }
-    else if (m_debug && m_ib_hb_rx_cnt <= 5)
+    else if (m_ib_hb_rx_cnt <= 5)
     {
-      cerr << m_section << " [DEBUG]: IB heartbeat rx countdown: "
-           << m_ib_hb_rx_cnt << endl;
+      geulog::debug("trunk", m_section, ": IB heartbeat rx countdown: ",
+                    m_ib_hb_rx_cnt);
     }
   }
 
@@ -1426,8 +1340,8 @@ void TrunkLink::sendMsgOnPairedOutbound(size_t idx, const ReflectorMsg& msg)
   ReflectorMsg header(msg.type());
   if (!header.pack(ss) || !msg.pack(ss))
   {
-    cerr << "*** ERROR[" << m_section << "]: Failed to pack trunk message "
-            "type=" << msg.type() << " for paired outbound #" << idx << endl;
+    geulog::error("trunk", "[", m_section, "] Failed to pack trunk message type=",
+                  msg.type(), " for paired outbound #", idx);
     return;
   }
   m_ob_states[idx].hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
@@ -1454,8 +1368,8 @@ void TrunkLink::sendMsgOnPairedInbound(size_t idx, const ReflectorMsg& msg)
   ReflectorMsg header(msg.type());
   if (!header.pack(ss) || !msg.pack(ss))
   {
-    cerr << "*** ERROR[" << m_section << "]: Failed to pack trunk message "
-            "type=" << msg.type() << " for paired inbound #" << idx << endl;
+    geulog::error("trunk", "[", m_section, "] Failed to pack trunk message type=",
+                  msg.type(), " for paired inbound #", idx);
     return;
   }
   m_ib_states[idx].hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
@@ -1479,8 +1393,8 @@ void TrunkLink::onPairedInboundFrame(Async::FramedTcpConnection* con,
   ReflectorMsg header;
   if (!header.unpack(ss))
   {
-    cerr << "*** ERROR[" << m_section
-         << "]: Failed to unpack frame on paired inbound #" << idx << endl;
+    geulog::error("trunk", "[", m_section,
+                  "] Failed to unpack frame on paired inbound #", idx);
     return;
   }
 
@@ -1515,9 +1429,8 @@ void TrunkLink::onPairedInboundFrame(Async::FramedTcpConnection* con,
           handleMsgTrunkNodeList(ss);
           break;
         default:
-          cerr << "*** WARNING[" << m_section
-               << "]: Unknown trunk message type=" << header.type()
-               << " on paired ib#" << idx << endl;
+          geulog::warn("trunk", "[", m_section, "] Unknown trunk message type=",
+                       header.type(), " on paired ib#", idx);
           break;
       }
       break;
@@ -1530,8 +1443,8 @@ void TrunkLink::onPairedInboundDisconnected(Async::FramedTcpConnection* con,
 {
   size_t idx = pairedInboundIndex(con);
   if (idx == SIZE_MAX) return;
-  cout << m_section << ": paired inbound #" << idx << " disconnected"
-       << " remaining=" << (m_ib_cons.size() - 1) << endl;
+  geulog::info("trunk", m_section, ": paired inbound #", idx, " disconnected",
+               " remaining=", (m_ib_cons.size() - 1));
   m_ib_cons.erase(m_ib_cons.begin() + idx);
   m_ib_states.erase(m_ib_states.begin() + idx);
   // Reflector owns the connection object — do NOT delete it here.
@@ -1548,14 +1461,10 @@ void TrunkLink::onPairedOutboundConnected(FramedTcpClient* client)
   m_ob_states[idx].hb_rx_cnt = HEARTBEAT_RX_CNT_RESET;
   m_heartbeat_timer.setEnable(true);
 
-  cout << m_section << ": paired outbound #" << idx
-       << " connected to " << m_peer_hosts[idx] << ":" << m_peer_port << endl;
-
-  if (m_debug)
-  {
-    cout << m_section << " [DEBUG]: paired ob#" << idx
-         << " sending hello with priority=" << m_priority << endl;
-  }
+  geulog::info("trunk", m_section, ": paired outbound #", idx,
+               " connected to ", m_peer_hosts[idx], ":", m_peer_port);
+  geulog::debug("trunk", m_section, ": paired ob#", idx,
+                " sending hello with priority=", m_priority);
 
   sendMsgOnPairedOutbound(idx,
       MsgTrunkHello(m_peer_id_config, joinPrefixes(m_local_prefix),
@@ -1570,9 +1479,9 @@ void TrunkLink::onPairedOutboundDisconnected(FramedTcpClient* client,
   size_t idx = pairedClientIndex(client);
   if (idx == SIZE_MAX) return;
 
-  cout << m_section << ": paired outbound #" << idx
-       << " disconnected ("
-       << Async::TcpConnection::disconnectReasonStr(reason) << ")" << endl;
+  geulog::info("trunk", m_section, ": paired outbound #", idx,
+               " disconnected (",
+               Async::TcpConnection::disconnectReasonStr(reason), ")");
 
   m_ob_states[idx].hello_received = false;
   m_ob_states[idx].hb_tx_cnt = 0;
@@ -1603,8 +1512,8 @@ void TrunkLink::onPairedOutboundFrame(FramedTcpClient* client,
   ReflectorMsg header;
   if (!header.unpack(ss))
   {
-    cerr << "*** ERROR[" << m_section
-         << "]: Failed to unpack frame on paired outbound #" << idx << endl;
+    geulog::error("trunk", "[", m_section,
+                  "] Failed to unpack frame on paired outbound #", idx);
     return;
   }
 
@@ -1613,9 +1522,8 @@ void TrunkLink::onPairedOutboundFrame(FramedTcpClient* client,
       header.type() != MsgTrunkHello::TYPE &&
       header.type() != MsgTrunkHeartbeat::TYPE)
   {
-    cerr << "*** WARNING[" << m_section
-         << "]: Ignoring paired ob#" << idx << " msg type=" << header.type()
-         << " before hello" << endl;
+    geulog::warn("trunk", "[", m_section, "] Ignoring paired ob#", idx,
+                 " msg type=", header.type(), " before hello");
     return;
   }
 
@@ -1628,17 +1536,16 @@ void TrunkLink::onPairedOutboundFrame(FramedTcpClient* client,
 
       if (msg.id().empty())
       {
-        cerr << "*** ERROR[" << m_section
-             << "]: Peer sent empty ID on paired ob#" << idx << endl;
+        geulog::error("trunk", "[", m_section,
+                      "] Peer sent empty ID on paired ob#", idx);
         client->disconnect();
         return;
       }
 
       if (!msg.verify(m_secret))
       {
-        cerr << "*** ERROR[" << m_section
-             << "]: HMAC failed on paired outbound #" << idx
-             << " (peer='" << msg.id() << "')" << endl;
+        geulog::error("trunk", "[", m_section, "] HMAC failed on paired outbound #",
+                      idx, " (peer='", msg.id(), "')");
         client->disconnect();
         return;
       }
@@ -1650,9 +1557,9 @@ void TrunkLink::onPairedOutboundFrame(FramedTcpClient* client,
       if (m_peer_id_received.empty())
         m_peer_id_received = sanitizeIdent(msg.id(), 64);
 
-      cout << m_section << ": paired outbound #" << idx
-           << " hello received (peer='" << msg.id()
-           << "' priority=" << msg.priority() << " authenticated)" << endl;
+      geulog::info("trunk", m_section, ": paired outbound #", idx,
+                   " hello received (peer='", msg.id(),
+                   "' priority=", msg.priority(), " authenticated)");
       break;
     }
 
@@ -1682,9 +1589,8 @@ void TrunkLink::onPairedOutboundFrame(FramedTcpClient* client,
           handleMsgTrunkNodeList(ss);
           break;
         default:
-          cerr << "*** WARNING[" << m_section
-               << "]: Unknown trunk message type=" << header.type()
-               << " on paired ob#" << idx << endl;
+          geulog::warn("trunk", "[", m_section, "] Unknown trunk message type=",
+                       header.type(), " on paired ob#", idx);
           break;
       }
       break;
@@ -1762,13 +1668,12 @@ void TrunkLink::reloadConfig(void)
     }
   }
 
-  cout << m_section << ": Reloaded filters"
-       << (m_blacklist_filter.empty() ? "" :
-            " blacklist=" + m_blacklist_filter.toString())
-       << (m_allow_filter.empty()     ? "" :
-            " allow="     + m_allow_filter.toString())
-       << " tg_map_entries=" << m_tg_map_in.size()
-       << endl;
+  geulog::info("trunk", m_section, ": Reloaded filters",
+               (m_blacklist_filter.empty() ? "" :
+                " blacklist=" + m_blacklist_filter.toString()),
+               (m_allow_filter.empty()     ? "" :
+                " allow=" + m_allow_filter.toString()),
+               " tg_map_entries=", m_tg_map_in.size());
 } /* TrunkLink::reloadConfig */
 
 
@@ -1785,8 +1690,7 @@ void TrunkLink::handleMsgTrunkNodeList(std::istream& is)
   MsgTrunkNodeList msg;
   if (!msg.unpack(is))
   {
-    cerr << "*** ERROR[" << m_section
-         << "]: Failed to unpack MsgTrunkNodeList" << endl;
+    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgTrunkNodeList");
     return;
   }
 
@@ -1827,9 +1731,8 @@ void TrunkLink::handleMsgTrunkNodeList(std::istream& is)
   }
   if (dropped > 0)
   {
-    cerr << "*** WARN[" << m_section << "]: dropped " << dropped
-         << " node list entrie(s) with empty/invalid callsign after "
-            "sanitization" << endl;
+    geulog::warn("trunk", "[", m_section, "] dropped ", dropped,
+                 " node list entrie(s) with empty/invalid callsign after sanitization");
   }
 
   m_reflector->onPeerNodeList(peerId(), sanitized);

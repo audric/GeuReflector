@@ -70,6 +70,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "ReflectorClient.h"
 #include "TGHandler.h"
 #include "TrunkLink.h"
+#include <Log.h>
 #include "TwinLink.h"
 #include "RedisStore.h"
 #include <version/SVXREFLECTOR.h>
@@ -601,8 +602,8 @@ bool Reflector::sendUdpDatagram(ReflectorClient *client,
     std::stringstream aadss;
     if (!aad.pack(aadss))
     {
-      std::cout << "*** WARNING: Packing associated data failed for UDP "
-                   "datagram to " << udp_addr << ":" << udp_port << std::endl;
+      geulog::warn("client", "Packing associated data failed for UDP "
+                   "datagram to ", udp_addr, ":", udp_port);
       return false;
     }
     return m_udp_sock->write(udp_addr, udp_port,
@@ -642,8 +643,8 @@ void Reflector::requestQsy(ReflectorClient *client, uint32_t tg)
   uint32_t current_tg = TGHandler::instance()->TGForClient(client);
   if (current_tg == 0)
   {
-    std::cout << client->callsign()
-              << ": Cannot request QSY from TG #0" << std::endl;
+    geulog::info("client", client->callsign(),
+              ": Cannot request QSY from TG #0");
     return;
   }
 
@@ -653,8 +654,8 @@ void Reflector::requestQsy(ReflectorClient *client, uint32_t tg)
     if (tg == 0) { return; }
   }
 
-  cout << client->callsign() << ": Requesting QSY from TG #"
-       << current_tg << " to TG #" << tg << endl;
+  geulog::info("client", client->callsign(), ": Requesting QSY from TG #",
+       current_tg, " to TG #", tg);
 
   broadcastMsg(MsgRequestQsy(tg),
       ReflectorClient::mkAndFilter(
@@ -839,7 +840,7 @@ bool Reflector::callsignOk(const std::string& callsign, bool verbose) const
   {
     if (verbose)
     {
-      std::cout << "*** WARNING: The callsign is empty" << std::endl;
+      geulog::warn("client", "The callsign is empty");
     }
     return false;
   }
@@ -859,9 +860,8 @@ bool Reflector::callsignOk(const std::string& callsign, bool verbose) const
     {
       if (verbose)
       {
-        std::cerr << "*** WARNING: The callsign '" << callsign
-                  << "' is not accepted by configuration (ACCEPT_CALLSIGN)"
-                  << std::endl;
+        geulog::warn("client", "The callsign '", callsign,
+                  "' is not accepted by configuration (ACCEPT_CALLSIGN)");
       }
       return false;
     }
@@ -876,9 +876,8 @@ bool Reflector::callsignOk(const std::string& callsign, bool verbose) const
       {
         if (verbose)
         {
-          std::cerr << "*** WARNING: The callsign '" << callsign
-                    << "' has been rejected by configuration (REJECT_CALLSIGN)."
-                    << std::endl;
+          geulog::warn("client", "The callsign '", callsign,
+                    "' has been rejected by configuration (REJECT_CALLSIGN).");
         }
         return false;
       }
@@ -886,8 +885,8 @@ bool Reflector::callsignOk(const std::string& callsign, bool verbose) const
   }
   catch (std::regex_error& e)
   {
-    std::cerr << "*** WARNING: Regular expression parsing error in "
-              << "ACCEPT_CALLSIGN/REJECT_CALLSIGN: " << e.what() << std::endl;
+    geulog::warn("client", "Regular expression parsing error in "
+              "ACCEPT_CALLSIGN/REJECT_CALLSIGN: ", e.what());
     return false;
   }
 
@@ -907,8 +906,8 @@ bool Reflector::emailOk(const std::string& email) const
   }
   catch (std::regex_error& e)
   {
-    std::cerr << "*** WARNING: Regular expression parsing error in "
-              << "ACCEPT_CERT_EMAIL: " << e.what() << std::endl;
+    geulog::warn("client", "Regular expression parsing error in "
+              "ACCEPT_CERT_EMAIL: ", e.what());
     return false;
   }
 } /* Reflector::emailOk */
@@ -968,8 +967,7 @@ Async::SslX509 Reflector::csrReceived(Async::SslCertSigningReq& req)
   std::string callsign(req.commonName());
   if (!callsignOk(callsign))
   {
-    std::cerr << "*** WARNING: The CSR CN (callsign) check failed"
-              << std::endl;
+    geulog::warn("client", "The CSR CN (callsign) check failed");
     return nullptr;
   }
 
@@ -982,12 +980,11 @@ Async::SslX509 Reflector::csrReceived(Async::SslCertSigningReq& req)
 
   if (!csr.isNull() && (req.publicKey() != csr.publicKey()))
   {
-    std::cerr << "*** WARNING: The received CSR with callsign '"
-              << callsign << "' has a different public key "
+    geulog::warn("client", "The received CSR with callsign '",
+              callsign, "' has a different public key "
                  "than the current CSR. That may be a sign of someone "
                  "trying to hijack a callsign or the owner of the "
-                 "callsign has generated a new private/public key pair."
-              << std::endl;
+                 "callsign has generated a new private/public key pair.");
     return nullptr;
   }
 
@@ -1011,8 +1008,8 @@ Async::SslX509 Reflector::csrReceived(Async::SslCertSigningReq& req)
         (req.digest() != pending_csr.digest())
       ))
   {
-    std::cout << callsign << ": Add pending CSR '" << pending_csr_path
-              << "' to CA" << std::endl;
+    geulog::info("client", callsign, ": Add pending CSR '", pending_csr_path,
+              "' to CA");
     if (req.writePemFile(pending_csr_path))
     {
       const auto ca_op =
@@ -1024,8 +1021,8 @@ Async::SslX509 Reflector::csrReceived(Async::SslCertSigningReq& req)
     }
     else
     {
-      std::cerr << "*** WARNING: Could not write CSR file '"
-                << pending_csr_path << "'" << std::endl;
+      geulog::warn("client", "Could not write CSR file '",
+                pending_csr_path, "'");
     }
   }
 
@@ -1059,8 +1056,8 @@ Json::Value& Reflector::clientStatus(const std::string& callsign)
 
 void Reflector::clientConnected(Async::FramedTcpConnection *con)
 {
-  std::cout << con->remoteHost() << ":" << con->remotePort()
-       << ": Client connected" << endl;
+  geulog::info("client", con->remoteHost(), ":", con->remotePort(),
+       ": Client connected");
   ReflectorClient *client = new ReflectorClient(this, con, m_cfg);
   con->verifyPeer.connect(sigc::mem_fun(*this, &Reflector::onVerifyPeer));
   m_client_con_map[con] = client;
@@ -1078,14 +1075,15 @@ void Reflector::clientDisconnected(Async::FramedTcpConnection *con,
 
   if (!client->callsign().empty())
   {
-    cout << client->callsign() << ": ";
+    geulog::info("client", client->callsign(), ": Client disconnected: ",
+            TcpConnection::disconnectReasonStr(reason));
   }
   else
   {
-    std::cout << con->remoteHost() << ":" << con->remotePort() << ": ";
+    geulog::info("client", con->remoteHost(), ":", con->remotePort(),
+            ": Client disconnected: ",
+            TcpConnection::disconnectReasonStr(reason));
   }
-  std::cout << "Client disconnected: "
-            << TcpConnection::disconnectReasonStr(reason) << std::endl;
 
   m_client_con_map.erase(it);
 
@@ -1114,8 +1112,8 @@ bool Reflector::udpCipherDataReceived(const IpAddress& addr, uint16_t port,
 {
   if ((count <= 0) || (static_cast<size_t>(count) < UdpCipher::AADLEN))
   {
-    std::cout << "### : Ignoring too short UDP datagram (" << count
-              << " bytes)" << std::endl;
+    geulog::debug("client", "Ignoring too short UDP datagram (", count,
+              " bytes)");
     return true;
   }
 
@@ -1123,7 +1121,7 @@ bool Reflector::udpCipherDataReceived(const IpAddress& addr, uint16_t port,
   ss.write(reinterpret_cast<const char *>(buf), UdpCipher::AADLEN);
   if (!m_aad.unpack(ss))
   {
-    std::cout << "### Ignoring UDP datagram with unparseable AAD" << std::endl;
+    geulog::debug("client", "Ignoring UDP datagram with unparseable AAD");
     return true;
   }
 
@@ -1135,8 +1133,7 @@ bool Reflector::udpCipherDataReceived(const IpAddress& addr, uint16_t port,
     //          << m_aad.iv_cntr << std::endl;
     if (static_cast<size_t>(count) < iaad.packedSize())
     {
-      std::cout << "### Reflector::udpCipherDataReceived: "
-                   "Ignoring malformed UDP registration datagram" << std::endl;
+      geulog::debug("client", "Ignoring malformed UDP registration datagram");
       return true;
     }
     ss.clear();
@@ -1149,8 +1146,8 @@ bool Reflector::udpCipherDataReceived(const IpAddress& addr, uint16_t port,
     auto client = ReflectorClient::lookup(iaad.client_id);
     if (client == nullptr)
     {
-      std::cout << "### Could not find client id (" << iaad.client_id
-                << ") specified in initial AAD datagram" << std::endl;
+      geulog::debug("client", "Could not find client id (", iaad.client_id,
+                ") specified in initial AAD datagram");
       return true;
     }
     m_udp_sock->setCipherIV(UdpCipher::IV{client->udpCipherIVRand(),
@@ -1201,7 +1198,7 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
 
   if (m_udp_sock->cipherAADLength() < UdpCipher::AADLEN)
   {
-    std::cerr << "*** ERROR: Cipher AAD length too short" << std::endl;
+    geulog::error("client", "Cipher AAD length too short");
     return;
   }
 
@@ -1211,8 +1208,8 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
   ReflectorUdpMsg header;
   if (!header.unpack(ss))
   {
-    cout << "*** WARNING: Unpacking message header failed for UDP datagram "
-            "from " << addr << ":" << port << endl;
+    geulog::warn("client", "Unpacking message header failed for UDP datagram "
+            "from ", addr, ":", port);
     return;
   }
   ReflectorUdpMsgV2 header_v2;
@@ -1239,8 +1236,7 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
       if (!aadss.good()) return;
       if (!iaad.unpack(aadss))
       {
-        std::cout << "### Reflector::udpDatagramReceived: "
-                     "Could not unpack iaad" << std::endl;
+        geulog::debug("client", "Could not unpack iaad");
         return;
       }
       if (iaad.iv_cntr != 0) return;
@@ -1249,8 +1245,7 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
       client = ReflectorClient::lookup(iaad.client_id);
       if (client == nullptr)
       {
-        std::cout << "### Reflector::udpDatagramReceived: Could not find "
-                     "client id " << iaad.client_id << std::endl;
+        geulog::debug("client", "Could not find client id ", iaad.client_id);
         return;
       }
       else if (client->remoteUdpPort() == 0)
@@ -1259,8 +1254,7 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
       }
       else
       {
-        std::cout << "### Reflector::udpDatagramReceived: Client "
-                  << iaad.client_id << " already registered." << std::endl;
+        geulog::debug("client", "Client ", iaad.client_id, " already registered.");
       }
       client->setUdpRxSeq(0);
       //client->sendUdpMsg(MsgUdpHeartbeat());
@@ -1270,7 +1264,7 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
       client = ReflectorClient::lookup(std::make_pair(addr, port));
       if (client == nullptr)
       {
-        std::cout << "### Unknown client " << addr << ":" << port << std::endl;
+        geulog::debug("client", "Unknown client ", addr, ":", port);
         return;
       }
     }
@@ -1280,24 +1274,23 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
     ss.seekg(0);
     if (!header_v2.unpack(ss))
     {
-      std::cout << "*** WARNING: Unpacking V2 message header failed for UDP "
-              "datagram from " << addr << ":" << port << std::endl;
+      geulog::warn("client", "Unpacking V2 message header failed for UDP "
+              "datagram from ", addr, ":", port);
       return;
     }
     client = ReflectorClient::lookup(header_v2.clientId());
     if (client == nullptr)
     {
-      std::cerr << "*** WARNING: Incoming V2 UDP datagram from " << addr << ":"
-           << port << " has invalid client id " << header_v2.clientId()
-           << std::endl;
+      geulog::warn("client", "Incoming V2 UDP datagram from ", addr, ":",
+           port, " has invalid client id ", header_v2.clientId());
       return;
     }
 
     if (addr != client->remoteHost())
     {
-      cerr << "*** WARNING[" << client->callsign()
-           << "]: Incoming UDP packet has the wrong source ip, "
-           << addr << " instead of " << client->remoteHost() << endl;
+      geulog::warn("client", client->callsign(),
+           ": Incoming UDP packet has the wrong source ip, ",
+           addr, " instead of ", client->remoteHost());
       return;
     }
   }
@@ -1321,10 +1314,10 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
   }
   if (port != client->remoteUdpPort())
   {
-    cerr << "*** WARNING[" << client->callsign()
-         << "]: Incoming UDP packet has the wrong source UDP "
-            "port number, " << port << " instead of "
-         << client->remoteUdpPort() << endl;
+    geulog::warn("client", client->callsign(),
+         ": Incoming UDP packet has the wrong source UDP "
+            "port number, ", port, " instead of ",
+         client->remoteUdpPort());
     return;
   }
 
@@ -1333,18 +1326,18 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
   {
     if (aad.iv_cntr < client->nextUdpRxSeq()) // Frame out of sequence (ignore)
     {
-      std::cout << client->callsign()
-                << ": Dropping out of sequence UDP frame with seq="
-                << aad.iv_cntr << std::endl;
+      geulog::debug("client", client->callsign(),
+                ": Dropping out of sequence UDP frame with seq=",
+                aad.iv_cntr);
       return;
     }
     else if (aad.iv_cntr > client->nextUdpRxSeq()) // Frame lost
     {
-      std::cout << client->callsign() << ": UDP frame(s) lost. Expected seq="
-                << client->nextUdpRxSeq()
-                << " but received " << aad.iv_cntr
-                << ". Resetting next expected sequence number to "
-                << (aad.iv_cntr + 1) << std::endl;
+      geulog::info("client", client->callsign(), ": UDP frame(s) lost. Expected seq=",
+                client->nextUdpRxSeq(),
+                " but received ", aad.iv_cntr,
+                ". Resetting next expected sequence number to ",
+                (aad.iv_cntr + 1));
     }
     client->setUdpRxSeq(aad.iv_cntr + 1);
   }
@@ -1354,17 +1347,17 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
     uint16_t udp_rx_seq_diff = header_v2.sequenceNum() - next_udp_rx_seq;
     if (udp_rx_seq_diff > 0x7fff) // Frame out of sequence (ignore)
     {
-      std::cout << client->callsign()
-                << ": Dropping out of sequence frame with seq="
-                << header_v2.sequenceNum() << ". Expected seq="
-                << next_udp_rx_seq << std::endl;
+      geulog::debug("client", client->callsign(),
+                ": Dropping out of sequence frame with seq=",
+                header_v2.sequenceNum(), ". Expected seq=",
+                next_udp_rx_seq);
       return;
     }
     else if (udp_rx_seq_diff > 0) // Frame(s) lost
     {
-      cout << client->callsign()
-           << ": UDP frame(s) lost. Expected seq=" << next_udp_rx_seq
-           << ". Received seq=" << header_v2.sequenceNum() << endl;
+      geulog::info("client", client->callsign(),
+           ": UDP frame(s) lost. Expected seq=", next_udp_rx_seq,
+           ". Received seq=", header_v2.sequenceNum());
     }
     client->setUdpRxSeq(header_v2.sequenceNum() + 1);
   }
@@ -1385,8 +1378,8 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
         MsgUdpAudio msg;
         if (!msg.unpack(ss))
         {
-          cerr << "*** WARNING[" << client->callsign()
-               << "]: Could not unpack incoming MsgUdpAudioV1 message" << endl;
+          geulog::warn("client", client->callsign(),
+               ": Could not unpack incoming MsgUdpAudioV1 message");
           return;
         }
         uint32_t tg = TGHandler::instance()->TGForClient(client);
@@ -1512,9 +1505,9 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
         MsgUdpSignalStrengthValues msg;
         if (!msg.unpack(ss))
         {
-          cerr << "*** WARNING[" << client->callsign()
-               << "]: Could not unpack incoming "
-                  "MsgUdpSignalStrengthValues message" << endl;
+          geulog::warn("client", client->callsign(),
+               ": Could not unpack incoming "
+                  "MsgUdpSignalStrengthValues message");
           return;
         }
         typedef MsgUdpSignalStrengthValues::Rxs::const_iterator RxsIter;
@@ -1555,7 +1548,7 @@ void Reflector::onTalkerUpdated(uint32_t tg, ReflectorClient* old_talker,
 {
   if (old_talker != 0)
   {
-    cout << old_talker->callsign() << ": Talker stop on TG #" << tg << endl;
+    geulog::info("client", old_talker->callsign(), ": Talker stop on TG #", tg);
     old_talker->updateIsTalker();
     broadcastMsg(MsgTalkerStop(tg, old_talker->callsign()),
         ReflectorClient::mkAndFilter(
@@ -1582,7 +1575,7 @@ void Reflector::onTalkerUpdated(uint32_t tg, ReflectorClient* old_talker,
   }
   if (new_talker != 0)
   {
-    cout << new_talker->callsign() << ": Talker start on TG #" << tg << endl;
+    geulog::info("client", new_talker->callsign(), ": Talker start on TG #", tg);
     new_talker->updateIsTalker();
     broadcastMsg(MsgTalkerStart(tg, new_talker->callsign()),
         ReflectorClient::mkAndFilter(
@@ -1830,8 +1823,8 @@ void Reflector::onRequestAutoQsy(uint32_t from_tg)
   uint32_t tg = nextRandomQsyTg();
   if (tg == 0) { return; }
 
-  std::cout << "Requesting auto-QSY from TG #" << from_tg
-            << " to TG #" << tg << std::endl;
+  geulog::info("core", "Requesting auto-QSY from TG #", from_tg,
+            " to TG #", tg);
 
   broadcastMsg(MsgRequestQsy(tg),
       ReflectorClient::mkAndFilter(
@@ -1844,8 +1837,8 @@ uint32_t Reflector::nextRandomQsyTg(void)
 {
   if (m_random_qsy_tg == 0)
   {
-    std::cout << "*** WARNING: QSY request for random TG "
-              << "requested but RANDOM_QSY_RANGE is empty" << std::endl;
+    geulog::warn("core", "QSY request for random TG "
+              "requested but RANDOM_QSY_RANGE is empty");
     return 0;
   }
 
@@ -1862,7 +1855,7 @@ uint32_t Reflector::nextRandomQsyTg(void)
     }
   }
 
-  std::cout << "*** WARNING: No random TG available for QSY" << std::endl;
+  geulog::warn("core", "No random TG available for QSY");
   return 0;
 } /* Reflector::nextRandomQsyTg */
 
@@ -2119,9 +2112,65 @@ void Reflector::ctrlPtyDataReceived(const void *buf, size_t count)
       goto write_status;
     }
   }
+  else if (cmd == "LOG")
+  {
+    std::string rest;
+    std::getline(ss, rest);
+    // trim leading whitespace
+    size_t first = rest.find_first_not_of(" \t");
+    if (first == std::string::npos) rest.clear();
+    else rest = rest.substr(first);
+    // trim trailing whitespace / cr / lf
+    size_t last = rest.find_last_not_of(" \t\r\n");
+    if (last != std::string::npos) rest.erase(last + 1);
+    else rest.clear();
+
+    if (rest.empty() || rest == "SHOW" || rest == "show")
+    {
+      m_cmd_pty->write(geulog::snapshot());
+      goto write_status;
+    }
+    if (rest == "RESET" || rest == "reset")
+    {
+      geulog::reset();
+      m_cmd_pty->write("LOG: restored from startup snapshot\n");
+      goto write_status;
+    }
+
+    // "<sub>=<lvl>[,<sub>=<lvl>...]"
+    {
+      std::stringstream pairs(rest);
+      std::string pair;
+      while (std::getline(pairs, pair, ','))
+      {
+        auto eq = pair.find('=');
+        if (eq == std::string::npos)
+        {
+          errss << "LOG: missing '=' in '" << pair << "'";
+          goto write_status;
+        }
+        std::string sub = pair.substr(0, eq);
+        std::string lvl = pair.substr(eq + 1);
+        auto trim = [](std::string& s) {
+          s.erase(0, s.find_first_not_of(" \t"));
+          size_t e = s.find_last_not_of(" \t\r\n");
+          if (e != std::string::npos) s.erase(e + 1);
+          else s.clear();
+        };
+        trim(sub); trim(lvl);
+        if (!geulog::setLevel(sub, lvl))
+        {
+          errss << "LOG: unknown subsystem or level in '"
+                << sub << "=" << lvl << "'";
+          goto write_status;
+        }
+        m_cmd_pty->write("LOG: " + sub + "=" + lvl + "\n");
+      }
+    }
+  }
   else
   {
-    errss << "Valid commands are: CFG, NODE, CA, TRUNK\n"
+    errss << "Valid commands are: CFG, NODE, CA, TRUNK, LOG\n"
           << "Usage:\n"
           << "CFG <section> <tag> <value>\n"
           << "NODE BLOCK <callsign> <blocktime seconds>\n"
@@ -2129,13 +2178,14 @@ void Reflector::ctrlPtyDataReceived(const void *buf, size_t count)
           << "TRUNK MUTE|UNMUTE <section> <callsign>\n"
           << "TRUNK RELOAD [<section>]\n"
           << "TRUNK STATUS [<section>]\n"
+          << "LOG [SHOW|RESET|<sub>=<lvl>[,...]]\n"
           << "\nEmpty CFG lists all configuration";
   }
 
   write_status:
     if (!errss.str().empty())
     {
-      std::cerr << "*** ERROR: " << errss.str() << std::endl;
+      geulog::error("core", errss.str());
       m_cmd_pty->write(std::string("ERR:") + errss.str() + "\n");
       return;
     }
@@ -2148,8 +2198,8 @@ void Reflector::cfgUpdated(const std::string& section, const std::string& tag)
   std::string value;
   if (!m_cfg->getValue(section, tag, value))
   {
-    std::cout << "*** ERROR: Failed to read updated configuration variable '"
-              << section << "/" << tag << "'" << std::endl;
+    geulog::error("core", "Failed to read updated configuration variable '",
+              section, "/", tag, "'");
     return;
   }
 
@@ -2160,8 +2210,8 @@ void Reflector::cfgUpdated(const std::string& section, const std::string& tag)
       unsigned t = TGHandler::instance()->sqlTimeoutBlocktime();
       if (!SvxLink::setValueFromString(t, value))
       {
-        std::cout << "*** ERROR: Failed to set updated configuration "
-                     "variable '" << section << "/" << tag << "'" << std::endl;
+        geulog::error("core", "Failed to set updated configuration "
+                     "variable '", section, "/", tag, "'");
         return;
       }
       TGHandler::instance()->setSqlTimeoutBlocktime(t);
@@ -2172,8 +2222,8 @@ void Reflector::cfgUpdated(const std::string& section, const std::string& tag)
       unsigned t = TGHandler::instance()->sqlTimeout();
       if (!SvxLink::setValueFromString(t, value))
       {
-        std::cout << "*** ERROR: Failed to set updated configuration "
-                     "variable '" << section << "/" << tag << "'" << std::endl;
+        geulog::error("core", "Failed to set updated configuration "
+                     "variable '", section, "/", tag, "'");
         return;
       }
       TGHandler::instance()->setSqlTimeout(t);
@@ -2228,8 +2278,7 @@ void Reflector::initTrunkLinks(void)
         m_cfg->setValue(section, "PEER_ID", p.peer_id);
       m_redis_trunk_sections.insert(section);
     }
-    std::cout << "Redis: loaded " << peers.size() << " trunk peer(s)"
-              << std::endl;
+    geulog::info("core", "Redis: loaded ", peers.size(), " trunk peer(s)");
   }
 
   // First pass: collect all remote prefixes so we can do longest-prefix-match
@@ -2329,9 +2378,8 @@ void Reflector::trunkClientConnected(Async::FramedTcpConnection* con)
   }
   if (ip_pending >= 2)
   {
-    std::cerr << "*** WARNING: TRUNK inbound from " << remote_ip
-              << ": too many pending connections from this IP — rejecting"
-              << std::endl;
+    geulog::warn("trunk", "TRUNK inbound from ", remote_ip,
+              ": too many pending connections from this IP — rejecting");
     con->disconnect();
     return;
   }
@@ -2339,21 +2387,18 @@ void Reflector::trunkClientConnected(Async::FramedTcpConnection* con)
   // Reject connections beyond the global pending limit to prevent fd exhaustion
   if (m_trunk_pending_cons.size() >= TRUNK_MAX_PENDING_CONS)
   {
-    std::cerr << "*** WARNING: TRUNK inbound from " << remote_ip
-              << ": too many pending connections — rejecting" << std::endl;
+    geulog::warn("trunk", "TRUNK inbound from ", remote_ip,
+              ": too many pending connections — rejecting");
     con->disconnect();
     return;
   }
 
-  std::cout << "TRUNK: Inbound connection from "
-            << con->remoteHost() << ":" << con->remotePort() << std::endl;
+  geulog::info("trunk", "TRUNK: Inbound connection from ",
+            con->remoteHost(), ":", con->remotePort());
 
-  if (m_trunk_debug)
-  {
-    std::cout << "TRUNK [DEBUG]: pending_count=" << m_trunk_pending_cons.size()
-              << " ip_pending=" << ip_pending
-              << " from " << remote_ip << std::endl;
-  }
+  geulog::debug("trunk", "TRUNK: pending_count=", m_trunk_pending_cons.size(),
+            " ip_pending=", ip_pending,
+            " from ", remote_ip);
 
   // Set up a timeout for receiving the hello message
   auto* timer = new Async::Timer(10000, Async::Timer::TYPE_ONESHOT);
@@ -2379,8 +2424,8 @@ void Reflector::trunkClientDisconnected(Async::FramedTcpConnection* con,
   {
     delete pit->second;  // timer
     m_trunk_pending_cons.erase(pit);
-    std::cout << "TRUNK: Pending inbound from "
-              << con->remoteHost() << " disconnected" << std::endl;
+    geulog::info("trunk", "TRUNK: Pending inbound from ",
+              con->remoteHost(), " disconnected");
     return;
   }
 
@@ -2421,16 +2466,15 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
   ReflectorMsg header;
   if (!header.unpack(ss))
   {
-    std::cerr << "*** ERROR: TRUNK inbound: failed to unpack message header"
-              << std::endl;
+    geulog::error("trunk", "TRUNK inbound: failed to unpack message header");
     rejectPending();
     return;
   }
 
   if (header.type() != MsgTrunkHello::TYPE)
   {
-    std::cerr << "*** WARNING: TRUNK inbound: expected MsgTrunkHello, got type="
-              << header.type() << std::endl;
+    geulog::warn("trunk", "TRUNK inbound: expected MsgTrunkHello, got type=",
+              header.type());
     rejectPending();
     return;
   }
@@ -2438,16 +2482,14 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
   MsgTrunkHello msg;
   if (!msg.unpack(ss))
   {
-    std::cerr << "*** ERROR: TRUNK inbound: failed to unpack MsgTrunkHello"
-              << std::endl;
+    geulog::error("trunk", "TRUNK inbound: failed to unpack MsgTrunkHello");
     rejectPending();
     return;
   }
 
   if (msg.id().empty())
   {
-    std::cerr << "*** ERROR: TRUNK inbound: peer sent empty trunk ID"
-              << std::endl;
+    geulog::error("trunk", "TRUNK inbound: peer sent empty trunk ID");
     rejectPending();
     return;
   }
@@ -2480,16 +2522,12 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
 
     if (!msg.verify(link->secret()))
     {
-      if (m_trunk_debug)
-      {
-        std::cout << "TRUNK [DEBUG]: peer '" << safe_id
-                  << "' section matches " << link->section()
-                  << " but HMAC mismatch" << std::endl;
-      }
-      std::cerr << "*** ERROR: TRUNK inbound: peer '" << safe_id
-                << "' section matches " << link->section()
-                << " but authentication failed (wrong secret)"
-                << std::endl;
+      geulog::debug("trunk", "TRUNK: peer '", safe_id,
+                "' section matches ", link->section(),
+                " but HMAC mismatch");
+      geulog::error("trunk", "TRUNK inbound: peer '", safe_id,
+                "' section matches ", link->section(),
+                " but authentication failed (wrong secret)");
       rejectPending();
       return;
     }
@@ -2531,10 +2569,10 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
         if (!peer_str.empty()) peer_str += ",";
         peer_str += p;
       }
-      std::cerr << "*** ERROR: TRUNK inbound: peer '" << safe_id
-                << "' section matches " << link->section()
-                << " but prefix mismatch: expected=[" << exp_str
-                << "] got=[" << peer_str << "]" << std::endl;
+      geulog::error("trunk", "TRUNK inbound: peer '", safe_id,
+                "' section matches ", link->section(),
+                " but prefix mismatch: expected=[", exp_str,
+                "] got=[", peer_str, "]");
       rejectPending();
       return;
     }
@@ -2542,18 +2580,14 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
 
   if (matched_link == nullptr)
   {
-    std::cerr << "*** ERROR: TRUNK inbound: peer '" << safe_id
-              << "' no matching section name"
-              << std::endl;
+    geulog::error("trunk", "TRUNK inbound: peer '", safe_id,
+              "' no matching section name");
     rejectPending();
     return;
   }
 
-  if (m_trunk_debug)
-  {
-    std::cout << "TRUNK [DEBUG]: peer '" << safe_id
-              << "' matched to " << matched_link->section() << std::endl;
-  }
+  geulog::debug("trunk", "TRUNK: peer '", safe_id,
+              "' matched to ", matched_link->section());
 
   // Clean up the pending entry
   delete pit->second;  // timer
@@ -2580,9 +2614,9 @@ void Reflector::trunkPendingTimeout(Async::Timer* t)
   {
     if (it->second == t)
     {
-      std::cerr << "*** WARNING: TRUNK inbound from "
-                << it->first->remoteHost()
-                << ": hello timeout — disconnecting" << std::endl;
+      geulog::warn("trunk", "TRUNK inbound from ",
+                it->first->remoteHost(),
+                ": hello timeout — disconnecting");
       auto* con = it->first;
       delete it->second;  // timer
       m_trunk_pending_cons.erase(it);
@@ -2617,8 +2651,8 @@ void Reflector::initSatelliteServer(void)
 
 void Reflector::satelliteConnected(Async::FramedTcpConnection* con)
 {
-  std::cout << "SAT: Inbound connection from "
-            << con->remoteHost() << ":" << con->remotePort() << std::endl;
+  geulog::info("satellite", "SAT: Inbound connection from ",
+            con->remoteHost(), ":", con->remotePort());
   auto* link = new SatelliteLink(this, con, m_satellite_secret);
   link->linkFailed.connect(
       sigc::mem_fun(*this, &Reflector::onSatelliteLinkFailed));
@@ -2635,8 +2669,8 @@ void Reflector::satelliteDisconnected(Async::FramedTcpConnection* con,
   auto it = m_satellite_con_map.find(con);
   if (it != m_satellite_con_map.end())
   {
-    std::cout << "SAT: Satellite '" << it->second->satelliteId()
-              << "' disconnected" << std::endl;
+    geulog::info("satellite", "SAT: Satellite '", it->second->satelliteId(),
+              "' disconnected");
     if (m_redis != nullptr) {
       m_redis->clearSatelliteStatus(it->second->satelliteId());
     }
@@ -2674,8 +2708,8 @@ void Reflector::processSatelliteCleanup(Async::Timer* t)
     }
     if (con == nullptr) continue;
 
-    std::cout << "SAT: Cleaning up timed-out satellite '"
-              << link->satelliteId() << "'" << std::endl;
+    geulog::info("satellite", "SAT: Cleaning up timed-out satellite '",
+              link->satelliteId(), "'");
     if (m_redis != nullptr) {
       m_redis->clearSatelliteStatus(link->satelliteId());
     }
@@ -2759,7 +2793,7 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
 
   if (!old_cs.empty())
   {
-    std::cout << old_cs << ": Trunk talker stop on TG #" << tg << std::endl;
+    geulog::info("trunk", old_cs, ": Trunk talker stop on TG #", tg);
     broadcastMsg(MsgTalkerStop(tg, old_cs),
         ReflectorClient::mkAndFilter(
           ge_v2_client_filter,
@@ -2779,7 +2813,7 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
   }
   if (!new_cs.empty())
   {
-    std::cout << new_cs << ": Trunk talker start on TG #" << tg << std::endl;
+    geulog::info("trunk", new_cs, ": Trunk talker start on TG #", tg);
     broadcastMsg(MsgTalkerStart(tg, new_cs),
         ReflectorClient::mkAndFilter(
           ge_v2_client_filter,
@@ -2837,12 +2871,13 @@ void Reflector::reloadClusterTgs(void)
   }
   if (!m_cluster_tgs.empty())
   {
-    std::cout << "Cluster TGs:";
+    std::ostringstream _clust_oss;
+    _clust_oss << "Cluster TGs:";
     for (uint32_t tg : m_cluster_tgs)
     {
-      std::cout << " " << tg;
+      _clust_oss << " " << tg;
     }
-    std::cout << std::endl;
+    geulog::info("core", _clust_oss.str());
   }
   publishMetaToRedis();
 }
@@ -2861,8 +2896,7 @@ std::vector<std::string> Reflector::collectAllTrunkPrefixes(void) const
 bool Reflector::addTrunkLink(const std::string& section)
 {
   if (m_redis == nullptr) {
-    std::cerr << "*** addTrunkLink called without Redis — refusing"
-              << std::endl;
+    geulog::error("trunk", "addTrunkLink called without Redis — refusing");
     return false;
   }
   // Already present?
@@ -2873,8 +2907,8 @@ bool Reflector::addTrunkLink(const std::string& section)
   auto peers = m_redis->loadTrunkPeers();
   auto it = peers.find(section);
   if (it == peers.end()) {
-    std::cerr << "*** addTrunkLink(" << section
-              << "): peer hash not found in Redis" << std::endl;
+    geulog::error("trunk", "addTrunkLink(", section,
+              "): peer hash not found in Redis");
     return false;
   }
   const auto& p = it->second;
@@ -2888,8 +2922,8 @@ bool Reflector::addTrunkLink(const std::string& section)
 
   auto* link = new TrunkLink(this, *m_cfg, section);
   if (!link->initialize()) {
-    std::cerr << "*** addTrunkLink(" << section
-              << "): TrunkLink::initialize() failed" << std::endl;
+    geulog::error("trunk", "addTrunkLink(", section,
+              "): TrunkLink::initialize() failed");
     delete link;
     return false;
   }
@@ -2900,8 +2934,8 @@ bool Reflector::addTrunkLink(const std::string& section)
   auto all_prefixes = collectAllTrunkPrefixes();
   for (auto* l : m_trunk_links) l->setAllPrefixes(all_prefixes);
 
-  std::cout << "Added trunk link: " << section << " (" << p.host
-            << ":" << (p.port.empty() ? "5302" : p.port) << ")" << std::endl;
+  geulog::info("trunk", "Added trunk link: ", section, " (", p.host,
+            ":", (p.port.empty() ? "5302" : p.port), ")");
   return true;
 }
 
@@ -2921,14 +2955,14 @@ bool Reflector::removeTrunkLink(const std::string& section)
   auto all_prefixes = collectAllTrunkPrefixes();
   for (auto* l : m_trunk_links) l->setAllPrefixes(all_prefixes);
 
-  std::cout << "Removed trunk link: " << section << std::endl;
+  geulog::info("trunk", "Removed trunk link: ", section);
   return true;
 }
 
 
 void Reflector::onRedisConfigChanged(std::string scope)
 {
-  std::cout << "Redis config.changed: " << scope << std::endl;
+  geulog::info("core", "Redis config.changed: ", scope);
   if (scope == "users" || scope == "all") {
     // Auth lookups are stateless (per-connect). Nothing to invalidate on
     // existing connections — they are already authenticated. New
@@ -2966,9 +3000,8 @@ void Reflector::onRedisConfigChanged(std::string scope)
         existing->reloadConfig();
       } else {
         // neither — log and ignore
-        std::cout << "Redis: trunk:" << section
-                  << " event but peer not in Redis and no local link"
-                  << std::endl;
+        geulog::info("core", "Redis: trunk:", section,
+                  " event but peer not in Redis and no local link");
       }
     }
   }
@@ -4087,7 +4120,7 @@ void Reflector::initTwinLink(void)
   {
     delete m_twin_link;
     m_twin_link = nullptr;
-    cerr << "*** ERROR: TwinLink initialization failed" << endl;
+    geulog::error("twin", "TwinLink initialization failed");
   }
 } /* Reflector::initTwinLink */
 
@@ -4117,9 +4150,9 @@ void Reflector::initTwinServer(void)
 
 void Reflector::twinClientConnected(Async::FramedTcpConnection* con)
 {
-  std::cout << "TWIN: inbound connection from "
-            << con->remoteHost() << ":" << con->remotePort()
-            << " (awaiting hello)" << std::endl;
+  geulog::info("twin", "TWIN: inbound connection from ",
+            con->remoteHost(), ":", con->remotePort(),
+            " (awaiting hello)");
 
   auto* timer = new Async::Timer(10000, Async::Timer::TYPE_ONESHOT);
   timer->expired.connect(
@@ -4140,8 +4173,8 @@ void Reflector::twinClientDisconnected(Async::FramedTcpConnection* con,
   {
     delete pit->second;  // timer
     m_twin_pending_cons.erase(pit);
-    std::cout << "TWIN: pending inbound from "
-              << con->remoteHost() << " disconnected" << std::endl;
+    geulog::info("twin", "TWIN: pending inbound from ",
+              con->remoteHost(), " disconnected");
   }
   // If already handed off to m_twin_link, TwinLink owns the connection.
 } /* Reflector::twinClientDisconnected */
@@ -4173,16 +4206,15 @@ void Reflector::twinPendingFrameReceived(Async::FramedTcpConnection* con,
   ReflectorMsg header;
   if (!header.unpack(ss))
   {
-    std::cerr << "*** ERROR: TWIN inbound: failed to unpack message header"
-              << std::endl;
+    geulog::error("twin", "TWIN inbound: failed to unpack message header");
     rejectPending();
     return;
   }
 
   if (header.type() != MsgTrunkHello::TYPE)
   {
-    std::cerr << "*** WARNING: TWIN inbound: expected MsgTrunkHello, got type="
-              << header.type() << std::endl;
+    geulog::warn("twin", "TWIN inbound: expected MsgTrunkHello, got type=",
+              header.type());
     rejectPending();
     return;
   }
@@ -4190,17 +4222,16 @@ void Reflector::twinPendingFrameReceived(Async::FramedTcpConnection* con,
   MsgTrunkHello msg;
   if (!msg.unpack(ss))
   {
-    std::cerr << "*** ERROR: TWIN inbound: failed to unpack MsgTrunkHello"
-              << std::endl;
+    geulog::error("twin", "TWIN inbound: failed to unpack MsgTrunkHello");
     rejectPending();
     return;
   }
 
   if (msg.role() != MsgTrunkHello::ROLE_TWIN)
   {
-    std::cerr << "*** ERROR: TWIN inbound: peer sent role=" << int(msg.role())
-              << ", expected ROLE_TWIN (" << int(MsgTrunkHello::ROLE_TWIN)
-              << ")" << std::endl;
+    geulog::error("twin", "TWIN inbound: peer sent role=", int(msg.role()),
+              ", expected ROLE_TWIN (", int(MsgTrunkHello::ROLE_TWIN),
+              ")");
     rejectPending();
     return;
   }
@@ -4208,8 +4239,8 @@ void Reflector::twinPendingFrameReceived(Async::FramedTcpConnection* con,
   // Verify HMAC (shared secret proof) before leaking any other info.
   if (!msg.verify(m_twin_link->secret()))
   {
-    std::cerr << "*** ERROR: TWIN inbound: authentication failed "
-              << "(wrong secret)" << std::endl;
+    geulog::error("twin", "TWIN inbound: authentication failed "
+              "(wrong secret)");
     rejectPending();
     return;
   }
@@ -4217,9 +4248,9 @@ void Reflector::twinPendingFrameReceived(Async::FramedTcpConnection* con,
   // Twins must share the same LOCAL_PREFIX.
   if (msg.localPrefix() != m_twin_link->localPrefix())
   {
-    std::cerr << "*** ERROR: TWIN inbound: local_prefix mismatch: "
-              << "ours='" << m_twin_link->localPrefix()
-              << "' theirs='" << msg.localPrefix() << "'" << std::endl;
+    geulog::error("twin", "TWIN inbound: local_prefix mismatch: "
+              "ours='", m_twin_link->localPrefix(),
+              "' theirs='", msg.localPrefix(), "'");
     rejectPending();
     return;
   }
@@ -4242,9 +4273,9 @@ void Reflector::twinPendingTimeout(Async::Timer* t)
   {
     if (it->second == t)
     {
-      std::cerr << "*** WARNING: TWIN inbound from "
-                << it->first->remoteHost()
-                << ": hello timeout — disconnecting" << std::endl;
+      geulog::warn("twin", "TWIN inbound from ",
+                it->first->remoteHost(),
+                ": hello timeout — disconnecting");
       auto* con = it->first;
       delete it->second;  // timer
       m_twin_pending_cons.erase(it);
