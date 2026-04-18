@@ -628,6 +628,59 @@ class TestTwinIntegration(unittest.TestCase):
             sender.close()
             sat.close()
 
+    # ------------------------------------------------------------------
+    # Test 11: Twin partner's node roster appears in /status.twin.nodes
+    # ------------------------------------------------------------------
+    def test_11_twin_partner_nodelist_in_status(self):
+        """A client authenticated on ref1 appears in ref2's /status under
+        twin.nodes, and disappears after it disconnects.
+
+        Exercises the roster path added for issue #3:
+          ref1 client auth -> Reflector::sendNodeListToAllPeers
+          -> TwinLink::onLocalNodeListUpdated (MsgTrunkNodeList over [TWIN])
+          -> ref2.handleMsgTrunkNodeList -> m_partner_nodes
+          -> /status.twin.nodes
+        """
+        client = ClientPeer()
+        try:
+            ref1_client_port = T.twin_mapped_client_port("ref1")
+            client.connect(HOST, ref1_client_port)
+            client.authenticate(callsign=CLIENT_CALLSIGN,
+                                password=CLIENT_PASSWORD)
+
+            def callsign_on_twin():
+                status = get_status(*_http("ref2"))
+                twin = status.get("twin", {})
+                nodes = twin.get("nodes", [])
+                return any(n.get("callsign") == CLIENT_CALLSIGN for n in nodes)
+
+            wait_until(
+                callsign_on_twin,
+                timeout=10.0,
+                interval=0.25,
+                msg=f"{CLIENT_CALLSIGN} did not appear in ref2 /status.twin.nodes "
+                    f"after login on ref1 — MsgTrunkNodeList may not be "
+                    f"flowing over the [TWIN] link",
+            )
+        finally:
+            client.close()
+
+        # After disconnect, ref1 re-publishes its (now-empty) roster;
+        # ref2.twin.nodes should drop the callsign.
+        def callsign_gone_from_twin():
+            status = get_status(*_http("ref2"))
+            twin = status.get("twin", {})
+            nodes = twin.get("nodes", [])
+            return not any(n.get("callsign") == CLIENT_CALLSIGN for n in nodes)
+
+        wait_until(
+            callsign_gone_from_twin,
+            timeout=10.0,
+            interval=0.25,
+            msg=f"{CLIENT_CALLSIGN} still in ref2 /status.twin.nodes after "
+                f"disconnect from ref1",
+        )
+
 
 def docker_compose_output(*args) -> str:
     """Return the stdout+stderr of a docker-compose command as text."""

@@ -43,6 +43,8 @@ logic — the pair shares everything.
 #include <cstdint>
 #include <vector>
 
+#include <json/json.h>
+
 
 /****************************************************************************
  *
@@ -58,13 +60,20 @@ logic — the pair shares everything.
 
 /****************************************************************************
  *
+ * Local Includes
+ *
+ ****************************************************************************/
+
+#include "ReflectorMsg.h"
+
+
+/****************************************************************************
+ *
  * Forward declarations
  *
  ****************************************************************************/
 
 class Reflector;
-class MsgTrunkHello;
-class ReflectorMsg;
 
 class TwinLink
 {
@@ -92,11 +101,18 @@ class TwinLink
     void onExternalTrunkTalkerStop(uint32_t tg,
                                    const std::string& peer_id);
 
+    // Called by Reflector when the local node roster changes, to mirror
+    // our connected-stations list to the twin partner.
+    void onLocalNodeListUpdated(
+        const std::vector<MsgTrunkNodeList::NodeEntry>& nodes);
+
     bool isActive(void) const;
     const std::string& partnerHost(void) const { return m_peer_host; }
     uint16_t partnerPort(void) const { return m_peer_port; }
     const std::string& secret(void) const { return m_secret; }
     const std::string& localPrefix(void) const { return m_local_prefix; }
+
+    Json::Value statusJson(void) const;
 
   private:
     using FramedTcpClient =
@@ -124,6 +140,7 @@ class TwinLink
     bool                          m_ib_hello_received;
     unsigned                      m_ib_hb_tx_cnt;
     unsigned                      m_ib_hb_rx_cnt;
+    std::vector<MsgTrunkNodeList::NodeEntry> m_partner_nodes;
 
     // No copy
     TwinLink(const TwinLink&);
@@ -140,6 +157,7 @@ class TwinLink
     void handleMsgTrunkAudio(std::istream& is);
     void handleMsgTrunkFlush(std::istream& is);
     void handleMsgTrunkHeartbeat(void);
+    void handleMsgTrunkNodeList(std::istream& is);
     void handleMsgTwinExtTalkerStart(std::istream& is);
     void handleMsgTwinExtTalkerStop(std::istream& is);
     void heartbeatTick(Async::Timer*);

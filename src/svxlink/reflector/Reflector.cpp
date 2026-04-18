@@ -1678,6 +1678,15 @@ void Reflector::refreshStatus(void)
   }
   m_status["trunks"] = trunks;
 
+  if (m_twin_link != nullptr)
+  {
+    m_status["twin"] = m_twin_link->statusJson();
+  }
+  else
+  {
+    m_status.removeMember("twin");
+  }
+
   Json::Value cluster_arr(Json::arrayValue);
   for (uint32_t tg : m_cluster_tgs)
   {
@@ -3131,6 +3140,11 @@ void Reflector::sendNodeListToAllPeers(void)
   for (auto* link : m_trunk_links)
   {
     link->sendNodeList(nodes);
+  }
+
+  if (m_twin_link != nullptr)
+  {
+    m_twin_link->onLocalNodeListUpdated(nodes);
   }
 
   if (m_mqtt != nullptr)

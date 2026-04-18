@@ -34,6 +34,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <iostream>
 #include <sstream>
 #include <random>
+#include <cmath>
 
 
 /****************************************************************************
@@ -68,6 +69,44 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 using namespace std;
 using namespace Async;
 using namespace sigc;
+
+
+namespace {
+
+// Byte-bound and strip control chars / ':' from an identifier coming over
+// the wire. Matches the sanitizer used in TrunkLink for node-list entries;
+// the twin partner is HMAC-authenticated but wire data still flows into
+// logs and /status JSON, so keep the same hygiene.
+std::string sanitizeIdent(const std::string& in, size_t max_len)
+{
+  std::string out;
+  out.reserve(std::min(in.size(), max_len));
+  for (char c : in)
+  {
+    unsigned char u = static_cast<unsigned char>(c);
+    if (u < 0x20 || u == 0x7f) continue;
+    if (c == ':') continue;
+    out += c;
+    if (out.size() >= max_len) break;
+  }
+  return out;
+}
+
+std::string sanitizeText(const std::string& in, size_t max_bytes)
+{
+  std::string out;
+  out.reserve(std::min(in.size(), max_bytes));
+  for (char c : in)
+  {
+    unsigned char u = static_cast<unsigned char>(c);
+    if (u < 0x20 || u == 0x7f) continue;
+    out += c;
+    if (out.size() >= max_bytes) break;
+  }
+  return out;
+}
+
+} /* anonymous namespace */
 
 
 /****************************************************************************
@@ -268,11 +307,54 @@ void TwinLink::onExternalTrunkTalkerStop(uint32_t tg,
 } /* TwinLink::onExternalTrunkTalkerStop */
 
 
+void TwinLink::onLocalNodeListUpdated(
+    const std::vector<MsgTrunkNodeList::NodeEntry>& nodes)
+{
+  if (!isActive()) return;
+  sendMsg(MsgTrunkNodeList(nodes));
+} /* TwinLink::onLocalNodeListUpdated */
+
+
 bool TwinLink::isActive(void) const
 {
   return (m_con.isConnected() && m_ob_hello_received) ||
          (m_inbound_con != nullptr && m_ib_hello_received);
 } /* TwinLink::isActive */
+
+
+Json::Value TwinLink::statusJson(void) const
+{
+  Json::Value obj(Json::objectValue);
+  obj["host"]               = m_peer_host;
+  obj["port"]               = m_peer_port;
+  obj["connected"]          = isActive();
+  obj["outbound_connected"] = m_con.isConnected();
+  obj["outbound_hello"]     = m_ob_hello_received;
+  obj["inbound_connected"]  = (m_inbound_con != nullptr);
+  obj["inbound_hello"]      = m_ib_hello_received;
+  obj["local_prefix"]       = m_local_prefix;
+  obj["peer_id"]            = m_peer_id_received;
+  obj["priority"]           = static_cast<Json::UInt>(m_priority);
+  obj["peer_priority"]      = static_cast<Json::UInt>(m_peer_priority);
+
+  Json::Value nodes_arr(Json::arrayValue);
+  for (const auto& n : m_partner_nodes)
+  {
+    Json::Value entry(Json::objectValue);
+    entry["callsign"] = n.callsign;
+    entry["tg"]       = static_cast<Json::UInt>(n.tg);
+    if (n.lat != 0.0f || n.lon != 0.0f)
+    {
+      entry["lat"] = n.lat;
+      entry["lon"] = n.lon;
+    }
+    if (!n.qth_name.empty()) entry["qth_name"] = n.qth_name;
+    nodes_arr.append(entry);
+  }
+  obj["nodes"] = nodes_arr;
+
+  return obj;
+} /* TwinLink::statusJson */
 
 
 /****************************************************************************
@@ -369,6 +451,9 @@ void TwinLink::onFrameReceived(FramedTcpConnection* con,
       break;
     case MsgTrunkFlush::TYPE:
       handleMsgTrunkFlush(ss);
+      break;
+    case MsgTrunkNodeList::TYPE:
+      handleMsgTrunkNodeList(ss);
       break;
     case MsgTwinExtTalkerStart::TYPE:
       handleMsgTwinExtTalkerStart(ss);
@@ -527,6 +612,48 @@ void TwinLink::handleMsgTwinExtTalkerStop(std::istream& is)
         msg.tg(), "", msg.peerId());
   }
 } /* TwinLink::handleMsgTwinExtTalkerStop */
+
+
+void TwinLink::handleMsgTrunkNodeList(std::istream& is)
+{
+  MsgTrunkNodeList msg;
+  if (!msg.unpack(is))
+  {
+    geulog::error("twin", "TWIN: Failed to unpack MsgTrunkNodeList");
+    return;
+  }
+
+  std::vector<MsgTrunkNodeList::NodeEntry> sanitized;
+  sanitized.reserve(msg.nodes().size());
+  unsigned dropped = 0;
+  for (const auto& n : msg.nodes())
+  {
+    MsgTrunkNodeList::NodeEntry e;
+    e.callsign = sanitizeIdent(n.callsign, 32);
+    if (e.callsign.empty())
+    {
+      ++dropped;
+      continue;
+    }
+    e.tg       = n.tg;
+    e.qth_name = sanitizeText(n.qth_name, 64);
+    if (std::isfinite(n.lat) && std::isfinite(n.lon) &&
+        n.lat >= -90.0f && n.lat <= 90.0f &&
+        n.lon >= -180.0f && n.lon <= 180.0f)
+    {
+      e.lat = n.lat;
+      e.lon = n.lon;
+    }
+    sanitized.push_back(std::move(e));
+  }
+  if (dropped > 0)
+  {
+    geulog::warn("twin", "TWIN: dropped ", dropped,
+                 " node list entrie(s) with empty/invalid callsign");
+  }
+
+  m_partner_nodes = std::move(sanitized);
+} /* TwinLink::handleMsgTrunkNodeList */
 
 
 void TwinLink::heartbeatTick(Async::Timer* /*t*/)
