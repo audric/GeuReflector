@@ -9,6 +9,8 @@
 #include <AsyncFramedTcpConnection.h>
 #include <AsyncTimer.h>
 
+#include "TgFilter.h"
+
 class Reflector;
 class ReflectorMsg;
 
@@ -19,6 +21,13 @@ When SATELLITE_OF is configured, the reflector runs in satellite mode:
 it connects to a parent reflector and relays all local client events.
 Events received from the parent are broadcast to local clients.
 No prefix logic, no trunk mesh participation.
+
+An optional SATELLITE_FILTER scopes which TGs this satellite cares about,
+in both directions (TgFilter syntax: exact, prefix "24*", range
+"2427-2438", comma-separated):
+ - outbound: local events for non-matching TGs are not sent to the parent;
+ - inbound:  the filter is sent to the parent via MsgTrunkFilter (type 122)
+   after authentication; the parent skips forwarding non-matching TGs.
 */
 class SatelliteClient : public sigc::trackable
 {
@@ -53,6 +62,8 @@ class SatelliteClient : public sigc::trackable
     Async::Timer    m_heartbeat_timer;
     unsigned        m_hb_tx_cnt;
     unsigned        m_hb_rx_cnt;
+    TgFilter        m_filter;       // optional TG filter (SATELLITE_FILTER)
+    std::string     m_filter_str;   // raw config string for MsgTrunkFilter
 
     void onConnected(void);
     void onDisconnected(Async::TcpConnection* con,
@@ -66,6 +77,7 @@ class SatelliteClient : public sigc::trackable
     void handleMsgTrunkFlush(std::istream& is);
     void handleMsgTrunkHeartbeat(void);
     void sendMsg(const ReflectorMsg& msg);
+    void sendFilter(void);
     void heartbeatTick(Async::Timer* t);
 };
 
