@@ -80,7 +80,7 @@ Similar to `TrunkLink` but with different semantics:
 | Aspect | TrunkLink (peer-to-peer) | SatelliteLink |
 |--------|-------------------------|---------------|
 | Topology | Symmetric mesh peers | Asymmetric — parent is authority |
-| TG routing | Prefix-based (`isSharedTG`/`isOwnedTG`) + cluster (`isClusterTG`) | **No filtering** — all TGs forwarded unconditionally |
+| TG routing | Prefix-based (`isSharedTG`/`isOwnedTG`) + cluster (`isClusterTG`) | Unfiltered by default; optional `SATELLITE_FILTER` (bidirectional, advertised via `MsgTrunkFilter`) |
 | Talker arbitration | Nonce tie-break | Parent always wins |
 | Who initiates | Both sides connect to each other | Satellite connects to parent |
 | Audio path | Only prefix-matched + cluster TGs | All TGs active on either side |

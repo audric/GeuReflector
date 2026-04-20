@@ -5,7 +5,7 @@
 The integration tests verify the trunk protocol, satellite links, twin (HA-pair) protocol, Redis-backed config store, and end-to-end audio routing by spinning up reflector meshes in Docker Compose and connecting fake peers and clients from a Python test harness.
 
 `run_tests.sh` runs in **two phases**:
-1. A 3-reflector trunk mesh + a satellite-mode reflector exercising `test_trunk.py` (32 tests).
+1. A 3-reflector trunk mesh + a satellite-mode reflector exercising `test_trunk.py` (33 tests).
 2. A 4-reflector twin topology exercising `test_twin.py` (11 tests).
 
 A separate harness (`run_redis_tests.sh`) runs `test_redis.py` (13 tests) against a single-reflector + Redis stack. See [Redis Integration Tests](#redis-integration-tests) below.
@@ -22,7 +22,7 @@ bash run_tests.sh
 This will:
 1. Generate the default configs and `docker-compose.test.yml` from `topology.py`
 2. Build and start the 3-reflector mesh
-3. Run 32 automated trunk/satellite/MQTT tests (`test_trunk.py`)
+3. Run 33 automated trunk/satellite/MQTT tests (`test_trunk.py`)
 4. Enter an interactive prompt to manually test any TG number
 5. Tear down the default mesh
 6. Regenerate with `--topology twin` (4-reflector twin topology)
@@ -172,6 +172,7 @@ Simulates a V2 SvxLink client. Performs the full TCP authentication handshake (P
 | 14 | Satellite receives from parent | Trunk talker audio on the parent is forwarded to the satellite |
 | 15 | Satellite audio to trunk peer | Satellite sends audio for a TG owned by another reflector; parent forwards via trunk |
 | 16 | Satellite disconnect cleanup | Abrupt satellite disconnect clears it from `/status` |
+| 16b | Satellite TG filter honored by parent | Satellite sends `MsgTrunkFilter` (type 122) after hello; parent forwards the matching cluster TG but drops the non-matching one |
 
 ### Bidirectional Routing
 

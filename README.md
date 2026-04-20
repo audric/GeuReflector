@@ -191,8 +191,9 @@ exchange audio for it.
 
 Cluster TG numbers must not overlap with any `LOCAL_PREFIX` or `REMOTE_PREFIX`.
 
-**Note:** Satellite links are unaffected by cluster TG configuration — they
-forward all TGs unconditionally (see [Satellite reflectors](#satellite-reflectors)).
+**Note:** Satellite links are unaffected by cluster TG configuration — by
+default they forward all TGs in both directions. A satellite can narrow
+that scope with `SATELLITE_FILTER` (see [Satellite reflectors](#satellite-reflectors)).
 
 ### 3. Trunk debug logging (optional)
 
@@ -353,17 +354,27 @@ SATELLITE_OF=reflector-01.example.com
 SATELLITE_PORT=5303
 SATELLITE_SECRET=regional_satellite_secret
 SATELLITE_ID=my-satellite
+# Optional — restrict which TGs this satellite cares about (bidirectional).
+# Syntax: exact "26200", prefix "24*", range "2427-2438", comma-separated.
+#SATELLITE_FILTER=24*,262*
 ```
 
 A satellite does not set `LOCAL_PREFIX`, `REMOTE_PREFIX`, `CLUSTER_TGS`, or any
 `[TRUNK_x]` sections. It inherits its parent's identity. Remote reflectors in
 the mesh see satellite clients as if they were connected directly to the parent.
 
-**No TG filtering:** Unlike trunk links (which filter by prefix and cluster TG),
-satellite links forward **all** audio and talker signaling in both directions
-without any TG filtering. The satellite is a transparent relay — every TG active
-on the parent is heard on the satellite and vice versa, regardless of
-`CLUSTER_TGS` or prefix configuration.
+**Default: no TG filtering.** Unlike trunk links (which filter by prefix and
+cluster TG), a satellite link by default forwards **all** audio and talker
+signaling in both directions — every TG active on the parent is heard on the
+satellite and vice versa, regardless of `CLUSTER_TGS` or prefix configuration.
+
+**Opt-in TG scope via `SATELLITE_FILTER`.** Setting `SATELLITE_FILTER` on the
+satellite side restricts the link to a chosen set of TGs in both directions:
+the satellite suppresses its own outbound events for non-matching TGs, and
+advertises the filter to the parent (via `MsgTrunkFilter`, type 122) so the
+parent also stops forwarding non-matching TGs back. Empty or absent means no
+filtering. The filter uses the shared TG-filter syntax (exact, `24*` prefix,
+`2427-2438` range, comma-separated).
 
 Port `5303` is the default satellite port (separate from client port `5300` and
 trunk port `5302`).

@@ -340,9 +340,11 @@ or TG change, debounced to 500 ms, and broadcast to every trunk peer. Peers
 republish it via MQTT under `nodes/<peer_id>` so a central dashboard can see
 who is connected to each reflector.
 
-`MsgTrunkFilter` is intended for satellite links to advertise TG interest to
-the parent. The parent uses it to avoid forwarding TGs the satellite does not
-want. Reserved for satellite use; trunk peers do not currently emit it.
+`MsgTrunkFilter` is used by satellite links to advertise TG interest to the
+parent. A satellite with `SATELLITE_FILTER` set sends one `MsgTrunkFilter`
+right after authenticating; the parent stores the filter and skips forwarding
+non-matching TGs to that satellite. Absent or empty filter means pass-all
+(pre-existing behavior). Trunk peers do not emit it.
 
 Audio is transported over TCP (not UDP) — the trunk is a reliable server-to-server
 link, not a lossy radio gateway path, so TCP framing is appropriate and avoids
