@@ -9,6 +9,8 @@
 #include <AsyncFramedTcpConnection.h>
 #include <AsyncTimer.h>
 
+#include "TgFilter.h"
+
 class Reflector;
 class ReflectorMsg;
 
@@ -16,7 +18,9 @@ class ReflectorMsg;
 @brief  Handles one inbound satellite connection on the parent reflector
 
 A SatelliteLink is created for each satellite that connects to the parent's
-satellite port. It relays ALL TGs bidirectionally (no prefix filtering).
+satellite port. By default it relays ALL TGs bidirectionally. When the
+satellite sends a MsgTrunkFilter (type 122), the parent applies the filter
+to outbound traffic — only matching TGs are forwarded to this satellite.
 The parent always wins talker arbitration over satellites.
 */
 class SatelliteLink : public sigc::trackable
@@ -64,6 +68,7 @@ class SatelliteLink : public sigc::trackable
     unsigned                    m_hb_tx_cnt;
     unsigned                    m_hb_rx_cnt;
     std::set<uint32_t>          m_sat_active_tgs;
+    TgFilter                    m_tg_filter;
 
     void onFrameReceived(Async::FramedTcpConnection* con,
                          std::vector<uint8_t>& data);
@@ -73,6 +78,8 @@ class SatelliteLink : public sigc::trackable
     void handleMsgTrunkAudio(std::istream& is);
     void handleMsgTrunkFlush(std::istream& is);
     void handleMsgTrunkHeartbeat(void);
+    void handleMsgTrunkFilter(std::istream& is);
+    bool filterPassesTg(uint32_t tg) const;
     void sendMsg(const ReflectorMsg& msg);
     void heartbeatTick(Async::Timer* t);
 };

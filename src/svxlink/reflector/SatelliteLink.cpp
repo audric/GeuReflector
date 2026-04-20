@@ -62,6 +62,7 @@ void SatelliteLink::onParentTalkerStart(uint32_t tg,
                                          const std::string& callsign)
 {
   if (!m_hello_received) return;
+  if (!filterPassesTg(tg)) return;
   sendMsg(MsgTrunkTalkerStart(tg, callsign));
 } /* SatelliteLink::onParentTalkerStart */
 
@@ -69,6 +70,7 @@ void SatelliteLink::onParentTalkerStart(uint32_t tg,
 void SatelliteLink::onParentTalkerStop(uint32_t tg)
 {
   if (!m_hello_received) return;
+  if (!filterPassesTg(tg)) return;
   sendMsg(MsgTrunkTalkerStop(tg));
 } /* SatelliteLink::onParentTalkerStop */
 
@@ -77,6 +79,7 @@ void SatelliteLink::onParentAudio(uint32_t tg,
                                    const std::vector<uint8_t>& audio)
 {
   if (!m_hello_received) return;
+  if (!filterPassesTg(tg)) return;
   sendMsg(MsgTrunkAudio(tg, audio));
 } /* SatelliteLink::onParentAudio */
 
@@ -84,6 +87,7 @@ void SatelliteLink::onParentAudio(uint32_t tg,
 void SatelliteLink::onParentFlush(uint32_t tg)
 {
   if (!m_hello_received) return;
+  if (!filterPassesTg(tg)) return;
   sendMsg(MsgTrunkFlush(tg));
 } /* SatelliteLink::onParentFlush */
 
@@ -132,6 +136,9 @@ void SatelliteLink::onFrameReceived(FramedTcpConnection* con,
       break;
     case MsgTrunkFlush::TYPE:
       handleMsgTrunkFlush(ss);
+      break;
+    case MsgTrunkFilter::TYPE:
+      handleMsgTrunkFilter(ss);
       break;
     default:
       geulog::warn("satellite", "Unknown message type=", header.type());
@@ -295,3 +302,39 @@ void SatelliteLink::heartbeatTick(Async::Timer* t)
     linkFailed(this);
   }
 } /* SatelliteLink::heartbeatTick */
+
+
+void SatelliteLink::handleMsgTrunkFilter(std::istream& is)
+{
+  MsgTrunkFilter msg;
+  if (!msg.unpack(is))
+  {
+    geulog::error("satellite", "Failed to unpack MsgTrunkFilter from '",
+                  m_satellite_id, "'");
+    return;
+  }
+
+  if (msg.filter().empty())
+  {
+    // Empty filter = clear any previously set filter (allow all)
+    m_tg_filter = TgFilter();
+    geulog::info("satellite", "Satellite '", m_satellite_id,
+                 "': TG filter cleared (all TGs forwarded)");
+  }
+  else
+  {
+    m_tg_filter = TgFilter::parse(msg.filter());
+    geulog::info("satellite", "Satellite '", m_satellite_id,
+                 "': TG filter set: ", m_tg_filter.toString());
+  }
+
+  statusChanged(this);
+} /* SatelliteLink::handleMsgTrunkFilter */
+
+
+bool SatelliteLink::filterPassesTg(uint32_t tg) const
+{
+  // Empty filter = no filtering = pass everything
+  if (m_tg_filter.empty()) return true;
+  return m_tg_filter.matches(tg);
+} /* SatelliteLink::filterPassesTg */

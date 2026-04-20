@@ -66,6 +66,14 @@ bool SatelliteClient::initialize(void)
   m_satellite_id = "satellite";
   m_cfg.getValue("GLOBAL", "SATELLITE_ID", m_satellite_id);
 
+  // Optional TG filter — restrict which TGs to receive from parent
+  if (m_cfg.getValue("GLOBAL", "SATELLITE_FILTER", m_filter_str) &&
+      !m_filter_str.empty())
+  {
+    m_filter = TgFilter::parse(m_filter_str);
+    geulog::info("satellite", "TG filter: ", m_filter.toString());
+  }
+
   geulog::info("satellite", "Connecting to parent ", m_parent_host,
                ":", m_parent_port, " as '", m_satellite_id, "'");
 
@@ -80,6 +88,7 @@ void SatelliteClient::onLocalTalkerStart(uint32_t tg,
                                           const std::string& callsign)
 {
   if (!m_con.isConnected() || !m_hello_received) return;
+  if (!m_filter.empty() && !m_filter.matches(tg)) return;
   sendMsg(MsgTrunkTalkerStart(tg, callsign));
 } /* SatelliteClient::onLocalTalkerStart */
 
@@ -87,6 +96,7 @@ void SatelliteClient::onLocalTalkerStart(uint32_t tg,
 void SatelliteClient::onLocalTalkerStop(uint32_t tg)
 {
   if (!m_con.isConnected() || !m_hello_received) return;
+  if (!m_filter.empty() && !m_filter.matches(tg)) return;
   sendMsg(MsgTrunkTalkerStop(tg));
 } /* SatelliteClient::onLocalTalkerStop */
 
@@ -95,6 +105,7 @@ void SatelliteClient::onLocalAudio(uint32_t tg,
                                     const std::vector<uint8_t>& audio)
 {
   if (!m_con.isConnected() || !m_hello_received) return;
+  if (!m_filter.empty() && !m_filter.matches(tg)) return;
   sendMsg(MsgTrunkAudio(tg, audio));
 } /* SatelliteClient::onLocalAudio */
 
@@ -102,6 +113,7 @@ void SatelliteClient::onLocalAudio(uint32_t tg,
 void SatelliteClient::onLocalFlush(uint32_t tg)
 {
   if (!m_con.isConnected() || !m_hello_received) return;
+  if (!m_filter.empty() && !m_filter.matches(tg)) return;
   sendMsg(MsgTrunkFlush(tg));
 } /* SatelliteClient::onLocalFlush */
 
@@ -206,7 +218,19 @@ void SatelliteClient::handleMsgTrunkHello(std::istream& is)
 
   m_hello_received = true;
   geulog::info("satellite", "Parent authenticated (id='", msg.id(), "')");
+
+  // Advertise our TG filter to the parent so it can skip TGs we
+  // don't want. The parent applies the filter on its outbound path.
+  sendFilter();
 } /* SatelliteClient::handleMsgTrunkHello */
+
+
+void SatelliteClient::sendFilter(void)
+{
+  if (m_filter_str.empty()) return;
+  sendMsg(MsgTrunkFilter(m_filter_str));
+  geulog::info("satellite", "Sent TG filter to parent: ", m_filter_str);
+} /* SatelliteClient::sendFilter */
 
 
 void SatelliteClient::handleMsgTrunkTalkerStart(std::istream& is)
