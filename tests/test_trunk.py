@@ -69,6 +69,7 @@ MSG_TRUNK_AUDIO = 118
 MSG_TRUNK_FLUSH = 119
 MSG_TRUNK_HEARTBEAT = 120
 MSG_TRUNK_NODE_LIST = 121
+MSG_TRUNK_FILTER = 122
 
 # Filter test peer constants
 FILTER_SECRET = T.TEST_PEER_FILTER["secret"]
@@ -164,6 +165,12 @@ def build_flush(tg: int) -> bytes:
 
 def build_heartbeat() -> bytes:
     return struct.pack("!H", MSG_TRUNK_HEARTBEAT)
+
+
+def build_trunk_filter(filter_str: str) -> bytes:
+    payload = struct.pack("!H", MSG_TRUNK_FILTER)
+    payload += pack_string(filter_str)
+    return payload
 
 
 def build_node_list(nodes) -> bytes:
@@ -368,6 +375,9 @@ class SatellitePeer(TrunkPeer):
         msg_type, _fields = self.recv_msg(timeout=5.0)
         assert msg_type == MSG_TRUNK_HELLO, \
             f"Expected hello reply, got type={msg_type}"
+
+    def send_filter(self, filter_str: str):
+        send_frame(self.sock, build_trunk_filter(filter_str))
 
 
 # ---------------------------------------------------------------------------
@@ -1241,6 +1251,81 @@ class TestTrunkIntegration(unittest.TestCase):
 
         wait_until(sat_gone, timeout=20.0,
                    msg="satellite not cleared from /status after disconnect")
+
+    # ------------------------------------------------------------------
+    # Test 16b: Satellite advertises a TG filter; parent honors it
+    # ------------------------------------------------------------------
+    def test_16b_satellite_tg_filter(self):
+        """Satellite sends MsgTrunkFilter after Hello; parent must drop
+        forwarded events for TGs outside the filter.
+
+        Setup:
+          - CLUSTER_TGS are [222, 999] — both normally reach a satellite
+            via the parent (see test_14).
+          - This satellite subscribes to only "222" via the filter.
+          - A trunk peer originates talker+audio on TG 999 (should NOT
+            reach the satellite) and on TG 222 (should reach it).
+        """
+        sat = SatellitePeer()
+        sat.connect_satellite()
+        sat.handshake()
+
+        # Advertise filter; give the parent a moment to install it
+        assert T.CLUSTER_TGS == [222, 999], \
+            "test assumes CLUSTER_TGS = [222, 999]"
+        tg_allowed = T.CLUSTER_TGS[0]   # 222 — matches
+        tg_blocked = T.CLUSTER_TGS[1]   # 999 — does not match
+        sat.send_filter(str(tg_allowed))
+        time.sleep(0.5)
+
+        sender, _ = self._connect_peer()
+        try:
+            # Originate on the BLOCKED TG first, then on the ALLOWED TG
+            for tg, who in ((tg_blocked, "BLOCKED_SRC"),
+                            (tg_allowed, "ALLOWED_SRC")):
+                sender.send_talker_start(tg, who)
+                for _ in range(3):
+                    sender.send_audio(tg, b"\xAA\x55" * 80)
+                sender.send_flush(tg)
+                sender.send_talker_stop(tg)
+
+            # Drain everything the satellite receives in 3s
+            sat.sock.settimeout(3.0)
+            allowed_talker = False
+            allowed_audio = False
+            blocked_talker = False
+            blocked_audio = False
+            try:
+                while True:
+                    data = recv_frame(sat.sock)
+                    msg_type, fields = parse_msg(data)
+                    if msg_type == MSG_TRUNK_HEARTBEAT:
+                        continue
+                    tg = fields.get("tg")
+                    if msg_type == MSG_TRUNK_TALKER_START:
+                        if tg == tg_allowed: allowed_talker = True
+                        if tg == tg_blocked: blocked_talker = True
+                    elif msg_type == MSG_TRUNK_AUDIO:
+                        if tg == tg_allowed: allowed_audio = True
+                        if tg == tg_blocked: blocked_audio = True
+            except (socket.timeout, ConnectionError, OSError):
+                pass
+
+            self.assertTrue(allowed_talker,
+                f"satellite did not receive TalkerStart for TG {tg_allowed} "
+                f"(should match filter)")
+            self.assertTrue(allowed_audio,
+                f"satellite did not receive audio for TG {tg_allowed} "
+                f"(should match filter)")
+            self.assertFalse(blocked_talker,
+                f"satellite received TalkerStart for TG {tg_blocked} "
+                f"(should have been filtered by parent)")
+            self.assertFalse(blocked_audio,
+                f"satellite received audio for TG {tg_blocked} "
+                f"(should have been filtered by parent)")
+        finally:
+            sender.close()
+            sat.close()
 
     # ------------------------------------------------------------------
     # Test 17: Trunk talker notification reaches monitoring clients
