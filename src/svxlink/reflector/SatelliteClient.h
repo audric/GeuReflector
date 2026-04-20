@@ -22,11 +22,12 @@ it connects to a parent reflector and relays all local client events.
 Events received from the parent are broadcast to local clients.
 No prefix logic, no trunk mesh participation.
 
-An optional SATELLITE_FILTER restricts which TGs the satellite wants to
-receive from the parent (uses the standard TgFilter syntax: exact, prefix
-"24*", range "2427-2438", comma-separated). The filter is sent to the
-parent via MsgTrunkFilter (type 122) after authentication. The parent
-applies it to outbound traffic so filtered TGs are never forwarded.
+An optional SATELLITE_FILTER scopes which TGs this satellite cares about,
+in both directions (TgFilter syntax: exact, prefix "24*", range
+"2427-2438", comma-separated):
+ - outbound: local events for non-matching TGs are not sent to the parent;
+ - inbound:  the filter is sent to the parent via MsgTrunkFilter (type 122)
+   after authentication; the parent skips forwarding non-matching TGs.
 */
 class SatelliteClient : public sigc::trackable
 {
