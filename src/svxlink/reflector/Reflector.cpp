@@ -2224,7 +2224,7 @@ void Reflector::initTrunkLinks(void)
   // Collect local prefixes for cluster TG validation
   std::string local_prefix_str;
   m_cfg->getValue("GLOBAL", "LOCAL_PREFIX", local_prefix_str);
-  std::vector<std::string> all_prefixes;
+  m_local_prefixes.clear();
   {
     std::istringstream ss(local_prefix_str);
     std::string token;
@@ -2232,9 +2232,10 @@ void Reflector::initTrunkLinks(void)
     {
       token.erase(0, token.find_first_not_of(" \t"));
       token.erase(token.find_last_not_of(" \t") + 1);
-      if (!token.empty()) all_prefixes.push_back(token);
+      if (!token.empty()) m_local_prefixes.push_back(token);
     }
   }
+  std::vector<std::string> all_prefixes = m_local_prefixes;
 
   // If Redis is configured, load trunk peer definitions from Redis and
   // synthesize them into m_cfg so the existing trunk initialization
@@ -2290,6 +2291,9 @@ void Reflector::initTrunkLinks(void)
       }
     }
   }
+
+  // Cache the mesh-wide prefix set for owner-relay decisions.
+  m_all_prefixes = all_prefixes;
 
   // Second pass: create trunk links with full prefix knowledge
   for (const auto& section : trunk_sections)
@@ -2878,6 +2882,80 @@ std::vector<std::string> Reflector::collectAllTrunkPrefixes(void) const
 }
 
 
+bool Reflector::isLocalTG(uint32_t tg) const
+{
+  const std::string s = std::to_string(tg);
+
+  size_t best_local_len = 0;
+  for (const auto& prefix : m_local_prefixes)
+  {
+    if (s.size() >= prefix.size() &&
+        s.compare(0, prefix.size(), prefix) == 0 &&
+        prefix.size() > best_local_len)
+    {
+      best_local_len = prefix.size();
+    }
+  }
+  if (best_local_len == 0) return false;
+
+  for (const auto& prefix : m_all_prefixes)
+  {
+    if (prefix.size() > best_local_len &&
+        s.size() >= prefix.size() &&
+        s.compare(0, prefix.size(), prefix) == 0)
+    {
+      return false;  // a longer (remote) prefix claims this TG
+    }
+  }
+  return true;
+} /* Reflector::isLocalTG */
+
+
+void Reflector::forwardTrunkAudioToOtherTrunks(const TrunkLink* src,
+                                               uint32_t tg,
+                                               const std::vector<uint8_t>& audio)
+{
+  for (auto* link : m_trunk_links)
+  {
+    if (link == src) continue;
+    link->onLocalAudio(tg, audio);
+  }
+} /* Reflector::forwardTrunkAudioToOtherTrunks */
+
+
+void Reflector::forwardTrunkFlushToOtherTrunks(const TrunkLink* src,
+                                               uint32_t tg)
+{
+  for (auto* link : m_trunk_links)
+  {
+    if (link == src) continue;
+    link->onLocalFlush(tg);
+  }
+} /* Reflector::forwardTrunkFlushToOtherTrunks */
+
+
+void Reflector::forwardTrunkTalkerStartToOtherTrunks(
+    const TrunkLink* src, uint32_t tg, const std::string& callsign)
+{
+  for (auto* link : m_trunk_links)
+  {
+    if (link == src) continue;
+    link->onLocalTalkerStart(tg, callsign);
+  }
+} /* Reflector::forwardTrunkTalkerStartToOtherTrunks */
+
+
+void Reflector::forwardTrunkTalkerStopToOtherTrunks(const TrunkLink* src,
+                                                    uint32_t tg)
+{
+  for (auto* link : m_trunk_links)
+  {
+    if (link == src) continue;
+    link->onLocalTalkerStop(tg);
+  }
+} /* Reflector::forwardTrunkTalkerStopToOtherTrunks */
+
+
 bool Reflector::addTrunkLink(const std::string& section)
 {
   if (m_redis == nullptr) {
@@ -2917,6 +2995,9 @@ bool Reflector::addTrunkLink(const std::string& section)
 
   // Rebroadcast the full prefix set to every link (including the new one).
   auto all_prefixes = collectAllTrunkPrefixes();
+  all_prefixes.insert(all_prefixes.begin(),
+                      m_local_prefixes.begin(), m_local_prefixes.end());
+  m_all_prefixes = all_prefixes;
   for (auto* l : m_trunk_links) l->setAllPrefixes(all_prefixes);
 
   geulog::info("trunk", "Added trunk link: ", section, " (", p.host,
@@ -2938,6 +3019,9 @@ bool Reflector::removeTrunkLink(const std::string& section)
 
   // Rebroadcast the remaining prefix set so peers drop the removed one.
   auto all_prefixes = collectAllTrunkPrefixes();
+  all_prefixes.insert(all_prefixes.begin(),
+                      m_local_prefixes.begin(), m_local_prefixes.end());
+  m_all_prefixes = all_prefixes;
   for (auto* l : m_trunk_links) l->setAllPrefixes(all_prefixes);
 
   geulog::info("trunk", "Removed trunk link: ", section);

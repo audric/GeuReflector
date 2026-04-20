@@ -246,6 +246,24 @@ class Reflector : public sigc::trackable
     bool isClusterTG(uint32_t tg) const { return m_cluster_tgs.count(tg) > 0; }
     bool isSatelliteMode(void) const { return m_is_satellite; }
 
+    // True iff this reflector owns the TG (i.e., our local prefix is the
+    // longest matching prefix across all known prefixes in the mesh).
+    // Used to gate owner-relay fanout of trunk-received audio.
+    bool isLocalTG(uint32_t tg) const;
+
+    // Owner-relay fanout: when we receive trunk traffic for a TG we own,
+    // forward to every other trunk peer except `src`. Each peer's TrunkLink
+    // applies its own shared/cluster/interest filter, so links with no
+    // reason to care drop the forward.
+    void forwardTrunkAudioToOtherTrunks(const TrunkLink* src, uint32_t tg,
+                                         const std::vector<uint8_t>& audio);
+    void forwardTrunkFlushToOtherTrunks(const TrunkLink* src, uint32_t tg);
+    void forwardTrunkTalkerStartToOtherTrunks(const TrunkLink* src,
+                                               uint32_t tg,
+                                               const std::string& callsign);
+    void forwardTrunkTalkerStopToOtherTrunks(const TrunkLink* src,
+                                              uint32_t tg);
+
     RedisStore* redisStore(void) const { return m_redis; }
 
     // Callbacks for SatelliteLink to forward satellite events to trunk peers
@@ -337,6 +355,12 @@ class Reflector : public sigc::trackable
     Json::Value                 m_status;
 
     std::vector<TrunkLink*>     m_trunk_links;
+    // Prefix bookkeeping for owner-relay decisions. m_local_prefixes holds
+    // prefixes owned by this reflector (from GLOBAL/LOCAL_PREFIX);
+    // m_all_prefixes is local + every peer's REMOTE_PREFIX. Populated in
+    // initTrunkLinks() and refreshed by addTrunkLink/removeTrunkLink.
+    std::vector<std::string>    m_local_prefixes;
+    std::vector<std::string>    m_all_prefixes;
     // Tracks last-seen callsign set per peer_id so we can DEL dropped
     // callsigns from Redis when a peer's node list shrinks.
     std::map<std::string, std::set<std::string>> m_peer_node_cache;
