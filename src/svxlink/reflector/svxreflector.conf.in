@@ -175,6 +175,11 @@ CERT_CA_HOOK=@SVX_SHARE_INSTALL_DIR@/ca-hook.py
 #SATELLITE_PORT=5303
 #SATELLITE_SECRET=change_this_satellite_secret
 #SATELLITE_ID=my-satellite
+# Optional TG filter — restrict which TGs to receive from parent.
+# Uses standard filter syntax: exact "26200", prefix "24*", range "2427-2438",
+# comma-separated. Empty or absent = receive all TGs.
+# Sent to the parent via MsgTrunkFilter (type 122) after authentication.
+#SATELLITE_FILTER=24*,262*
 
 #
 # MQTT publishing. Optional — omit this section to disable.
