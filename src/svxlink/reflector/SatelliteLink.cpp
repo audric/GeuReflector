@@ -54,6 +54,11 @@ Json::Value SatelliteLink::statusJson(void) const
     active_tgs.append(tg);
   }
   obj["active_tgs"] = active_tgs;
+
+  if (!m_tg_filter.empty())
+  {
+    obj["filter"] = m_tg_filter.toString();
+  }
   return obj;
 } /* SatelliteLink::statusJson */
 
