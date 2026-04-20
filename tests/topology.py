@@ -93,6 +93,7 @@ MQTT = {
 TEST_CLIENTS = [
     {"callsign": "N0TEST", "group": "TestGroup", "password": "testpass"},
     {"callsign": "N0SEND", "group": "TestGroup", "password": "testpass"},
+    {"callsign": "N0THRD", "group": "TestGroup", "password": "testpass"},
 ]
 
 # Shared secret between each pair: sorted tuple of names → secret

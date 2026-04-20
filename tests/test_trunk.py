@@ -60,6 +60,8 @@ CLIENT_CALLSIGN = T.TEST_CLIENTS[0]["callsign"]
 CLIENT_PASSWORD = T.TEST_CLIENTS[0]["password"]
 CLIENT2_CALLSIGN = T.TEST_CLIENTS[1]["callsign"]
 CLIENT2_PASSWORD = T.TEST_CLIENTS[1]["password"]
+CLIENT3_CALLSIGN = T.TEST_CLIENTS[2]["callsign"]
+CLIENT3_PASSWORD = T.TEST_CLIENTS[2]["password"]
 
 # Trunk message types
 MSG_TRUNK_HELLO = 115
@@ -2107,6 +2109,115 @@ class TestTrunkIntegration(unittest.TestCase):
         finally:
             mc.loop_stop()
             mc.disconnect()
+
+    # ------------------------------------------------------------------
+    # Test 32: Three-way conversation across the full mesh
+    # ------------------------------------------------------------------
+    def test_32_three_way_conversation(self):
+        """Everyone hears everyone on a shared TG across all three reflectors.
+
+        One V2 client on each of the three mesh reflectors selects the same
+        TG (owned by reflector 'b'). Each client talks in turn; the other two
+        must receive UDP audio/flush. This exercises the owner-relay path
+        where the owning reflector re-forwards trunk-received audio to a
+        second trunk peer — something tests 11/17 do not cover, since they
+        only use two reflectors.
+        """
+        self.assertGreaterEqual(len(REFLECTOR_NAMES), 3,
+            "test_32 requires at least 3 reflectors in the mesh")
+
+        # TG owned by reflector 'b' (longest prefix match wins "121" over "1")
+        owner = "b"
+        owner_prefix = T.first_prefix(T.REFLECTORS[owner]["prefix"])
+        tg = int(owner_prefix + "001")
+
+        # One distinct client per reflector. Distinct callsigns are required
+        # — when both non-owner reflectors forward TrunkTalkerStart to the
+        # owner with the same callsign, the owner's trunk-talker slot for
+        # the TG cannot tell them apart.
+        names = ["a", "b", "c"]
+        creds = [
+            (CLIENT_CALLSIGN, CLIENT_PASSWORD),
+            (CLIENT2_CALLSIGN, CLIENT2_PASSWORD),
+            (CLIENT3_CALLSIGN, CLIENT3_PASSWORD),
+        ]
+        clients = {}
+        try:
+            for name, (cs, pw) in zip(names, creds):
+                c = ClientPeer()
+                port = T.mapped_client_port(name)
+                c.connect(HOST, port)
+                c.authenticate(callsign=cs, password=pw)
+                c.setup_udp(udp_port=port)
+                c.select_tg(tg)
+                clients[name] = c
+            time.sleep(0.8)
+
+            # Periodic TCP heartbeat to keep idle listener sockets alive
+            # (reflector's HEARTBEAT_RX_CNT_RESET = 15s).
+            hb_frame = struct.pack("!H", 1)  # MsgHeartbeat = type 1
+            def keepalive_all():
+                for c in clients.values():
+                    try:
+                        send_frame(c.tcp, hb_frame)
+                    except OSError:
+                        pass
+
+            # Two-pass round-robin so every reflector first observes peer
+            # interest (m_peer_interested_tgs populated via TrunkTalkerStart /
+            # TrunkAudio) before we measure delivery on the second pass.
+            def one_pass(frames_per_sender):
+                for sender_name in names:
+                    # Drain any residual UDP on the listeners before this turn.
+                    for lname in names:
+                        if lname != sender_name:
+                            clients[lname].recv_udp_all(timeout=0.05)
+                    sender = clients[sender_name]
+                    for _ in range(frames_per_sender):
+                        sender.send_udp_audio(b"\xAB\xCD" * 80)
+                        time.sleep(0.02)
+                    sender.send_udp_flush()
+                    time.sleep(1.2)
+                    keepalive_all()
+
+            # Pass 1: prime peer interest on every reflector pair.
+            one_pass(4)
+            # Drain any late packets before measurement.
+            for c in clients.values():
+                c.recv_udp_all(timeout=0.2)
+            keepalive_all()
+
+            # Pass 2: measurement.
+            missing_pairs = []
+            for sender_name in names:
+                for lname in names:
+                    if lname != sender_name:
+                        clients[lname].recv_udp_all(timeout=0.05)
+
+                sender = clients[sender_name]
+                for _ in range(6):
+                    sender.send_udp_audio(b"\xAB\xCD" * 80)
+                    time.sleep(0.02)
+                sender.send_udp_flush()
+
+                time.sleep(1.2)
+                keepalive_all()
+
+                for lname in names:
+                    if lname == sender_name:
+                        continue
+                    msgs = clients[lname].recv_udp_all(timeout=0.8)
+                    audio_count = sum(1 for t, _ in msgs if t == UDP_AUDIO)
+                    flush_count = sum(1 for t, _ in msgs if t == UDP_FLUSH)
+                    if audio_count + flush_count == 0:
+                        missing_pairs.append((sender_name, lname))
+
+            self.assertEqual(missing_pairs, [],
+                f"On TG {tg} (owner={owner}), these sender→listener pairs "
+                f"delivered no audio/flush: {missing_pairs}")
+        finally:
+            for c in clients.values():
+                c.close()
 
 
 # ---------------------------------------------------------------------------
