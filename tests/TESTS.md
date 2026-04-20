@@ -5,7 +5,7 @@
 The integration tests verify the trunk protocol, satellite links, twin (HA-pair) protocol, Redis-backed config store, and end-to-end audio routing by spinning up reflector meshes in Docker Compose and connecting fake peers and clients from a Python test harness.
 
 `run_tests.sh` runs in **two phases**:
-1. A 3-reflector trunk mesh + a satellite-mode reflector exercising `test_trunk.py` (34 tests).
+1. A 3-reflector trunk mesh + a satellite-mode reflector exercising `test_trunk.py` (35 tests).
 2. A 4-reflector twin topology exercising `test_twin.py` (11 tests).
 
 A separate harness (`run_redis_tests.sh`) runs `test_redis.py` (13 tests) against a single-reflector + Redis stack. See [Redis Integration Tests](#redis-integration-tests) below.
@@ -22,7 +22,7 @@ bash run_tests.sh
 This will:
 1. Generate the default configs and `docker-compose.test.yml` from `topology.py`
 2. Build and start the 3-reflector mesh
-3. Run 34 automated trunk/satellite/MQTT tests (`test_trunk.py`)
+3. Run 35 automated trunk/satellite/MQTT tests (`test_trunk.py`)
 4. Enter an interactive prompt to manually test any TG number
 5. Tear down the default mesh
 6. Regenerate with `--topology twin` (4-reflector twin topology)
@@ -55,8 +55,13 @@ Two fake trunk peers connect from the test harness:
 - **TRUNK_TEST** (prefix `9`) — primary sender for most tests
 - **TRUNK_TEST_RX** (prefix `8`) — passive receiver for isolation tests
 
-Two V2 clients are configured on every reflector:
-- **N0TEST** / **N0SEND** (group `TestGroup`, password `testpass`)
+Three V2 clients are configured on every reflector:
+- **N0TEST** / **N0SEND** / **N0THRD** (group `TestGroup`, password `testpass`)
+
+Three distinct callsigns are required for the 3-way mesh tests: when two
+non-owner reflectors both forward `MsgTrunkTalkerStart` to the owner with
+the same callsign, the owner's per-TG trunk-talker slot cannot tell them
+apart.
 
 A satellite server is enabled on reflector-a (port 5303, secret `sat_secret`). A real satellite-mode reflector (`reflector-sat`, `SATELLITE_OF=reflector-a`) also runs in the compose so tests can verify satellite-mode behavior end-to-end (e.g. that MQTT publishing still works).
 
@@ -114,7 +119,7 @@ Internal port for `[TWIN]` is always 5304; satellite is 5303.
 |------|---------|
 | `topology.py` | Single source of truth — prefixes, ports, secrets, cluster TGs, test clients. Contains both the default mesh (`REFLECTORS`) and the `TWIN_REFLECTORS` / `TWIN_TRUNKS` definitions. |
 | `generate_configs.py` | Generates `configs/*.conf` and `docker-compose.test.yml` from topology. Supports `--topology default` (implicit) and `--topology twin`. |
-| `test_trunk.py` | Test harness: fake trunk peers, satellite peer, V2 client, 31 test cases, interactive loop. |
+| `test_trunk.py` | Test harness: fake trunk peers, satellite peer, V2 client, 35 test cases, interactive loop. |
 | `test_twin.py` | TWIN-protocol tests (10 cases) using the twin topology. Reuses `ClientPeer` and `SatellitePeer` from `test_trunk.py`. |
 | `run_tests.sh` | Orchestrator: generate → build → trunk tests → teardown → regenerate twin → build → twin tests → teardown. |
 | `configs/` | Generated reflector config files (do not edit manually) |
@@ -175,11 +180,12 @@ Simulates a V2 SvxLink client. Performs the full TCP authentication handshake (P
 | 16b | Satellite TG filter honored by parent | Satellite sends `MsgTrunkFilter` (type 122) after hello; parent forwards the matching cluster TG but drops the non-matching one |
 | 16c | Satellite filter visible in `/status` | Active filter surfaces as `satellites[<id>].filter`; key absent when unset, appears after send, clears after empty filter |
 
-### Bidirectional Routing
+### Bidirectional and Multi-Way Routing
 
 | # | Test | What it verifies |
 |---|------|-----------------|
 | 17 | Bidirectional trunk conversation | Client-A on reflector-a talks on a TG owned by reflector-b, Client-B on reflector-b receives it; Client-B replies, Client-A receives the return audio (peer interest tracking) |
+| 32 | Three-way conversation across the mesh | One distinct V2 client on each of the three reflectors selects a TG owned by reflector-b (prefix-match winner). Every client speaks in turn and both other clients must receive UDP audio/flush. Exercises **owner-relay**: when a non-owner forwards audio to the owner, the owner re-broadcasts to every other trunk peer with interest — the single-hop fanout that makes trunks a true audio mesh rather than an owner-local delivery. The test uses a 2-pass round-robin (first pass primes `m_peer_interested_tgs`; second pass measures all 6 sender→listener pairs) and sends periodic TCP heartbeats so idle listener sockets do not hit `HEARTBEAT_RX_CNT_RESET`. |
 
 ### MQTT Publishing
 
