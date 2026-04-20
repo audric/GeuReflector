@@ -1328,6 +1328,51 @@ class TestTrunkIntegration(unittest.TestCase):
             sat.close()
 
     # ------------------------------------------------------------------
+    # Test 16c: Satellite TG filter surfaces in /status
+    # ------------------------------------------------------------------
+    def test_16c_satellite_filter_in_status(self):
+        """After the satellite sends MsgTrunkFilter, the parent's /status
+        endpoint must expose the active filter string under
+        satellites[<id>].filter. Since /status, MQTT retained status, and
+        the Redis live snapshot all serialize SatelliteLink::statusJson(),
+        exposing the field here covers all three observer surfaces.
+        """
+        sat = SatellitePeer()
+        sat.connect_satellite()
+        sat.handshake()
+
+        def sat_present():
+            status = get_status(*_http(self.PRIMARY))
+            return SAT_ID in status.get("satellites", {})
+        wait_until(sat_present, timeout=5.0,
+                   msg="satellite not visible in /status")
+
+        # No filter set yet → the key should be absent (not empty string)
+        status = get_status(*_http(self.PRIMARY))
+        self.assertNotIn("filter", status["satellites"][SAT_ID],
+            "filter key should be absent when no SATELLITE_FILTER is set")
+
+        # Send a filter; statusChanged(this) on handleMsgTrunkFilter should
+        # make the key appear on the next /status fetch.
+        sat.send_filter("222")
+
+        def filter_visible():
+            status = get_status(*_http(self.PRIMARY))
+            return status.get("satellites", {}).get(SAT_ID, {}).get("filter") == "222"
+        wait_until(filter_visible, timeout=5.0,
+                   msg="filter did not appear in /status.satellites[SAT_ID]")
+
+        # Clearing the filter (empty string) should drop the key.
+        sat.send_filter("")
+        def filter_cleared():
+            status = get_status(*_http(self.PRIMARY))
+            return "filter" not in status.get("satellites", {}).get(SAT_ID, {})
+        wait_until(filter_cleared, timeout=5.0,
+                   msg="filter key not cleared after empty filter sent")
+
+        sat.close()
+
+    # ------------------------------------------------------------------
     # Test 17: Trunk talker notification reaches monitoring clients
     # ------------------------------------------------------------------
     def test_17_bidirectional_trunk_conversation(self):
