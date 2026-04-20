@@ -85,6 +85,7 @@ Similar to `TrunkLink` but with different semantics:
 | Who initiates | Both sides connect to each other | Satellite connects to parent |
 | Audio path | Only prefix-matched + cluster TGs | All TGs active on either side |
 | `CLUSTER_TGS` config needed | Yes, must match on both sides | Not required |
+| Observable state | `TrunkLink::statusJson` (per-peer) | `SatelliteLink::statusJson` with `id`, `authenticated`, `active_tgs`, and `filter` (when `SATELLITE_FILTER` is active) — same JSON feeds `/status`, MQTT retained status, and Redis |
 
 #### Parent-side changes (`Reflector.cpp`)
 

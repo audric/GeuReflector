@@ -376,6 +376,12 @@ parent also stops forwarding non-matching TGs back. Empty or absent means no
 filtering. The filter uses the shared TG-filter syntax (exact, `24*` prefix,
 `2427-2438` range, comma-separated).
 
+**Observability.** The currently active filter appears under
+`/status.satellites[<id>].filter` on the parent — and therefore also in
+the retained MQTT `status` topic and the Redis `live:satellite:<id>`
+snapshot, since those surfaces reserialize the same JSON. The key is
+omitted when no filter is set.
+
 Port `5303` is the default satellite port (separate from client port `5300` and
 trunk port `5302`).
 
