@@ -92,8 +92,70 @@ instead.
 
 In a full mesh of N reflectors, each `[TRUNK_x]` section on reflector A points
 at reflector B and carries only TGs whose decimal string starts with B's prefix
-(`REMOTE_PREFIX`).  No multi-hop routing is needed because every pair has a
-direct trunk.
+(`REMOTE_PREFIX`).  There is never a chain of trunk relays — every peer-to-peer
+hop is direct, and audio distribution across more than two reflectors is
+handled by owner-relay (see below), not by daisy-chain forwarding.
+
+### Owner-Relay Fanout
+
+Prefix routing alone gets talker state and audio from a non-owner to the TG's
+owner, and from the owner to its local clients.  But in a mesh of 3+
+reflectors, the owner is also the only reflector that sees every non-owner's
+traffic on that TG — so for every non-owner to hear every other, the owner
+must fan out.
+
+When `TrunkLink::handleMsgTrunkTalkerStart` / `handleMsgTrunkTalkerStop` /
+`handleMsgTrunkAudio` / `handleMsgTrunkFlush` runs on the reflector that
+**owns** the TG (`Reflector::isLocalTG(tg)`), after the existing local
+delivery the event is re-forwarded to every **other** trunk peer through the
+same per-link filter (`isSharedTG` / `isClusterTG` / `isPeerInterestedTG`).
+The source trunk is excluded from the fanout.
+
+This preserves the single-hop invariant:
+
+- **Non-owners** receiving trunk audio deliver to local clients and stop —
+  they never relay to another trunk.
+- **The owner** is the one and only relay.  Because the source link is
+  skipped, the fanout cannot echo back.
+
+Example (refA prefix `240`, refB prefix `262`, refC prefix `222`, mesh
+trunked, a client on each of refA and refC monitoring TG `2626` which is
+owned by refB):
+
+```
+refA client PTT on 2626
+  └─► refA forwards to refB (isSharedTG)
+        refB broadcasts to local clients on 2626
+        refB fans out to refC via refB↔refC link (isPeerInterestedTG)
+          └─► refC broadcasts to local clients on 2626 (no further relay)
+```
+
+**Scales to any mesh size.**  In a mesh of N reflectors with owner B and
+N−1 non-owners, when any non-owner talks:
+
+- sender → B directly (prefix match)
+- B fans out to the other N−2 peers (source link excluded)
+- each non-owner delivers locally and stops
+
+Complexity per audio frame on the owner is **O(N) TCP sends** — inherent to
+any mesh fanout, not a new limitation.
+
+**Peer-interest caveat.**  The owner's fanout filter checks
+`isPeerInterestedTG` on each non-owner link.  `m_peer_interested_tgs` is
+populated when a peer emits `TrunkTalkerStart` or `TrunkAudio` on the TG
+(see [Peer Interest Tracking](#peer-interest-tracking) below), so a
+non-owner's client must PTT on the TG at least once before the owner knows
+to forward that TG back to them.  This is the same mechanism that enables
+the return path in 2-reflector conversations, reused for the N−2 fanout.
+
+The interest entry is **refreshed on every subsequent `TrunkTalkerStart`
+/ `TrunkAudio` for the same TG** and **expires after 10 minutes of
+inactivity** from that peer on that TG
+(`PEER_INTEREST_TIMEOUT_S = 600` in `TrunkLink.h`), or immediately when
+the trunk link fully disconnects.  In practice this means: during an
+active QSO the fanout stays live indefinitely; on a TG that has been
+silent for ~10 minutes, the first PTT from a non-owner's client re-arms
+the fanout before the owner starts forwarding that TG back out.
 
 ### Cluster TGs
 

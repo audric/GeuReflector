@@ -40,8 +40,12 @@ automatically.
   multiple prefix groups (e.g. `LOCAL_PREFIX=11,12,13`)
 - **Server-to-server trunk links** — persistent TCP connections between pairs of
   reflectors carry talker state and audio for shared TGs
-- **Full-mesh topology** — any number of reflectors can be trunked together; each
-  pair has a direct link so no multi-hop routing is needed
+- **Full-mesh topology** — any number of reflectors can be trunked together;
+  every pair has a direct link. Audio distribution uses **single-hop
+  owner-relay**: a non-owner sends to the TG's owner, and the owner fans the
+  audio out to every other trunk peer with interest. No daisy-chain relaying,
+  so conversations on a shared TG work between clients on any two (or more)
+  reflectors
 - **Unlimited concurrent conversations** — the trunk TCP connection multiplexes
   all active TGs simultaneously; the only per-TG rule is one talker at a time
 - **Independent talker arbitration** — each reflector arbitrates its own clients;
