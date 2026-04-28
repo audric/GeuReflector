@@ -1,4 +1,6 @@
-# GeuReflector — Server-to-Server Trunk Protocol
+# GeuReflector — Server-to-Server Peer Protocol
+
+> **Renamed in 2026-04 (wire-format unchanged).** Message types were previously called `MsgTrunk*`; they are now `MsgPeer*`. Wire IDs (115-122) and field layouts are identical — a renamed reflector and an old reflector interoperate identically.
 
 ## Overview
 
@@ -18,7 +20,7 @@ authoritative home reflector (the one whose prefix matches); all other
 reflectors are transparent proxies for that TG.
 
 > **Important:** Both reflectors in a trunk link **must use the same `[TRUNK_x]`
-> section name**.  The section name is transmitted in the `MsgTrunkHello`
+> section name**.  The section name is transmitted in the `MsgPeerHello`
 > handshake and both sides must agree on it for the connection to be matched to
 > the correct `TrunkLink` instance.  The convention is to use sorted pair
 > identifiers — for example, the link between reflector 1 and reflector 2 uses
@@ -104,8 +106,8 @@ reflectors, the owner is also the only reflector that sees every non-owner's
 traffic on that TG — so for every non-owner to hear every other, the owner
 must fan out.
 
-When `TrunkLink::handleMsgTrunkTalkerStart` / `handleMsgTrunkTalkerStop` /
-`handleMsgTrunkAudio` / `handleMsgTrunkFlush` runs on the reflector that
+When `TrunkLink::handleMsgPeerTalkerStart` / `handleMsgPeerTalkerStop` /
+`handleMsgPeerAudio` / `handleMsgPeerFlush` runs on the reflector that
 **owns** the TG (`Reflector::isLocalTG(tg)`), after the existing local
 delivery the event is re-forwarded to every **other** trunk peer through the
 same per-link filter (`isSharedTG` / `isClusterTG` / `isPeerInterestedTG`).
@@ -179,8 +181,8 @@ using different prefix checks appropriate to each direction:
   to the peer.  Additionally, `isPeerInterestedTG` matches TGs that the
   peer has previously sent traffic for, enabling the return path for
   bidirectional conversations (see below).
-- **Receiving side:** `TrunkLink::handleMsgTrunkTalkerStart`,
-  `handleMsgTrunkAudio`, and `handleMsgTrunkFlush` check
+- **Receiving side:** `TrunkLink::handleMsgPeerTalkerStart`,
+  `handleMsgPeerAudio`, and `handleMsgPeerFlush` check
   `isOwnedTG(tg) || isClusterTG(tg)` before accepting.  `isOwnedTG` matches
   the TG against both the **local** prefix (TG belongs to us — a peer's client
   is talking on one of our TGs) and the **remote** prefix (TG belongs to the
@@ -201,11 +203,11 @@ forward to B.  But when B's client replies on that same TG, B sees it as a
 local TG and has no reason to forward back to A.
 
 To enable the return path, each `TrunkLink` tracks **peer interest**: when
-a peer sends `MsgTrunkTalkerStart(tg)`, the receiving side records that the
+a peer sends `MsgPeerTalkerStart(tg)`, the receiving side records that the
 peer has active clients on that TG.  From that point, local talker activity
 on the same TG is also forwarded to the peer via `isPeerInterestedTG`.
 
-Interest is refreshed on each `MsgTrunkAudio` received for the TG (keeping
+Interest is refreshed on each `MsgPeerAudio` received for the TG (keeping
 it alive during long transmissions).  It expires after 10 minutes of
 inactivity on that TG from the peer, and is cleared immediately on trunk
 disconnect.  The interest map is per-link — disconnecting one peer does not
@@ -237,16 +239,16 @@ not ready, the inbound connection is used as fallback.
 ### Outbound connection
 
 When a `TrunkLink` connects outbound to a peer, it immediately sends
-`MsgTrunkHello`.  The peer's trunk server accepts the connection, verifies the
+`MsgPeerHello`.  The peer's trunk server accepts the connection, verifies the
 HMAC-authenticated shared secret, matches it to the corresponding `TrunkLink`,
-and sends its own `MsgTrunkHello` in response.
+and sends its own `MsgPeerHello` in response.
 
 ```
 Reflector A (prefix "1")           Reflector B (prefix "2")
     │──── TCP connect to B:5302 ──────────────────────────►│
-    │──── MsgTrunkHello(id, prefix="1", priority, HMAC) ──►│
+    │──── MsgPeerHello(id, prefix="1", priority, HMAC) ──►│
     │                          B verifies HMAC, matches TrunkLink
-    │◀─── MsgTrunkHello(id, prefix="2", priority, HMAC) ───│
+    │◀─── MsgPeerHello(id, prefix="2", priority, HMAC) ───│
     │              (both sides ready)                       │
 ```
 
@@ -256,7 +258,7 @@ The trunk server (`Reflector::m_trunk_srv`) listens on the configured
 `TRUNK_LISTEN_PORT` (default 5302).  When a peer connects:
 
 1. The connection enters a **pending** state with a 10-second hello timeout
-2. The server waits for a `MsgTrunkHello` frame
+2. The server waits for a `MsgPeerHello` frame
 3. The shared secret is verified via HMAC against each configured `TrunkLink`
 4. On match, the connection is handed off to the corresponding `TrunkLink`
 5. The `TrunkLink` stores the inbound connection alongside any existing
@@ -282,7 +284,7 @@ If a second inbound connection arrives while one is already active, the new one
 is rejected.  Outbound reconnection is handled automatically by
 `TcpPrioClient`.
 
-### `MsgTrunkHello` fields
+### `MsgPeerHello` fields
 
 - `id` — the config section name (e.g. `TRUNK_1_2`), used for logging and
   connection matching — both sides must use the same section name
@@ -301,15 +303,15 @@ When a local client starts transmitting on a TG owned by the peer:
 Reflector A (owns prefix "1")      Reflector B (owns prefix "2")
     │  SM0ABC starts on TG 25          │
     │  setTalkerForTG(25, SM0ABC)      │
-    │──── MsgTrunkTalkerStart(25, "SM0ABC") ──►│
+    │──── MsgPeerTalkerStart(25, "SM0ABC") ──►│
     │                     setTrunkTalkerForTG(25, "SM0ABC")
     │                     broadcast MsgTalkerStart(25, "SM0ABC") to B clients
-    │──── MsgTrunkAudio(25, <frame>) ─►│
+    │──── MsgPeerAudio(25, <frame>) ─►│
     │                     broadcast MsgUdpAudio to B TG25 clients
     │   (repeats for each audio frame) │
-    │──── MsgTrunkFlush(25) ──────────►│
+    │──── MsgPeerFlush(25) ──────────►│
     │  setTalkerForTG(25, null)        │
-    │──── MsgTrunkTalkerStop(25) ─────►│
+    │──── MsgPeerTalkerStop(25) ─────►│
     │                     clearTrunkTalkerForTG(25)
     │                     broadcast MsgTalkerStop(25, "SM0ABC") to B clients
     │                     broadcast MsgUdpFlushSamples to B TG25 clients
@@ -324,19 +326,19 @@ The reverse direction (B client talking on a TG owned by A) is symmetric.
 Each reflector arbitrates talkers independently for its own clients.  The trunk
 adds a second layer of arbitration for shared TGs.
 
-**Normal case (one side talking at a time):** the first `MsgTrunkTalkerStart`
+**Normal case (one side talking at a time):** the first `MsgPeerTalkerStart`
 to arrive locks the TG on the receiving side.  Local clients on that side cannot
 grab the talker slot while the trunk lock is held — their audio packets are
 silently dropped by the existing `talker != client` check in the reflector's
 UDP handler.
 
 **Simultaneous claim (both sides start at the same instant):** resolved using
-the `priority` nonce exchanged in `MsgTrunkHello`:
+the `priority` nonce exchanged in `MsgPeerHello`:
 
 - The side with the **lower** priority value wins
 - The losing side calls `setTalkerForTG(tg, nullptr)` to clear its local talker,
   then calls `setTrunkTalkerForTG(tg, peer_callsign)` to accept the remote claim
-- The losing side suppresses the spurious `MsgTrunkTalkerStop` that would
+- The losing side suppresses the spurious `MsgPeerTalkerStop` that would
   otherwise be sent when the local talker is cleared (tracked via `m_yielded_tgs`)
 
 ---
@@ -362,7 +364,7 @@ interruption by local clients.
 
 ## Keepalive / Heartbeat
 
-Both sides send `MsgTrunkHeartbeat` periodically to keep the TCP connection
+Both sides send `MsgPeerHeartbeat` periodically to keep the TCP connection
 alive and detect peer disconnection:
 
 - TX: sent when no other message has been sent for 10 timer ticks (10 s)
@@ -382,14 +384,14 @@ payload, packed using the `ASYNC_MSG_MEMBERS` macro.
 
 | Type | Name                  | Fields                                           |
 |------|-----------------------|--------------------------------------------------|
-| 115  | `MsgTrunkHello`       | `string id`, `string local_prefix`, `uint32 priority`, `uint8[] nonce`, `uint8[] hmac`, `uint8 role` |
-| 116  | `MsgTrunkTalkerStart` | `uint32 tg`, `string callsign`                   |
-| 117  | `MsgTrunkTalkerStop`  | `uint32 tg`                                      |
-| 118  | `MsgTrunkAudio`       | `uint32 tg`, `uint8[] audio`                     |
-| 119  | `MsgTrunkFlush`       | `uint32 tg`                                      |
-| 120  | `MsgTrunkHeartbeat`   | *(no fields)*                                    |
-| 121  | `MsgTrunkNodeList`    | `string[] callsigns`, `uint32[] tgs`, `float[] lats`, `float[] lons`, `string[] qth_names`, `string[] status_blobs`, `string[] sat_ids` |
-| 122  | `MsgTrunkFilter`      | `string filter` (shared-syntax TG filter: exact / `24*` / `10-20`, comma-separated) |
+| 115  | `MsgPeerHello`       | `string id`, `string local_prefix`, `uint32 priority`, `uint8[] nonce`, `uint8[] hmac`, `uint8 role` |
+| 116  | `MsgPeerTalkerStart` | `uint32 tg`, `string callsign`                   |
+| 117  | `MsgPeerTalkerStop`  | `uint32 tg`                                      |
+| 118  | `MsgPeerAudio`       | `uint32 tg`, `uint8[] audio`                     |
+| 119  | `MsgPeerFlush`       | `uint32 tg`                                      |
+| 120  | `MsgPeerHeartbeat`   | *(no fields)*                                    |
+| 121  | `MsgPeerNodeList`    | `string[] callsigns`, `uint32[] tgs`, `float[] lats`, `float[] lons`, `string[] qth_names`, `string[] status_blobs`, `string[] sat_ids` |
+| 122  | `MsgPeerFilter`      | `string filter` (shared-syntax TG filter: exact / `24*` / `10-20`, comma-separated) |
 
 Type numbers 115–120 are chosen to follow the last existing SvxReflector TCP
 message type (114 = `MsgStartUdpEncryption`) without collision. Types 121–122
@@ -397,7 +399,7 @@ were added by the jayReflector integration (v1.1.0) and are optional —
 older peers silently ignore unknown message types, preserving backward
 compatibility.
 
-`MsgTrunkNodeList` is emitted by the reflector on local client login, logout,
+`MsgPeerNodeList` is emitted by the reflector on local client login, logout,
 or TG change, debounced to 500 ms, and broadcast to every trunk peer. Peers
 republish it via MQTT under `nodes/<peer_id>` so a central dashboard can see
 who is connected to each reflector.
@@ -411,8 +413,8 @@ under `/status.trunks[<section>].nodes[i]`, MQTT `nodes/<peer_id>`, and
 the `status` field of Redis hash `live:peer_node:<peer_id>:<callsign>`.
 The `isTalker` flag on each peer node is **not** carried in the blob (it
 would be stale by the time it arrives); it is derived on the receive side
-from the live trunk-talker map maintained by `MsgTrunkTalkerStart` /
-`MsgTrunkTalkerStop`.
+from the live trunk-talker map maintained by `MsgPeerTalkerStart` /
+`MsgPeerTalkerStop`.
 
 The optional `sat_ids[i]` field tags each entry with the satellite that
 the client is actually attached to. Interpretation is **recipient-relative**:
@@ -456,8 +458,8 @@ physically lives. Re-broadcasts are debounced (500 ms) and triggered by:
 local client login/logout/TG change, satellite hello completion, and
 inbound satellite node-list updates.
 
-`MsgTrunkFilter` is used by satellite links to advertise TG interest to the
-parent. A satellite with `SATELLITE_FILTER` set sends one `MsgTrunkFilter`
+`MsgPeerFilter` is used by satellite links to advertise TG interest to the
+parent. A satellite with `SATELLITE_FILTER` set sends one `MsgPeerFilter`
 right after authenticating; the parent stores the filter and skips forwarding
 non-matching TGs to that satellite. Absent or empty filter means pass-all
 (pre-existing behavior). Trunk peers do not emit it.
@@ -596,7 +598,7 @@ REMOTE_PREFIX=2
 
 | File | Change |
 |------|--------|
-| `src/svxlink/reflector/ReflectorMsg.h` | Added `MsgTrunkHello`–`MsgTrunkHeartbeat` (types 115–120); `MsgTrunkHello` carries `local_prefix` string instead of TG list |
+| `src/svxlink/reflector/ReflectorMsg.h` | Added `MsgPeerHello`–`MsgPeerHeartbeat` (types 115–120); `MsgPeerHello` carries `local_prefix` string instead of TG list |
 | `src/svxlink/reflector/TGHandler.h` | Added trunk talker map, 5 methods + snapshot accessor, `trunkTalkerUpdated` signal |
 | `src/svxlink/reflector/TGHandler.cpp` | Implemented trunk talker methods including `clearAllTrunkTalkers` |
 | `src/svxlink/reflector/Reflector.h` | Added `m_trunk_links`, `m_trunk_srv`, `initTrunkLinks()`, `initTrunkServer()`, `onTrunkTalkerUpdated()`, trunk inbound connection handling |

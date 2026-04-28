@@ -308,7 +308,7 @@ class Reflector : public sigc::trackable
     void scheduleNodeListUpdate(void);
     // Called by TrunkLink when a peer sends us its node list.
     void onPeerNodeList(const std::string& peer_id,
-                        const std::vector<MsgTrunkNodeList::NodeEntry>& nodes);
+                        const std::vector<MsgPeerNodeList::NodeEntry>& nodes);
 
   protected:
 
@@ -370,7 +370,7 @@ class Reflector : public sigc::trackable
     static const size_t TRUNK_MAX_PENDING_CONS = 5;
 
     FramedTcpServer*            m_trunk_srv = nullptr;
-    // Inbound trunk connections waiting for MsgTrunkHello identification
+    // Inbound trunk connections waiting for MsgPeerHello identification
     std::map<Async::FramedTcpConnection*, Async::Timer*> m_trunk_pending_cons;
     // Handed-off inbound trunk connections mapped to their TrunkLink
     std::map<Async::FramedTcpConnection*, TrunkLink*>    m_trunk_inbound_map;
@@ -379,7 +379,7 @@ class Reflector : public sigc::trackable
     TwinLink*                                            m_twin_link = nullptr;
     Async::TcpServer<Async::FramedTcpConnection>*        m_twin_srv = nullptr;
     uint16_t                                             m_twin_listen_port = 5304;
-    // Pending inbound twin connections awaiting MsgTrunkHello
+    // Pending inbound twin connections awaiting MsgPeerHello
     std::map<Async::FramedTcpConnection*, Async::Timer*> m_twin_pending_cons;
 
     // Satellite support

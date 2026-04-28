@@ -1399,19 +1399,19 @@ class MsgStartUdpEncryption : public ReflectorMsgBase<114>
 }; /* MsgStartUdpEncryption */
 
 
-/***************************** Trunk Messages *****************************/
+/***************************** Peer Messages *****************************/
 
 /**
-@brief  Trunk handshake message
+@brief  Peer handshake message
 @date   2026-03-20
 
 Sent by both sides immediately after TCP connection is established. Exchanges
-the local trunk ID, this side's local TG prefix (the digit string that all TGs
+the local peer ID, this side's local TG prefix (the digit string that all TGs
 owned by this reflector start with, e.g. "1" means TGs 1, 10, 100, 1000 ...),
 and a random priority nonce used for tie-breaking when both sides claim the
 same TG simultaneously (lower priority value defers to the peer).
 */
-class MsgTrunkHello : public ReflectorMsgBase<115>
+class MsgPeerHello : public ReflectorMsgBase<115>
 {
   public:
     static const size_t NONCE_LEN = 20;
@@ -1420,7 +1420,7 @@ class MsgTrunkHello : public ReflectorMsgBase<115>
     static const uint8_t ROLE_SATELLITE = 1;
     static const uint8_t ROLE_TWIN      = 2;   // HA-pair partner
 
-    MsgTrunkHello(void) : m_priority(0), m_role(ROLE_PEER) {}
+    MsgPeerHello(void) : m_priority(0), m_role(ROLE_PEER) {}
 
     /**
      * @brief   Constructor that generates a nonce and computes HMAC
@@ -1430,7 +1430,7 @@ class MsgTrunkHello : public ReflectorMsgBase<115>
      * @param   secret     Shared secret for HMAC authentication
      * @param   role       ROLE_PEER (default) or ROLE_SATELLITE
      */
-    MsgTrunkHello(const std::string& id,
+    MsgPeerHello(const std::string& id,
                   const std::string& local_prefix,
                   uint32_t priority,
                   const std::string& secret,
@@ -1441,13 +1441,13 @@ class MsgTrunkHello : public ReflectorMsgBase<115>
       int rc = RAND_bytes(&m_nonce.front(), NONCE_LEN);
       if (rc != 1)
       {
-        geulog::warn("trunk", "RAND_bytes failed in MsgTrunkHello");
+        geulog::warn("trunk", "RAND_bytes failed in MsgPeerHello");
         m_nonce.clear();
         return;
       }
       if (!calcHMAC(m_digest, secret, m_nonce.data(), m_nonce.size()))
       {
-        geulog::error("trunk", "HMAC calculation failed in MsgTrunkHello");
+        geulog::error("trunk", "HMAC calculation failed in MsgPeerHello");
       }
     }
 
@@ -1498,21 +1498,21 @@ class MsgTrunkHello : public ReflectorMsgBase<115>
       ok = ok && dgst.sign(hmac, data, len);
       return ok;
     }
-}; /* MsgTrunkHello */
+}; /* MsgPeerHello */
 
 
 /**
-@brief  Trunk talker start message
+@brief  Peer talker start message
 @date   2026-03-20
 
 Sent when a local client starts talking on a shared TG. The receiving reflector
 locks that TG to the trunk so its own clients cannot pre-empt the remote talker.
 */
-class MsgTrunkTalkerStart : public ReflectorMsgBase<116>
+class MsgPeerTalkerStart : public ReflectorMsgBase<116>
 {
   public:
-    MsgTrunkTalkerStart(void) : m_tg(0) {}
-    MsgTrunkTalkerStart(uint32_t tg, const std::string& callsign)
+    MsgPeerTalkerStart(void) : m_tg(0) {}
+    MsgPeerTalkerStart(uint32_t tg, const std::string& callsign)
       : m_tg(tg), m_callsign(callsign) {}
     uint32_t tg(void) const { return m_tg; }
     const std::string& callsign(void) const { return m_callsign; }
@@ -1520,41 +1520,41 @@ class MsgTrunkTalkerStart : public ReflectorMsgBase<116>
   private:
     uint32_t    m_tg;
     std::string m_callsign;
-}; /* MsgTrunkTalkerStart */
+}; /* MsgPeerTalkerStart */
 
 
 /**
-@brief  Trunk talker stop message
+@brief  Peer talker stop message
 @date   2026-03-20
 
 Sent when the active talker on a shared TG releases the channel. The receiving
-reflector clears the trunk lock on that TG and broadcasts a flush to its clients.
+reflector clears the peer lock on that TG and broadcasts a flush to its clients.
 */
-class MsgTrunkTalkerStop : public ReflectorMsgBase<117>
+class MsgPeerTalkerStop : public ReflectorMsgBase<117>
 {
   public:
-    MsgTrunkTalkerStop(void) : m_tg(0) {}
-    MsgTrunkTalkerStop(uint32_t tg) : m_tg(tg) {}
+    MsgPeerTalkerStop(void) : m_tg(0) {}
+    MsgPeerTalkerStop(uint32_t tg) : m_tg(tg) {}
     uint32_t tg(void) const { return m_tg; }
     ASYNC_MSG_MEMBERS(m_tg)
   private:
     uint32_t m_tg;
-}; /* MsgTrunkTalkerStop */
+}; /* MsgPeerTalkerStop */
 
 
 /**
-@brief  Trunk audio message
+@brief  Peer audio message
 @date   2026-03-20
 
-Carries a single encoded audio frame for a shared TG over the trunk TCP
+Carries a single encoded audio frame for a shared TG over the peer TCP
 connection. The receiving reflector broadcasts it to all local clients
 subscribed to that TG.
 */
-class MsgTrunkAudio : public ReflectorMsgBase<118>
+class MsgPeerAudio : public ReflectorMsgBase<118>
 {
   public:
-    MsgTrunkAudio(void) : m_tg(0) {}
-    MsgTrunkAudio(uint32_t tg, const std::vector<uint8_t>& audio)
+    MsgPeerAudio(void) : m_tg(0) {}
+    MsgPeerAudio(uint32_t tg, const std::vector<uint8_t>& audio)
       : m_tg(tg), m_audio(audio) {}
     uint32_t tg(void) const { return m_tg; }
     const std::vector<uint8_t>& audio(void) const { return m_audio; }
@@ -1562,40 +1562,40 @@ class MsgTrunkAudio : public ReflectorMsgBase<118>
   private:
     uint32_t             m_tg;
     std::vector<uint8_t> m_audio;
-}; /* MsgTrunkAudio */
+}; /* MsgPeerAudio */
 
 
 /**
-@brief  Trunk flush message
+@brief  Peer flush message
 @date   2026-03-20
 
 Sent after the last audio frame of a transmission to signal end-of-audio on
 a shared TG. Triggers MsgUdpFlushSamples broadcast on the receiving side.
 */
-class MsgTrunkFlush : public ReflectorMsgBase<119>
+class MsgPeerFlush : public ReflectorMsgBase<119>
 {
   public:
-    MsgTrunkFlush(void) : m_tg(0) {}
-    MsgTrunkFlush(uint32_t tg) : m_tg(tg) {}
+    MsgPeerFlush(void) : m_tg(0) {}
+    MsgPeerFlush(uint32_t tg) : m_tg(tg) {}
     uint32_t tg(void) const { return m_tg; }
     ASYNC_MSG_MEMBERS(m_tg)
   private:
     uint32_t m_tg;
-}; /* MsgTrunkFlush */
+}; /* MsgPeerFlush */
 
 
 /**
-@brief  Trunk heartbeat message
+@brief  Peer heartbeat message
 @date   2026-03-20
 
 Sent periodically in both directions to keep the TCP connection alive and
 detect peer disconnection.
 */
-class MsgTrunkHeartbeat : public ReflectorMsgBase<120>
+class MsgPeerHeartbeat : public ReflectorMsgBase<120>
 {
   public:
     ASYNC_MSG_NO_MEMBERS
-}; /* MsgTrunkHeartbeat */
+}; /* MsgPeerHeartbeat */
 
 
 /***************************** UDP Messages *****************************/
@@ -1822,7 +1822,7 @@ class MsgUdpAudio : public ReflectorUdpMsgBase<101>
 
 
 /**
-@brief Trunk node list message (jayReflector extension, type 121)
+@brief Peer node list message (jayReflector extension, type 121)
 
 Sent by a reflector to its trunk peer whenever its local client list changes
 (login, logout, TG change). The receiving peer can publish it via its own
@@ -1848,7 +1848,7 @@ m_status_blobs, then to add m_sat_ids. Each extension is a hard
 lockstep bump because the unpack expects an exact vector count. All
 peers in a mesh must be upgraded together.
 */
-class MsgTrunkNodeList : public ReflectorMsgBase<121>
+class MsgPeerNodeList : public ReflectorMsgBase<121>
 {
   public:
     struct NodeEntry
@@ -1865,8 +1865,8 @@ class MsgTrunkNodeList : public ReflectorMsgBase<121>
                            // the sender that this client lives on
     };
 
-    MsgTrunkNodeList(void) {}
-    explicit MsgTrunkNodeList(const std::vector<NodeEntry>& nodes)
+    MsgPeerNodeList(void) {}
+    explicit MsgPeerNodeList(const std::vector<NodeEntry>& nodes)
     {
       Json::StreamWriterBuilder wb;
       wb["indentation"] = "";
@@ -1929,22 +1929,22 @@ class MsgTrunkNodeList : public ReflectorMsgBase<121>
     std::vector<std::string> m_qth_names;
     std::vector<std::string> m_status_blobs;
     std::vector<std::string> m_sat_ids;
-}; /* MsgTrunkNodeList */
+}; /* MsgPeerNodeList */
 
 
 /**
-@brief Trunk filter advertisement (jayReflector extension, type 122)
+@brief Peer filter advertisement (jayReflector extension, type 122)
 
 Optional message sent (typically by a satellite after Hello) to tell the
 parent which TGs it wants to receive. Filter syntax matches TgFilter
 (exact / "24*" prefix / "10-20" range, comma-separated). Older peers
 silently ignore unknown message types.
 */
-class MsgTrunkFilter : public ReflectorMsgBase<122>
+class MsgPeerFilter : public ReflectorMsgBase<122>
 {
   public:
-    MsgTrunkFilter(void) {}
-    explicit MsgTrunkFilter(const std::string& filter)
+    MsgPeerFilter(void) {}
+    explicit MsgPeerFilter(const std::string& filter)
       : m_filter(filter) {}
 
     const std::string& filter(void) const { return m_filter; }
@@ -1953,14 +1953,14 @@ class MsgTrunkFilter : public ReflectorMsgBase<122>
 
   private:
     std::string m_filter;
-}; /* MsgTrunkFilter */
+}; /* MsgPeerFilter */
 
 
 /**
- * @brief   Twin-link message: mirror an external trunk's talker-start
+ * @brief   Twin-link message: mirror an external peer's talker-start
  *
  * Sent over the [TWIN] link when this reflector receives a
- * MsgTrunkTalkerStart from one of its external trunk peers, so that the
+ * MsgPeerTalkerStart from one of its external peer reflectors, so that the
  * partner twin can update its own TGHandler state and block local clients
  * from keying up the TG.
  */
@@ -1986,7 +1986,7 @@ class MsgTwinExtTalkerStart : public ReflectorMsgBase<123>
 
 
 /**
- * @brief   Twin-link message: mirror an external trunk's talker-stop
+ * @brief   Twin-link message: mirror an external peer's talker-stop
  */
 class MsgTwinExtTalkerStop : public ReflectorMsgBase<124>
 {

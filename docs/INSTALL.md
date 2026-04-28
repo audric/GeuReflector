@@ -241,6 +241,6 @@ the `LOCAL_PREFIX` and `[TRUNK_x]` entries.
 
 ## Further reading
 
-- [`docs/TRUNK_PROTOCOL.md`](TRUNK_PROTOCOL.md) — wire protocol specification
+- [`docs/PEER_PROTOCOL.md`](PEER_PROTOCOL.md) — wire protocol specification
 - [`docs/DEPLOYMENT_ITALY.md`](DEPLOYMENT_ITALY.md) — full national deployment
   example with configuration for all regions

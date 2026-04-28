@@ -521,7 +521,7 @@ The PTY path is set by `COMMAND_PTY` in `[GLOBAL]` (default
   as a drop-in replacement for an existing SvxReflector installation
 - [`docs/DOCKER.md`](docs/DOCKER.md) — running GeuReflector in a Docker container
   as a drop-in replacement for an existing SvxReflector installation
-- [`docs/TRUNK_PROTOCOL.md`](docs/TRUNK_PROTOCOL.md) — full wire protocol
+- [`docs/PEER_PROTOCOL.md`](docs/PEER_PROTOCOL.md) — full wire protocol
   specification: message format, handshake sequence, talker arbitration
   tie-breaking, heartbeat, and the complete message type table
 - [`docs/DEPLOYMENT_ITALY.md`](docs/DEPLOYMENT_ITALY.md) — complete national

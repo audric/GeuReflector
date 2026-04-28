@@ -178,7 +178,7 @@ CERT_CA_HOOK=@SVX_SHARE_INSTALL_DIR@/ca-hook.py
 # Optional TG filter — restricts which TGs this satellite cares about.
 # Applied in both directions: the satellite skips sending local events for
 # non-matching TGs, and advertises the filter to the parent via
-# MsgTrunkFilter (type 122) so the parent skips forwarding them back.
+# MsgPeerFilter (type 122) so the parent skips forwarding them back.
 # Syntax: exact "26200", prefix "24*", range "2427-2438", comma-separated.
 # Empty or absent = no filtering (all TGs pass in both directions).
 #SATELLITE_FILTER=24*,262*

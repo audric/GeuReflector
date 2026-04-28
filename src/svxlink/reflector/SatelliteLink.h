@@ -19,7 +19,7 @@ class Reflector;
 
 A SatelliteLink is created for each satellite that connects to the parent's
 satellite port. By default it relays ALL TGs bidirectionally. When the
-satellite sends a MsgTrunkFilter (type 122), the parent applies the filter
+satellite sends a MsgPeerFilter (type 122), the parent applies the filter
 to outbound traffic — only matching TGs are forwarded to this satellite.
 The parent always wins talker arbitration over satellites.
 */
@@ -60,13 +60,13 @@ class SatelliteLink : public sigc::trackable
     // method additionally drops entries whose TG falls outside the
     // satellite's announced filter (if any).
     void sendNodeList(
-        const std::vector<MsgTrunkNodeList::NodeEntry>& nodes);
+        const std::vector<MsgPeerNodeList::NodeEntry>& nodes);
 
     // Read-only access to the satellite-supplied roster (this satellite's
     // local clients), already sanitised and stamped with sat_id =
     // satelliteId(). Used by Reflector to merge into the parent's
     // outbound advertisements.
-    const std::vector<MsgTrunkNodeList::NodeEntry>& partnerNodes(void) const
+    const std::vector<MsgPeerNodeList::NodeEntry>& partnerNodes(void) const
     {
       return m_partner_nodes;
     }
@@ -86,22 +86,22 @@ class SatelliteLink : public sigc::trackable
     std::set<uint32_t>          m_sat_active_tgs;
     TgFilter                    m_tg_filter;
     // Roster of clients attached to this satellite, learned via
-    // MsgTrunkNodeList from the satellite. Each entry carries
+    // MsgPeerNodeList from the satellite. Each entry carries
     // sat_id == m_satellite_id (stamped on ingest) so the Reflector can
     // merge it into outbound trunk/twin/sibling-sat lists with correct
     // attribution.
-    std::vector<MsgTrunkNodeList::NodeEntry> m_partner_nodes;
+    std::vector<MsgPeerNodeList::NodeEntry> m_partner_nodes;
 
     void onFrameReceived(Async::FramedTcpConnection* con,
                          std::vector<uint8_t>& data);
-    void handleMsgTrunkHello(std::istream& is);
-    void handleMsgTrunkTalkerStart(std::istream& is);
-    void handleMsgTrunkTalkerStop(std::istream& is);
-    void handleMsgTrunkAudio(std::istream& is);
-    void handleMsgTrunkFlush(std::istream& is);
-    void handleMsgTrunkHeartbeat(void);
-    void handleMsgTrunkFilter(std::istream& is);
-    void handleMsgTrunkNodeList(std::istream& is);
+    void handleMsgPeerHello(std::istream& is);
+    void handleMsgPeerTalkerStart(std::istream& is);
+    void handleMsgPeerTalkerStop(std::istream& is);
+    void handleMsgPeerAudio(std::istream& is);
+    void handleMsgPeerFlush(std::istream& is);
+    void handleMsgPeerHeartbeat(void);
+    void handleMsgPeerFilter(std::istream& is);
+    void handleMsgPeerNodeList(std::istream& is);
     bool filterPassesTg(uint32_t tg) const;
     void sendMsg(const ReflectorMsg& msg);
     void heartbeatTick(Async::Timer* t);

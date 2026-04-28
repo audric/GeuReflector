@@ -45,9 +45,9 @@ class MqttPublisher
 
     // Node-list snapshots — published retained
     void publishLocalNodes(
-        const std::vector<MsgTrunkNodeList::NodeEntry>& nodes);
+        const std::vector<MsgPeerNodeList::NodeEntry>& nodes);
     void publishPeerNodes(const std::string& peer_id,
-        const std::vector<MsgTrunkNodeList::NodeEntry>& nodes);
+        const std::vector<MsgPeerNodeList::NodeEntry>& nodes);
 
   private:
     Async::Config&      m_cfg;
@@ -98,9 +98,9 @@ class MqttPublisher
     void onRxUpdate(const std::string&, const Json::Value&) {}
     void publishFullStatus(const Json::Value&) {}
     void publishLocalNodes(
-        const std::vector<MsgTrunkNodeList::NodeEntry>&) {}
+        const std::vector<MsgPeerNodeList::NodeEntry>&) {}
     void publishPeerNodes(const std::string&,
-        const std::vector<MsgTrunkNodeList::NodeEntry>&) {}
+        const std::vector<MsgPeerNodeList::NodeEntry>&) {}
 };
 
 #endif /* WITH_MQTT */
