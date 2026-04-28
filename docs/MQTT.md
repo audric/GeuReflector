@@ -34,7 +34,7 @@ not configured.
 | `USERNAME` | Yes | — | Broker authentication username |
 | `PASSWORD` | Yes | — | Broker authentication password |
 | `TOPIC_PREFIX` | Yes | — | Base topic path (e.g. `svxreflector/myreflector`) |
-| `STATUS_INTERVAL` | No | 1000 | Periodic full status publish interval in milliseconds |
+| `STATUS_INTERVAL` | No | 30000 | Periodic full status publish interval in milliseconds. The full snapshot is a bootstrap/drift-correction mechanism — per-event topics already deliver every change live, so raising this is cheap. Lowering it below ~1 s is expensive once a mesh exceeds a few hundred nodes (retained payload is hundreds of KB). |
 | `TLS_ENABLED` | No | 0 | Enable TLS encryption (`0` or `1`) |
 | `TLS_CA_CERT` | If TLS | — | Path to CA certificate file |
 | `TLS_CLIENT_CERT` | No | — | Path to client certificate (mutual TLS only) |
@@ -162,8 +162,8 @@ subscribers see the last-known roster immediately.
 
 ### Periodic full status
 
-Published at the configured `STATUS_INTERVAL` (default every 1 second). The
-payload is identical to the HTTP `/status` JSON response.
+Published at the configured `STATUS_INTERVAL` (default every 30 seconds).
+The payload is identical to the HTTP `/status` JSON response.
 
 ```
 {TOPIC_PREFIX}/status

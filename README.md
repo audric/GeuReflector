@@ -403,7 +403,7 @@ PORT=1883
 USERNAME=reflector
 PASSWORD=secret
 TOPIC_PREFIX=svxreflector/myreflector
-STATUS_INTERVAL=1000
+STATUS_INTERVAL=30000
 ```
 
 Omit the `[MQTT]` section entirely to disable — zero overhead when not

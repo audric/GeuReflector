@@ -492,8 +492,16 @@ bool Reflector::initialize(Async::Config &cfg)
     }
     else
     {
-      // Set up periodic status publishing
-      unsigned status_interval = 1000;
+      // Set up periodic status publishing.
+      // Default 30 s: the full snapshot is intended as a drift-correction /
+      // bootstrap mechanism for new subscribers. Real-time changes already
+      // reach the broker via the per-event topics (talker/start|stop,
+      // client/connected|disconnected, trunk/up|down, nodes/local,
+      // nodes/<peer>). Republishing the full m_status every second is
+      // proportional to the number of nodes in the mesh — at a few
+      // hundred nodes with rich per-client status it becomes hundreds of
+      // KB/s of largely redundant retained traffic.
+      unsigned status_interval = 30000;
       cfg.getValue("MQTT", "STATUS_INTERVAL", status_interval);
       m_mqtt_status_timer.setTimeout(status_interval);
       m_mqtt_status_timer.setEnable(true);

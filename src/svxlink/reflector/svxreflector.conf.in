@@ -202,7 +202,14 @@ CERT_CA_HOOK=@SVX_SHARE_INSTALL_DIR@/ca-hook.py
 # <TOPIC_PREFIX>/<MQTT_NAME>/... — useful when several reflectors share
 # the same TOPIC_PREFIX. Leave unset to keep topics flat.
 #MQTT_NAME=reflector-01
-#STATUS_INTERVAL=1000
+# Periodic full-status publish interval in milliseconds (default 30000).
+# The full snapshot is a bootstrap/drift-correction tool for new MQTT
+# subscribers — per-event topics already deliver every change live.
+# Lower this only if you have a small mesh and a consumer that depends
+# on near-real-time full snapshots; at hundreds of nodes the retained
+# payload is hundreds of KB and republishing it once per second is
+# expensive on broker bandwidth and reflector CPU.
+#STATUS_INTERVAL=30000
 #TLS_ENABLED=0
 #TLS_CA_CERT=/path/to/ca.crt
 #TLS_CLIENT_CERT=/path/to/client.crt
