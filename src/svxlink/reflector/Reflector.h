@@ -281,6 +281,18 @@ class Reflector : public sigc::trackable
     // Push the rich per-client status blob (rx, monitoredTGs, qth, ...)
     // to Redis. Cheap no-op if Redis is not configured.
     void publishClientStatus(ReflectorClient* client);
+
+    // Per-client liveness fanout to satellite and twin peers. Iterates
+    // m_satellite_con_map, m_satellite_client, and m_twin_link. Trunk
+    // peers are intentionally NOT fanned out (deferred per design spec).
+    // Bodies are stubs in this commit and become real iteration in Task 8.
+    void fanoutClientConnected(const std::string& callsign, uint32_t tg,
+                               const std::string& ip);
+    void fanoutClientDisconnected(const std::string& callsign);
+    void fanoutClientRx(const std::string& callsign,
+                        const Json::Value& rx_json);
+    void fanoutClientStatus(const std::string& callsign,
+                            const Json::Value& status_json);
     // Reflector-wide live:meta hash (mode, version, prefixes, ports,
     // cluster TGs, satellite-server stats). Event-driven write.
     void publishMetaToRedis(void);

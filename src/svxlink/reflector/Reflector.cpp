@@ -1082,6 +1082,7 @@ void Reflector::clientDisconnected(Async::FramedTcpConnection *con,
       {
         m_mqtt->onClientDisconnected(client->callsign());
       }
+      fanoutClientDisconnected(client->callsign());
       if (m_redis != nullptr)
       {
         m_redis->clearLiveClient(client->callsign());
@@ -3115,21 +3116,64 @@ void Reflector::publishRxUpdate(ReflectorClient* client)
   {
     m_mqtt->onRxUpdate(client->callsign(), client->rxStatusJson());
   }
+  fanoutClientRx(client->callsign(), client->rxStatusJson());
   publishClientStatus(client);
 } /* Reflector::publishRxUpdate */
 
 
 void Reflector::publishClientStatus(ReflectorClient* client)
 {
-  if (m_redis == nullptr || client == nullptr) return;
+  if (client == nullptr) return;
   const std::string& cs = client->callsign();
   if (cs.empty()) return;
   if (!m_status["nodes"].isMember(cs)) return;
-  Json::StreamWriterBuilder wb;
-  wb["indentation"] = "";
-  m_redis->pushClientStatus(cs,
-      Json::writeString(wb, m_status["nodes"][cs]));
+  const Json::Value& status = m_status["nodes"][cs];
+
+  if (m_mqtt != nullptr)
+  {
+    m_mqtt->onClientStatus(cs, status);
+  }
+  if (m_redis != nullptr)
+  {
+    Json::StreamWriterBuilder wb;
+    wb["indentation"] = "";
+    m_redis->pushClientStatus(cs, Json::writeString(wb, status));
+  }
+  fanoutClientStatus(cs, status);
 } /* Reflector::publishClientStatus */
+
+
+void Reflector::fanoutClientConnected(const std::string& callsign,
+                                      uint32_t tg,
+                                      const std::string& ip)
+{
+  // Stub — real iteration over m_satellite_con_map / m_satellite_client /
+  // m_twin_link is added in Task 8 of the peer-client-liveness plan.
+  (void)callsign; (void)tg; (void)ip;
+}
+
+
+void Reflector::fanoutClientDisconnected(const std::string& callsign)
+{
+  // Stub — see Task 8.
+  (void)callsign;
+}
+
+
+void Reflector::fanoutClientRx(const std::string& callsign,
+                               const Json::Value& rx_json)
+{
+  // Stub — see Task 8.
+  (void)callsign; (void)rx_json;
+}
+
+
+void Reflector::fanoutClientStatus(const std::string& callsign,
+                                   const Json::Value& status_json)
+{
+  // Stub — see Task 8.
+  (void)callsign; (void)status_json;
+}
 
 
 void Reflector::publishMetaToRedis(void)
@@ -3209,6 +3253,7 @@ void Reflector::onClientAuthenticated(const std::string& callsign,
   {
     m_mqtt->onClientConnected(callsign, tg, ip);
   }
+  fanoutClientConnected(callsign, tg, ip);
   if (m_redis != nullptr)
   {
     m_redis->pushLiveClient(callsign, ip, "", tg);
