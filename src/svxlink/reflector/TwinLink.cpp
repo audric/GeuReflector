@@ -106,6 +106,46 @@ std::string sanitizeText(const std::string& in, size_t max_bytes)
   return out;
 }
 
+void sanitizeJsonStrings(Json::Value& v, unsigned depth = 0)
+{
+  static constexpr unsigned MAX_DEPTH       = 8;
+  static constexpr Json::ArrayIndex MAX_LEN = 256;
+  static constexpr size_t MAX_STR_BYTES     = 1024;
+  if (depth >= MAX_DEPTH)
+  {
+    v = Json::Value();
+    return;
+  }
+  if (v.isString())
+  {
+    v = sanitizeText(v.asString(), MAX_STR_BYTES);
+  }
+  else if (v.isArray())
+  {
+    if (v.size() > MAX_LEN) v.resize(MAX_LEN);
+    for (Json::ArrayIndex i = 0; i < v.size(); ++i)
+    {
+      sanitizeJsonStrings(v[i], depth + 1);
+    }
+  }
+  else if (v.isObject())
+  {
+    auto names = v.getMemberNames();
+    if (names.size() > MAX_LEN)
+    {
+      for (size_t i = MAX_LEN; i < names.size(); ++i)
+      {
+        v.removeMember(names[i]);
+      }
+      names.resize(MAX_LEN);
+    }
+    for (const auto& k : names)
+    {
+      sanitizeJsonStrings(v[k], depth + 1);
+    }
+  }
+}
+
 } /* anonymous namespace */
 
 
@@ -340,7 +380,8 @@ Json::Value TwinLink::statusJson(void) const
   Json::Value nodes_arr(Json::arrayValue);
   for (const auto& n : m_partner_nodes)
   {
-    Json::Value entry(Json::objectValue);
+    Json::Value entry = n.status.isObject() ? n.status
+                                            : Json::Value(Json::objectValue);
     entry["callsign"] = n.callsign;
     entry["tg"]       = static_cast<Json::UInt>(n.tg);
     if (n.lat != 0.0f || n.lon != 0.0f)
@@ -349,6 +390,8 @@ Json::Value TwinLink::statusJson(void) const
       entry["lon"] = n.lon;
     }
     if (!n.qth_name.empty()) entry["qth_name"] = n.qth_name;
+    entry["isTalker"] =
+        (TGHandler::instance()->trunkTalkerForTG(n.tg) == n.callsign);
     nodes_arr.append(entry);
   }
   obj["nodes"] = nodes_arr;
@@ -646,6 +689,8 @@ void TwinLink::handleMsgTrunkNodeList(std::istream& is)
       e.lat = n.lat;
       e.lon = n.lon;
     }
+    e.status = n.status;
+    sanitizeJsonStrings(e.status);
     sanitized.push_back(std::move(e));
   }
   if (dropped > 0)

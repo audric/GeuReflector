@@ -108,7 +108,8 @@ class RedisStore : public sigc::trackable
                       const std::string& callsign,
                       uint32_t tg,
                       float lat, float lon,
-                      const std::string& qth_name);
+                      const std::string& qth_name,
+                      const std::string& status_json = std::string());
     void clearPeerNode(const std::string& peer_id,
                        const std::string& callsign);
 
@@ -216,7 +217,8 @@ class RedisStore : public sigc::trackable
     void pushLiveTrunk(const std::string&, const std::string&,
                        const std::string&) {}
     void pushPeerNode(const std::string&, const std::string&, uint32_t,
-                      float, float, const std::string&) {}
+                      float, float, const std::string&,
+                      const std::string& = std::string()) {}
     void clearPeerNode(const std::string&, const std::string&) {}
 
     uint64_t droppedLiveWrites(void) const { return 0; }

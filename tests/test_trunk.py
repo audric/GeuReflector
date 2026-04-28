@@ -1868,6 +1868,21 @@ class TestTrunkIntegration(unittest.TestCase):
                 msg=f"{CLIENT_CALLSIGN} did not appear in {peer}'s "
                     f"/status.trunks.{section}.nodes after login on "
                     f"{self.PRIMARY}")
+
+            # Rich-roster check: the partner-node entry must carry an
+            # isTalker flag derived from the live trunk-talker map
+            # (false here — client is idle). This exercises the wire
+            # extension to MsgTrunkNodeList type 121 and the receive-side
+            # join with TGHandler::trunkTalkerForTG.
+            status = get_status(*_http(peer))
+            trunk = status.get("trunks", {}).get(section, {})
+            entry = next(n for n in trunk.get("nodes", [])
+                         if n.get("callsign") == CLIENT_CALLSIGN)
+            self.assertIn("isTalker", entry,
+                "partner-node entry must expose isTalker for parity "
+                "with local-client /status entries")
+            self.assertFalse(entry["isTalker"],
+                "idle client should report isTalker=false")
         finally:
             client.close()
 

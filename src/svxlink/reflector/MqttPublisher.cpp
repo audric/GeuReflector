@@ -334,7 +334,10 @@ static Json::Value nodeListToJson(
   Json::Value arr(Json::arrayValue);
   for (const auto& n : nodes)
   {
-    Json::Value e;
+    // Prefer the rich per-client status blob; fall back to the flat
+    // wire fields if the source didn't ship one (older fork builds).
+    Json::Value e = n.status.isObject() ? n.status
+                                        : Json::Value(Json::objectValue);
     e["callsign"] = n.callsign;
     e["tg"]       = n.tg;
     if (n.lat != 0.0f || n.lon != 0.0f)

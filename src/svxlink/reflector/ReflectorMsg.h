@@ -37,6 +37,8 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <openssl/rand.h>
 #include <openssl/evp.h>
 #include <vector>
+#include <sstream>
+#include <json/json.h>
 #include <Log.h>
 
 
@@ -1827,7 +1829,17 @@ Sent by a reflector to its trunk peer whenever its local client list changes
 MQTT publisher. Older peers that don't know type 121 ignore it — fully
 backward compatible.
 
-Each entry: callsign, current TG, optional lat/lon/QTH name.
+Each entry carries callsign, current TG, optional lat/lon/QTH name, and
+the full per-client status blob (rx/tx config, qth array, monitoredTGs,
+restrictedTG, protoVer, ...) so that a peer's /status, MQTT topic and
+Redis snapshot can render partner nodes with the same richness as local
+ones. The blob is the source reflector's `m_status["nodes"][callsign]`
+JSON serialised verbatim; receivers parse and sanitise it.
+
+Wire-format note: extending this message (m_status_blobs added on top of
+the original 5 vectors) is NOT compatible with peers running an older
+build of the same fork — the unpack expects exactly six vectors. All
+peers in a mesh must be upgraded together.
 */
 class MsgTrunkNodeList : public ReflectorMsgBase<121>
 {
@@ -1839,11 +1851,15 @@ class MsgTrunkNodeList : public ReflectorMsgBase<121>
       float       lat = 0.0f;
       float       lon = 0.0f;
       std::string qth_name;
+      Json::Value status;  // rich per-client status; transported as
+                           // m_status_blobs[i] over the wire
     };
 
     MsgTrunkNodeList(void) {}
     explicit MsgTrunkNodeList(const std::vector<NodeEntry>& nodes)
     {
+      Json::StreamWriterBuilder wb;
+      wb["indentation"] = "";
       for (const auto& n : nodes)
       {
         m_callsigns.push_back(n.callsign);
@@ -1851,6 +1867,9 @@ class MsgTrunkNodeList : public ReflectorMsgBase<121>
         m_lats.push_back(n.lat);
         m_lons.push_back(n.lon);
         m_qth_names.push_back(n.qth_name);
+        m_status_blobs.push_back(
+            n.status.isNull() ? std::string()
+                              : Json::writeString(wb, n.status));
       }
     }
 
@@ -1866,12 +1885,29 @@ class MsgTrunkNodeList : public ReflectorMsgBase<121>
         e.lat      = (i < m_lats.size())      ? m_lats[i]      : 0.0f;
         e.lon      = (i < m_lons.size())      ? m_lons[i]      : 0.0f;
         e.qth_name = (i < m_qth_names.size()) ? m_qth_names[i] : "";
+        if (i < m_status_blobs.size() && !m_status_blobs[i].empty())
+        {
+          // Bound parse cost: refuse blobs > 64 KiB. A typical client
+          // status blob is well under a kilobyte.
+          if (m_status_blobs[i].size() <= 65536u)
+          {
+            std::istringstream ss(m_status_blobs[i]);
+            Json::CharReaderBuilder rb;
+            std::string err;
+            Json::Value v;
+            if (Json::parseFromStream(rb, ss, &v, &err))
+            {
+              e.status = v;
+            }
+          }
+        }
         result.push_back(e);
       }
       return result;
     }
 
-    ASYNC_MSG_MEMBERS(m_callsigns, m_tgs, m_lats, m_lons, m_qth_names)
+    ASYNC_MSG_MEMBERS(m_callsigns, m_tgs, m_lats, m_lons, m_qth_names,
+                      m_status_blobs)
 
   private:
     std::vector<std::string> m_callsigns;
@@ -1879,6 +1915,7 @@ class MsgTrunkNodeList : public ReflectorMsgBase<121>
     std::vector<float>       m_lats;
     std::vector<float>       m_lons;
     std::vector<std::string> m_qth_names;
+    std::vector<std::string> m_status_blobs;
 }; /* MsgTrunkNodeList */
 
 

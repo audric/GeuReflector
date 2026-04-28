@@ -386,7 +386,8 @@ void RedisStore::pushPeerNode(const std::string& peer_id,
                               const std::string& callsign,
                               uint32_t tg,
                               float lat, float lon,
-                              const std::string& qth_name) {
+                              const std::string& qth_name,
+                              const std::string& status_json) {
   if (!m_live_queue) return;
   RedisLiveQueue::Op op;
   op.op  = RedisLiveQueue::OpType::HSET;
@@ -404,6 +405,9 @@ void RedisStore::pushPeerNode(const std::string& peer_id,
   }
   if (!qth_name.empty()) {
     op.fields.emplace_back("qth_name", qth_name);
+  }
+  if (!status_json.empty()) {
+    op.fields.emplace_back("status", status_json);
   }
   op.ttl_s = 60;
   m_live_queue->push(std::move(op));

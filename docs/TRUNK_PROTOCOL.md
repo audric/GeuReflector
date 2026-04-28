@@ -388,7 +388,7 @@ payload, packed using the `ASYNC_MSG_MEMBERS` macro.
 | 118  | `MsgTrunkAudio`       | `uint32 tg`, `uint8[] audio`                     |
 | 119  | `MsgTrunkFlush`       | `uint32 tg`                                      |
 | 120  | `MsgTrunkHeartbeat`   | *(no fields)*                                    |
-| 121  | `MsgTrunkNodeList`    | `string[] callsigns`, `uint32[] tgs`, `float[] lats`, `float[] lons`, `string[] qth_names` |
+| 121  | `MsgTrunkNodeList`    | `string[] callsigns`, `uint32[] tgs`, `float[] lats`, `float[] lons`, `string[] qth_names`, `string[] status_blobs` |
 | 122  | `MsgTrunkFilter`      | `string filter` (shared-syntax TG filter: exact / `24*` / `10-20`, comma-separated) |
 
 Type numbers 115–120 are chosen to follow the last existing SvxReflector TCP
@@ -401,6 +401,25 @@ compatibility.
 or TG change, debounced to 500 ms, and broadcast to every trunk peer. Peers
 republish it via MQTT under `nodes/<peer_id>` so a central dashboard can see
 who is connected to each reflector.
+
+The optional `status_blobs[i]` field carries the source reflector's
+`m_status["nodes"][callsign]` JSON serialised verbatim — the same rich
+per-client status that local clients expose (rx/tx config, qth array,
+monitoredTGs, restrictedTG, protoVer, ...). Receivers parse and recursively
+sanitise it (depth/length caps, control-char strip) before surfacing it
+under `/status.trunks[<section>].nodes[i]`, MQTT `nodes/<peer_id>`, and
+the `status` field of Redis hash `live:peer_node:<peer_id>:<callsign>`.
+The `isTalker` flag on each peer node is **not** carried in the blob (it
+would be stale by the time it arrives); it is derived on the receive side
+from the live trunk-talker map maintained by `MsgTrunkTalkerStart` /
+`MsgTrunkTalkerStop`.
+
+Wire-format note: extending this message (the `status_blobs` vector was
+added on top of the original 5 vectors) is a lockstep change. A peer
+running an older fork build that knows type 121 but expects only 5
+vectors will fail to unpack and reject the message, which silently empties
+the partner roster on that peer until it is upgraded. Peers that don't
+know type 121 at all (pre-jayReflector) keep ignoring it as before.
 
 `MsgTrunkFilter` is used by satellite links to advertise TG interest to the
 parent. A satellite with `SATELLITE_FILTER` set sends one `MsgTrunkFilter`

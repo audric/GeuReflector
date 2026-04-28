@@ -3218,6 +3218,28 @@ void Reflector::sendNodeListToAllPeers(void)
     MsgTrunkNodeList::NodeEntry e;
     e.callsign = c->callsign();
     e.tg       = c->currentTG();
+    // Attach the rich per-client status blob so peers can render partner
+    // nodes with the same fidelity as local ones (rx/tx config, qth,
+    // monitoredTGs, restrictedTG, protoVer, ...). Receive side derives
+    // isTalker from existing trunk-talker events, so we don't need to
+    // push that field here.
+    if (m_status["nodes"].isMember(c->callsign()))
+    {
+      e.status = m_status["nodes"][c->callsign()];
+      // Opportunistically populate the legacy flat fields from the blob
+      // so they remain sensible on the wire.
+      if (e.status.isMember("qth") && e.status["qth"].isArray() &&
+          !e.status["qth"].empty())
+      {
+        const Json::Value& qth = e.status["qth"][0];
+        if (qth.isMember("lat") && qth["lat"].isNumeric())
+          e.lat = qth["lat"].asFloat();
+        if (qth.isMember("lon") && qth["lon"].isNumeric())
+          e.lon = qth["lon"].asFloat();
+        if (qth.isMember("name") && qth["name"].isString())
+          e.qth_name = qth["name"].asString();
+      }
+    }
     nodes.push_back(e);
   }
 
@@ -3248,13 +3270,18 @@ void Reflector::onPeerNodeList(const std::string& peer_id,
 
   if (m_redis != nullptr && !peer_id.empty())
   {
+    Json::StreamWriterBuilder wb;
+    wb["indentation"] = "";
     std::set<std::string> seen;
     for (const auto& n : nodes)
     {
       if (n.callsign.empty()) continue;
       seen.insert(n.callsign);
+      const std::string status_json =
+          n.status.isNull() ? std::string()
+                            : Json::writeString(wb, n.status);
       m_redis->pushPeerNode(peer_id, n.callsign, n.tg,
-                            n.lat, n.lon, n.qth_name);
+                            n.lat, n.lon, n.qth_name, status_json);
     }
     auto& prev = m_peer_node_cache[peer_id];
     for (const std::string& cs : prev)

@@ -113,6 +113,50 @@ static std::string sanitizeText(const std::string& in, size_t max_bytes)
   return out;
 }
 
+// Recursively sanitize string values inside an untrusted JSON tree
+// received from a peer. Caps depth, container size, and per-string
+// length. Mutates in place.
+static void sanitizeJsonStrings(Json::Value& v, unsigned depth = 0)
+{
+  static constexpr unsigned MAX_DEPTH       = 8;
+  static constexpr Json::ArrayIndex MAX_LEN = 256;
+  static constexpr size_t MAX_STR_BYTES     = 1024;
+  if (depth >= MAX_DEPTH)
+  {
+    v = Json::Value();  // null out the subtree
+    return;
+  }
+  if (v.isString())
+  {
+    v = sanitizeText(v.asString(), MAX_STR_BYTES);
+  }
+  else if (v.isArray())
+  {
+    if (v.size() > MAX_LEN) v.resize(MAX_LEN);
+    for (Json::ArrayIndex i = 0; i < v.size(); ++i)
+    {
+      sanitizeJsonStrings(v[i], depth + 1);
+    }
+  }
+  else if (v.isObject())
+  {
+    auto names = v.getMemberNames();
+    if (names.size() > MAX_LEN)
+    {
+      // Trim deterministically by removing trailing keys.
+      for (size_t i = MAX_LEN; i < names.size(); ++i)
+      {
+        v.removeMember(names[i]);
+      }
+      names.resize(MAX_LEN);
+    }
+    for (const auto& k : names)
+    {
+      sanitizeJsonStrings(v[k], depth + 1);
+    }
+  }
+}
+
 static std::vector<std::string> splitPrefixes(const std::string& s)
 {
   std::vector<std::string> result;
@@ -515,7 +559,10 @@ Json::Value TrunkLink::statusJson(void) const
   Json::Value nodes_arr(Json::arrayValue);
   for (const auto& n : m_partner_nodes)
   {
-    Json::Value entry(Json::objectValue);
+    // Start from the rich blob if present; fall back to the flat fields
+    // when the peer didn't supply one.
+    Json::Value entry = n.status.isObject() ? n.status
+                                            : Json::Value(Json::objectValue);
     entry["callsign"] = n.callsign;
     entry["tg"]       = static_cast<Json::UInt>(n.tg);
     if (n.lat != 0.0f || n.lon != 0.0f)
@@ -524,6 +571,12 @@ Json::Value TrunkLink::statusJson(void) const
       entry["lon"] = n.lon;
     }
     if (!n.qth_name.empty()) entry["qth_name"] = n.qth_name;
+    // Derive isTalker from the live trunk-talker map maintained by
+    // MsgTrunkTalkerStart/Stop. Authoritative for partner nodes; the
+    // sender's own isTalker is stale by the time it arrives in the
+    // periodic node-list push.
+    entry["isTalker"] =
+        (TGHandler::instance()->trunkTalkerForTG(n.tg) == n.callsign);
     nodes_arr.append(entry);
   }
   obj["nodes"] = nodes_arr;
@@ -1782,6 +1835,8 @@ void TrunkLink::handleMsgTrunkNodeList(std::istream& is)
       e.lat = 0.0f;
       e.lon = 0.0f;
     }
+    e.status = n.status;
+    sanitizeJsonStrings(e.status);
     sanitized.push_back(std::move(e));
   }
   if (dropped > 0)
