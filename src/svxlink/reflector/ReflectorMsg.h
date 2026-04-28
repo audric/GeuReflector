@@ -1829,16 +1829,23 @@ Sent by a reflector to its trunk peer whenever its local client list changes
 MQTT publisher. Older peers that don't know type 121 ignore it — fully
 backward compatible.
 
-Each entry carries callsign, current TG, optional lat/lon/QTH name, and
+Each entry carries callsign, current TG, optional lat/lon/QTH name,
 the full per-client status blob (rx/tx config, qth array, monitoredTGs,
-restrictedTG, protoVer, ...) so that a peer's /status, MQTT topic and
-Redis snapshot can render partner nodes with the same richness as local
-ones. The blob is the source reflector's `m_status["nodes"][callsign]`
-JSON serialised verbatim; receivers parse and sanitise it.
+restrictedTG, protoVer, ...), and an optional sat_id tagging the
+satellite the client is actually attached to (empty when the client is
+on the sender directly). The blob is the source reflector's
+`m_status["nodes"][callsign]` JSON serialised verbatim; receivers parse
+and sanitise it.
 
-Wire-format note: extending this message (m_status_blobs added on top of
-the original 5 vectors) is NOT compatible with peers running an older
-build of the same fork — the unpack expects exactly six vectors. All
+The sat_id is interpreted recipient-relative: an empty string means
+"directly attached to whoever sent me this list." Used so that when a
+parent reflector advertises both its own clients and clients learned
+from its satellites, the recipient (a trunk peer or another satellite)
+can tell them apart.
+
+Wire-format note: this message has been extended TWICE — first to add
+m_status_blobs, then to add m_sat_ids. Each extension is a hard
+lockstep bump because the unpack expects an exact vector count. All
 peers in a mesh must be upgraded together.
 */
 class MsgTrunkNodeList : public ReflectorMsgBase<121>
@@ -1853,6 +1860,9 @@ class MsgTrunkNodeList : public ReflectorMsgBase<121>
       std::string qth_name;
       Json::Value status;  // rich per-client status; transported as
                            // m_status_blobs[i] over the wire
+      std::string sat_id;  // empty = on sender directly; otherwise
+                           // satellite_id of the satellite attached to
+                           // the sender that this client lives on
     };
 
     MsgTrunkNodeList(void) {}
@@ -1870,6 +1880,7 @@ class MsgTrunkNodeList : public ReflectorMsgBase<121>
         m_status_blobs.push_back(
             n.status.isNull() ? std::string()
                               : Json::writeString(wb, n.status));
+        m_sat_ids.push_back(n.sat_id);
       }
     }
 
@@ -1901,13 +1912,14 @@ class MsgTrunkNodeList : public ReflectorMsgBase<121>
             }
           }
         }
+        e.sat_id = (i < m_sat_ids.size()) ? m_sat_ids[i] : "";
         result.push_back(e);
       }
       return result;
     }
 
     ASYNC_MSG_MEMBERS(m_callsigns, m_tgs, m_lats, m_lons, m_qth_names,
-                      m_status_blobs)
+                      m_status_blobs, m_sat_ids)
 
   private:
     std::vector<std::string> m_callsigns;
@@ -1916,6 +1928,7 @@ class MsgTrunkNodeList : public ReflectorMsgBase<121>
     std::vector<float>       m_lons;
     std::vector<std::string> m_qth_names;
     std::vector<std::string> m_status_blobs;
+    std::vector<std::string> m_sat_ids;
 }; /* MsgTrunkNodeList */
 
 

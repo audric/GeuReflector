@@ -1768,6 +1768,30 @@ void Reflector::refreshStatus(void)
     sat_cfg["parent_host"] = sat_of;
     if (!sat_port_str.empty()) sat_cfg["parent_port"] = sat_port_str;
     if (!sat_id.empty()) sat_cfg["id"] = sat_id;
+    if (m_satellite_client != nullptr)
+    {
+      const auto& parent_id = m_satellite_client->parentId();
+      if (!parent_id.empty()) sat_cfg["parent_id"] = parent_id;
+      Json::Value pnodes(Json::arrayValue);
+      for (const auto& n : m_satellite_client->parentNodes())
+      {
+        Json::Value entry = n.status.isObject()
+            ? n.status : Json::Value(Json::objectValue);
+        entry["callsign"] = n.callsign;
+        entry["tg"]       = static_cast<Json::UInt>(n.tg);
+        if (n.lat != 0.0f || n.lon != 0.0f)
+        {
+          entry["lat"] = n.lat;
+          entry["lon"] = n.lon;
+        }
+        if (!n.qth_name.empty()) entry["qth_name"] = n.qth_name;
+        if (!n.sat_id.empty())   entry["sat_id"]   = n.sat_id;
+        entry["isTalker"] =
+            (TGHandler::instance()->trunkTalkerForTG(n.tg) == n.callsign);
+        pnodes.append(entry);
+      }
+      sat_cfg["parent_nodes"] = pnodes;
+    }
     m_status["satellite"] = sat_cfg;
   }
   else
@@ -3218,7 +3242,8 @@ void Reflector::scheduleNodeListUpdate(void)
 
 void Reflector::sendNodeListToAllPeers(void)
 {
-  std::vector<MsgTrunkNodeList::NodeEntry> nodes;
+  // 1. Local clients — sat_id stays empty (recipient-relative: "on me").
+  std::vector<MsgTrunkNodeList::NodeEntry> local_nodes;
   for (const auto& kv : m_client_con_map)
   {
     ReflectorClient* c = kv.second;
@@ -3248,22 +3273,63 @@ void Reflector::sendNodeListToAllPeers(void)
           e.qth_name = qth["name"].asString();
       }
     }
-    nodes.push_back(e);
+    local_nodes.push_back(e);
   }
 
+  // 2. Combined view = local + every connected satellite's stamped roster.
+  // Each sat-supplied entry already carries sat_id == its satelliteId.
+  std::vector<MsgTrunkNodeList::NodeEntry> combined = local_nodes;
+  for (const auto& kv : m_satellite_con_map)
+  {
+    const auto& sat_nodes = kv.second->partnerNodes();
+    combined.insert(combined.end(), sat_nodes.begin(), sat_nodes.end());
+  }
+
+  // 3. Trunks and twin: full combined view. Trunk peers and twin partners
+  // see the parent's clients (sat_id="") and every satellite's clients
+  // (sat_id=<sat_id>) in a single list.
   for (auto* link : m_trunk_links)
   {
-    link->sendNodeList(nodes);
+    link->sendNodeList(combined);
   }
-
   if (m_twin_link != nullptr)
   {
-    m_twin_link->onLocalNodeListUpdated(nodes);
+    m_twin_link->onLocalNodeListUpdated(combined);
   }
 
+  // 4. Each satellite gets the combined view minus its own contribution
+  // (self-echo guard: a satellite must not be told about its own
+  // clients). SatelliteLink::sendNodeList additionally applies that
+  // satellite's announced TG filter.
+  for (const auto& kv : m_satellite_con_map)
+  {
+    SatelliteLink* link = kv.second;
+    const std::string& this_sat_id = link->satelliteId();
+
+    std::vector<MsgTrunkNodeList::NodeEntry> for_this_sat;
+    for_this_sat.reserve(combined.size());
+    for (const auto& n : combined)
+    {
+      if (!this_sat_id.empty() && n.sat_id == this_sat_id) continue;
+      for_this_sat.push_back(n);
+    }
+    link->sendNodeList(for_this_sat);
+  }
+
+  // 5. If we are a satellite ourselves, advertise our local roster up to
+  // the parent. We send local clients only (sat_id=""); any deeper
+  // satellite hierarchy is collapsed by the parent's ingest stamping.
+  if (m_is_satellite && m_satellite_client != nullptr)
+  {
+    m_satellite_client->sendNodeList(local_nodes);
+  }
+
+  // 6. MQTT — keep scope to parent-local clients (sat-supplied entries
+  // already get a publish via SatelliteLink::handleMsgTrunkNodeList
+  // calling onPeerNodeList → MqttPublisher::publishPeerNodes).
   if (m_mqtt != nullptr)
   {
-    m_mqtt->publishLocalNodes(nodes);
+    m_mqtt->publishLocalNodes(local_nodes);
   }
 } /* Reflector::sendNodeListToAllPeers */
 

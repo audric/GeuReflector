@@ -10,9 +10,9 @@
 #include <AsyncTimer.h>
 
 #include "TgFilter.h"
+#include "ReflectorMsg.h"
 
 class Reflector;
-class ReflectorMsg;
 
 /**
 @brief  Handles one inbound satellite connection on the parent reflector
@@ -55,6 +55,22 @@ class SatelliteLink : public sigc::trackable
     void onParentAudio(uint32_t tg, const std::vector<uint8_t>& audio);
     void onParentFlush(uint32_t tg);
 
+    // Send a node list down to the satellite. Caller passes the combined
+    // parent-known roster minus this satellite's own contribution; this
+    // method additionally drops entries whose TG falls outside the
+    // satellite's announced filter (if any).
+    void sendNodeList(
+        const std::vector<MsgTrunkNodeList::NodeEntry>& nodes);
+
+    // Read-only access to the satellite-supplied roster (this satellite's
+    // local clients), already sanitised and stamped with sat_id =
+    // satelliteId(). Used by Reflector to merge into the parent's
+    // outbound advertisements.
+    const std::vector<MsgTrunkNodeList::NodeEntry>& partnerNodes(void) const
+    {
+      return m_partner_nodes;
+    }
+
   private:
     static const unsigned HEARTBEAT_TX_CNT_RESET = 10;
     static const unsigned HEARTBEAT_RX_CNT_RESET = 15;
@@ -69,6 +85,12 @@ class SatelliteLink : public sigc::trackable
     unsigned                    m_hb_rx_cnt;
     std::set<uint32_t>          m_sat_active_tgs;
     TgFilter                    m_tg_filter;
+    // Roster of clients attached to this satellite, learned via
+    // MsgTrunkNodeList from the satellite. Each entry carries
+    // sat_id == m_satellite_id (stamped on ingest) so the Reflector can
+    // merge it into outbound trunk/twin/sibling-sat lists with correct
+    // attribution.
+    std::vector<MsgTrunkNodeList::NodeEntry> m_partner_nodes;
 
     void onFrameReceived(Async::FramedTcpConnection* con,
                          std::vector<uint8_t>& data);
@@ -79,6 +101,7 @@ class SatelliteLink : public sigc::trackable
     void handleMsgTrunkFlush(std::istream& is);
     void handleMsgTrunkHeartbeat(void);
     void handleMsgTrunkFilter(std::istream& is);
+    void handleMsgTrunkNodeList(std::istream& is);
     bool filterPassesTg(uint32_t tg) const;
     void sendMsg(const ReflectorMsg& msg);
     void heartbeatTick(Async::Timer* t);
