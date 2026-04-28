@@ -251,6 +251,18 @@ void SatelliteLink::onFrameReceived(FramedTcpConnection* con,
     case MsgPeerNodeList::TYPE:
       handleMsgPeerNodeList(ss);
       break;
+    case MsgPeerClientConnected::TYPE:
+      handleMsgPeerClientConnected(ss);
+      break;
+    case MsgPeerClientDisconnected::TYPE:
+      handleMsgPeerClientDisconnected(ss);
+      break;
+    case MsgPeerClientRx::TYPE:
+      handleMsgPeerClientRx(ss);
+      break;
+    case MsgPeerClientStatus::TYPE:
+      handleMsgPeerClientStatus(ss);
+      break;
     default:
       geulog::warn("satellite", "Unknown message type=", header.type());
       break;
@@ -526,3 +538,133 @@ void SatelliteLink::sendNodeList(
   }
   sendMsg(MsgPeerNodeList(filtered));
 } /* SatelliteLink::sendNodeList */
+
+
+void SatelliteLink::sendClientConnected(const std::string& callsign,
+                                        uint32_t tg,
+                                        const std::string& ip)
+{
+  if (!m_hello_received) return;
+  // TG filter applied at sender — drop if the client's TG is outside
+  // this satellite's filter.
+  if (!filterPassesTg(tg)) return;
+  sendMsg(MsgPeerClientConnected(callsign, tg, ip));
+} /* SatelliteLink::sendClientConnected */
+
+
+void SatelliteLink::sendClientDisconnected(const std::string& callsign)
+{
+  if (!m_hello_received) return;
+  // No TG in this message — filter is applied at the caller
+  // (Reflector::fanoutClientDisconnected) using current-TG lookup.
+  sendMsg(MsgPeerClientDisconnected(callsign));
+} /* SatelliteLink::sendClientDisconnected */
+
+
+void SatelliteLink::sendClientRx(const std::string& callsign,
+                                  const std::string& rx_json)
+{
+  if (!m_hello_received) return;
+  sendMsg(MsgPeerClientRx(callsign, rx_json));
+} /* SatelliteLink::sendClientRx */
+
+
+void SatelliteLink::sendClientStatus(const std::string& callsign,
+                                      const std::string& status_json)
+{
+  if (!m_hello_received) return;
+  sendMsg(MsgPeerClientStatus(callsign, status_json));
+} /* SatelliteLink::sendClientStatus */
+
+
+void SatelliteLink::handleMsgPeerClientConnected(std::istream& is)
+{
+  MsgPeerClientConnected msg;
+  if (!msg.unpack(is))
+  {
+    geulog::error("satellite",
+        "Failed to unpack MsgPeerClientConnected from '",
+        m_satellite_id, "'");
+    return;
+  }
+  Json::Value payload;
+  payload["tg"] = static_cast<Json::UInt>(msg.tg());
+  payload["ip"] = msg.ip();
+  if (m_reflector->mqtt() != nullptr)
+  {
+    m_reflector->mqtt()->publishPeerClientEvent(
+        m_satellite_id, msg.callsign(), "connected", payload, false);
+  }
+} /* SatelliteLink::handleMsgPeerClientConnected */
+
+
+void SatelliteLink::handleMsgPeerClientDisconnected(std::istream& is)
+{
+  MsgPeerClientDisconnected msg;
+  if (!msg.unpack(is))
+  {
+    geulog::error("satellite",
+        "Failed to unpack MsgPeerClientDisconnected from '",
+        m_satellite_id, "'");
+    return;
+  }
+  Json::Value payload(Json::objectValue);
+  if (m_reflector->mqtt() != nullptr)
+  {
+    m_reflector->mqtt()->publishPeerClientEvent(
+        m_satellite_id, msg.callsign(), "disconnected", payload, false);
+  }
+} /* SatelliteLink::handleMsgPeerClientDisconnected */
+
+
+void SatelliteLink::handleMsgPeerClientRx(std::istream& is)
+{
+  MsgPeerClientRx msg;
+  if (!msg.unpack(is))
+  {
+    geulog::error("satellite",
+        "Failed to unpack MsgPeerClientRx from '", m_satellite_id, "'");
+    return;
+  }
+  if (msg.rxJson().size() > 65536u) return;
+  Json::Value rx_json;
+  std::istringstream ss(msg.rxJson());
+  Json::CharReaderBuilder rb;
+  std::string err;
+  if (!Json::parseFromStream(rb, ss, &rx_json, &err))
+  {
+    return;
+  }
+  if (m_reflector->mqtt() != nullptr)
+  {
+    m_reflector->mqtt()->publishPeerClientEvent(
+        m_satellite_id, msg.callsign(), "rx", rx_json, true);
+  }
+} /* SatelliteLink::handleMsgPeerClientRx */
+
+
+void SatelliteLink::handleMsgPeerClientStatus(std::istream& is)
+{
+  MsgPeerClientStatus msg;
+  if (!msg.unpack(is))
+  {
+    geulog::error("satellite",
+        "Failed to unpack MsgPeerClientStatus from '",
+        m_satellite_id, "'");
+    return;
+  }
+  if (msg.statusJson().size() > 65536u) return;
+  Json::Value status_json;
+  std::istringstream ss(msg.statusJson());
+  Json::CharReaderBuilder rb;
+  std::string err;
+  if (!Json::parseFromStream(rb, ss, &status_json, &err))
+  {
+    return;
+  }
+  if (m_reflector->mqtt() != nullptr)
+  {
+    m_reflector->mqtt()->publishPeerClientEvent(
+        m_satellite_id, msg.callsign(), "status", status_json, true);
+  }
+} /* SatelliteLink::handleMsgPeerClientStatus */
