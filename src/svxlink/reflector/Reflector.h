@@ -36,6 +36,8 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 #include <sigc++/sigc++.h>
 #include <sys/time.h>
+#include <chrono>
+#include <map>
 #include <set>
 #include <vector>
 #include <string>
@@ -412,6 +414,25 @@ class Reflector : public sigc::trackable
     MqttPublisher*              m_mqtt = nullptr;
     RedisStore*                 m_redis = nullptr;
     Async::Timer                m_mqtt_status_timer;
+
+    // Per-local-callsign rx-debounce state used by fanoutClientRx so that
+    // peer/<id>/client/<call>/rx wire emit is capped at 2 Hz per callsign.
+    // Local client/<call>/rx (also retained, but on-broker only) is not
+    // affected — it carries the native ~50 Hz update rate.
+    struct RxDebounceEntry
+    {
+      std::chrono::steady_clock::time_point last_emit;
+      Async::Timer*                          pending = nullptr;
+      Json::Value                            pending_value;
+    };
+    std::map<std::string, RxDebounceEntry> m_rx_debounce;
+    static constexpr int PEER_RX_DEBOUNCE_MS = 500;
+
+    // Schedule an rx fanout for a local callsign. Emits immediately if the
+    // last emit was >=500ms ago; otherwise coalesces and re-fires once the
+    // debounce window expires.
+    void emitRxDebounced(const std::string& callsign,
+                         const Json::Value& rx_json);
 
     Reflector(const Reflector&);
     Reflector& operator=(const Reflector&);

@@ -3117,7 +3117,7 @@ void Reflector::publishRxUpdate(ReflectorClient* client)
   {
     m_mqtt->onRxUpdate(client->callsign(), client->rxStatusJson());
   }
-  fanoutClientRx(client->callsign(), client->rxStatusJson());
+  emitRxDebounced(client->callsign(), client->rxStatusJson());
   publishClientStatus(client);
 } /* Reflector::publishRxUpdate */
 
@@ -3199,6 +3199,17 @@ void Reflector::fanoutClientDisconnected(const std::string& callsign)
   {
     m_twin_link->sendClientDisconnected(callsign);
   }
+
+  auto it = m_rx_debounce.find(callsign);
+  if (it != m_rx_debounce.end())
+  {
+    if (it->second.pending != nullptr)
+    {
+      delete it->second.pending;
+      it->second.pending = nullptr;
+    }
+    m_rx_debounce.erase(it);
+  }
 }
 
 
@@ -3226,6 +3237,47 @@ void Reflector::fanoutClientRx(const std::string& callsign,
     m_twin_link->sendClientRx(callsign, s);
   }
 }
+
+
+void Reflector::emitRxDebounced(const std::string& callsign,
+                                const Json::Value& rx_json)
+{
+  using namespace std::chrono;
+  auto& e = m_rx_debounce[callsign];
+  auto now = steady_clock::now();
+  auto since_ms = duration_cast<milliseconds>(now - e.last_emit).count();
+
+  if (since_ms >= PEER_RX_DEBOUNCE_MS)
+  {
+    // Emit immediately
+    fanoutClientRx(callsign, rx_json);
+    e.last_emit = now;
+    if (e.pending != nullptr)
+    {
+      delete e.pending;
+      e.pending = nullptr;
+    }
+  }
+  else
+  {
+    // Coalesce: hold the latest value, schedule a one-shot residual timer
+    e.pending_value = rx_json;
+    if (e.pending == nullptr)
+    {
+      int residual = PEER_RX_DEBOUNCE_MS - static_cast<int>(since_ms);
+      e.pending = new Async::Timer(residual, Async::Timer::TYPE_ONESHOT);
+      e.pending->expired.connect([this, callsign](Async::Timer*) {
+        auto it = m_rx_debounce.find(callsign);
+        if (it == m_rx_debounce.end()) return;
+        auto& e2 = it->second;
+        Json::Value v = std::move(e2.pending_value);
+        delete e2.pending;
+        e2.pending = nullptr;
+        emitRxDebounced(callsign, v);
+      });
+    }
+  }
+} /* Reflector::emitRxDebounced */
 
 
 void Reflector::fanoutClientStatus(const std::string& callsign,
