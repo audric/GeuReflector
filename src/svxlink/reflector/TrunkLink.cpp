@@ -573,7 +573,7 @@ Json::Value TrunkLink::statusJson(void) const
     if (!n.qth_name.empty()) entry["qth_name"] = n.qth_name;
     if (!n.sat_id.empty())   entry["sat_id"]   = n.sat_id;
     // Derive isTalker from the live trunk-talker map maintained by
-    // MsgTrunkTalkerStart/Stop. Authoritative for partner nodes; the
+    // MsgPeerTalkerStart/Stop. Authoritative for partner nodes; the
     // sender's own isTalker is stale by the time it arrives in the
     // periodic node-list push.
     entry["isTalker"] =
@@ -587,7 +587,7 @@ Json::Value TrunkLink::statusJson(void) const
 
 
 void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
-                                         const MsgTrunkHello& hello)
+                                         const MsgPeerHello& hello)
 {
   if (m_paired)
   {
@@ -620,7 +620,7 @@ void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
 
     // Send our hello back on this inbound connection
     sendMsgOnPairedInbound(m_ib_cons.size() - 1,
-        MsgTrunkHello(m_peer_id_config, joinPrefixes(m_local_prefix),
+        MsgPeerHello(m_peer_id_config, joinPrefixes(m_local_prefix),
                       m_priority, m_secret));
     return;
   }
@@ -667,7 +667,7 @@ void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
                 " ib_hb_tx=", m_ib_hb_tx_cnt, " ib_hb_rx=", m_ib_hb_rx_cnt);
 
   // Send our hello back on the inbound connection
-  sendMsgOnInbound(MsgTrunkHello(m_peer_id_config,
+  sendMsgOnInbound(MsgPeerHello(m_peer_id_config,
                                   joinPrefixes(m_local_prefix),
                                   m_priority, m_secret));
 } /* TrunkLink::acceptInboundConnection */
@@ -729,7 +729,7 @@ void TrunkLink::onLocalTalkerStart(uint32_t tg, const std::string& callsign)
   {
     return;
   }
-  sendMsg(MsgTrunkTalkerStart(mapTgOut(tg), callsign));
+  sendMsg(MsgPeerTalkerStart(mapTgOut(tg), callsign));
 } /* TrunkLink::onLocalTalkerStart */
 
 
@@ -749,7 +749,7 @@ void TrunkLink::onLocalTalkerStop(uint32_t tg)
   {
     return;
   }
-  sendMsg(MsgTrunkTalkerStop(mapTgOut(tg)));
+  sendMsg(MsgPeerTalkerStop(mapTgOut(tg)));
 } /* TrunkLink::onLocalTalkerStop */
 
 
@@ -767,7 +767,7 @@ void TrunkLink::onLocalAudio(uint32_t tg, const std::vector<uint8_t>& audio)
   {
     return;
   }
-  sendMsg(MsgTrunkAudio(mapTgOut(tg), audio));
+  sendMsg(MsgPeerAudio(mapTgOut(tg), audio));
 } /* TrunkLink::onLocalAudio */
 
 
@@ -781,7 +781,7 @@ void TrunkLink::onLocalFlush(uint32_t tg)
   {
     return;
   }
-  sendMsg(MsgTrunkFlush(mapTgOut(tg)));
+  sendMsg(MsgPeerFlush(mapTgOut(tg)));
 } /* TrunkLink::onLocalFlush */
 
 
@@ -808,7 +808,7 @@ void TrunkLink::onConnected(void)
   m_ob_hb_rx_cnt = HEARTBEAT_RX_CNT_RESET;
   m_heartbeat_timer.setEnable(true);
 
-  sendMsgOnOutbound(MsgTrunkHello(m_peer_id_config,
+  sendMsgOnOutbound(MsgPeerHello(m_peer_id_config,
                                    joinPrefixes(m_local_prefix),
                                    m_priority, m_secret));
 } /* TrunkLink::onConnected */
@@ -864,8 +864,8 @@ void TrunkLink::onFrameReceived(FramedTcpConnection* con,
 
   // Only allow hello and heartbeat before hello exchange completes
   if (!hello_done &&
-      header.type() != MsgTrunkHello::TYPE &&
-      header.type() != MsgTrunkHeartbeat::TYPE)
+      header.type() != MsgPeerHello::TYPE &&
+      header.type() != MsgPeerHeartbeat::TYPE)
   {
     geulog::warn("trunk", "[", m_section, "] Ignoring trunk message type=",
                  header.type(), " before hello");
@@ -882,7 +882,7 @@ void TrunkLink::onFrameReceived(FramedTcpConnection* con,
     m_ob_hb_rx_cnt = HEARTBEAT_RX_CNT_RESET;
   }
 
-  if (header.type() != MsgTrunkHeartbeat::TYPE)
+  if (header.type() != MsgPeerHeartbeat::TYPE)
   {
     geulog::debug("trunk", m_section, ": rx ", (is_inbound ? "IB" : "OB"),
                   " type=", header.type(), " len=", data.size());
@@ -890,26 +890,26 @@ void TrunkLink::onFrameReceived(FramedTcpConnection* con,
 
   switch (header.type())
   {
-    case MsgTrunkHeartbeat::TYPE:
-      handleMsgTrunkHeartbeat();
+    case MsgPeerHeartbeat::TYPE:
+      handleMsgPeerHeartbeat();
       break;
-    case MsgTrunkHello::TYPE:
-      handleMsgTrunkHello(ss, is_inbound);
+    case MsgPeerHello::TYPE:
+      handleMsgPeerHello(ss, is_inbound);
       break;
-    case MsgTrunkTalkerStart::TYPE:
-      handleMsgTrunkTalkerStart(ss);
+    case MsgPeerTalkerStart::TYPE:
+      handleMsgPeerTalkerStart(ss);
       break;
-    case MsgTrunkTalkerStop::TYPE:
-      handleMsgTrunkTalkerStop(ss);
+    case MsgPeerTalkerStop::TYPE:
+      handleMsgPeerTalkerStop(ss);
       break;
-    case MsgTrunkAudio::TYPE:
-      handleMsgTrunkAudio(ss);
+    case MsgPeerAudio::TYPE:
+      handleMsgPeerAudio(ss);
       break;
-    case MsgTrunkFlush::TYPE:
-      handleMsgTrunkFlush(ss);
+    case MsgPeerFlush::TYPE:
+      handleMsgPeerFlush(ss);
       break;
-    case MsgTrunkNodeList::TYPE:
-      handleMsgTrunkNodeList(ss);
+    case MsgPeerNodeList::TYPE:
+      handleMsgPeerNodeList(ss);
       break;
     default:
       geulog::warn("trunk", "[", m_section, "] Unknown trunk message type=",
@@ -919,13 +919,13 @@ void TrunkLink::onFrameReceived(FramedTcpConnection* con,
 } /* TrunkLink::onFrameReceived */
 
 
-void TrunkLink::handleMsgTrunkHeartbeat(void)
+void TrunkLink::handleMsgPeerHeartbeat(void)
 {
   // rx counter already reset in onFrameReceived
-} /* TrunkLink::handleMsgTrunkHeartbeat */
+} /* TrunkLink::handleMsgPeerHeartbeat */
 
 
-void TrunkLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
+void TrunkLink::handleMsgPeerHello(std::istream& is, bool is_inbound)
 {
   // Inbound hellos are already handled by acceptInboundConnection.
   // A duplicate arriving here means the peer re-sent (e.g. TcpPrioClient
@@ -937,17 +937,17 @@ void TrunkLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
   }
 
   // Hello on outbound = peer's reply to our outbound hello
-  MsgTrunkHello msg;
+  MsgPeerHello msg;
   if (!msg.unpack(is))
   {
-    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgTrunkHello");
+    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgPeerHello");
     return;
   }
 
   if (msg.id().empty())
   {
     geulog::error("trunk", "[", m_section,
-                  "] Peer sent empty trunk ID in MsgTrunkHello");
+                  "] Peer sent empty trunk ID in MsgPeerHello");
     m_con.disconnect();
     return;
   }
@@ -974,15 +974,15 @@ void TrunkLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
                 " ib_connected=", (m_inbound_con != nullptr),
                 " ib_hello=", m_ib_hello_received,
                 " isActive=", isActive());
-} /* TrunkLink::handleMsgTrunkHello */
+} /* TrunkLink::handleMsgPeerHello */
 
 
-void TrunkLink::handleMsgTrunkTalkerStart(std::istream& is)
+void TrunkLink::handleMsgPeerTalkerStart(std::istream& is)
 {
-  MsgTrunkTalkerStart msg;
+  MsgPeerTalkerStart msg;
   if (!msg.unpack(is))
   {
-    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgTrunkTalkerStart");
+    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgPeerTalkerStart");
     return;
   }
 
@@ -1034,15 +1034,15 @@ void TrunkLink::handleMsgTrunkTalkerStart(std::istream& is)
     m_reflector->forwardTrunkTalkerStartToOtherTrunks(this, local_tg,
                                                      msg.callsign());
   }
-} /* TrunkLink::handleMsgTrunkTalkerStart */
+} /* TrunkLink::handleMsgPeerTalkerStart */
 
 
-void TrunkLink::handleMsgTrunkTalkerStop(std::istream& is)
+void TrunkLink::handleMsgPeerTalkerStop(std::istream& is)
 {
-  MsgTrunkTalkerStop msg;
+  MsgPeerTalkerStop msg;
   if (!msg.unpack(is))
   {
-    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgTrunkTalkerStop");
+    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgPeerTalkerStop");
     return;
   }
 
@@ -1068,15 +1068,15 @@ void TrunkLink::handleMsgTrunkTalkerStop(std::istream& is)
   {
     m_reflector->forwardTrunkTalkerStopToOtherTrunks(this, local_tg);
   }
-} /* TrunkLink::handleMsgTrunkTalkerStop */
+} /* TrunkLink::handleMsgPeerTalkerStop */
 
 
-void TrunkLink::handleMsgTrunkAudio(std::istream& is)
+void TrunkLink::handleMsgPeerAudio(std::istream& is)
 {
-  MsgTrunkAudio msg;
+  MsgPeerAudio msg;
   if (!msg.unpack(is))
   {
-    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgTrunkAudio");
+    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgPeerAudio");
     return;
   }
 
@@ -1122,15 +1122,15 @@ void TrunkLink::handleMsgTrunkAudio(std::istream& is)
   {
     m_reflector->forwardTrunkAudioToOtherTrunks(this, local_tg, msg.audio());
   }
-} /* TrunkLink::handleMsgTrunkAudio */
+} /* TrunkLink::handleMsgPeerAudio */
 
 
-void TrunkLink::handleMsgTrunkFlush(std::istream& is)
+void TrunkLink::handleMsgPeerFlush(std::istream& is)
 {
-  MsgTrunkFlush msg;
+  MsgPeerFlush msg;
   if (!msg.unpack(is))
   {
-    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgTrunkFlush");
+    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgPeerFlush");
     return;
   }
 
@@ -1158,7 +1158,7 @@ void TrunkLink::handleMsgTrunkFlush(std::istream& is)
   {
     m_reflector->forwardTrunkFlushToOtherTrunks(this, local_tg);
   }
-} /* TrunkLink::handleMsgTrunkFlush */
+} /* TrunkLink::handleMsgPeerFlush */
 
 
 void TrunkLink::sendMsg(const ReflectorMsg& msg)
@@ -1264,7 +1264,7 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
       {
         geulog::debug("trunk", m_section, ": paired OB#", i, " heartbeat tx",
                       " hb_rx=", m_ob_states[i].hb_rx_cnt);
-        sendMsgOnPairedOutbound(i, MsgTrunkHeartbeat());
+        sendMsgOnPairedOutbound(i, MsgPeerHeartbeat());
       }
       if (--m_ob_states[i].hb_rx_cnt == 0)
       {
@@ -1290,7 +1290,7 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
       {
         geulog::debug("trunk", m_section, ": paired IB#", i, " heartbeat tx",
                       " hb_rx=", m_ib_states[i].hb_rx_cnt);
-        sendMsgOnPairedInbound(i, MsgTrunkHeartbeat());
+        sendMsgOnPairedInbound(i, MsgPeerHeartbeat());
       }
       if (--m_ib_states[i].hb_rx_cnt == 0)
       {
@@ -1331,7 +1331,7 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
     {
       geulog::debug("trunk", m_section, ": OB heartbeat tx ob_hb_rx=",
                     m_ob_hb_rx_cnt);
-      sendMsgOnOutbound(MsgTrunkHeartbeat());
+      sendMsgOnOutbound(MsgPeerHeartbeat());
     }
     if (--m_ob_hb_rx_cnt == 0)
     {
@@ -1352,7 +1352,7 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
     {
       geulog::debug("trunk", m_section, ": IB heartbeat tx ib_hb_rx=",
                     m_ib_hb_rx_cnt);
-      sendMsgOnInbound(MsgTrunkHeartbeat());
+      sendMsgOnInbound(MsgPeerHeartbeat());
     }
     if (--m_ib_hb_rx_cnt == 0)
     {
@@ -1505,12 +1505,12 @@ void TrunkLink::onPairedInboundFrame(Async::FramedTcpConnection* con,
 
   switch (header.type())
   {
-    case MsgTrunkHello::TYPE:
+    case MsgPeerHello::TYPE:
       // Duplicate hello — the hello was already processed by Reflector's
       // acceptInboundConnection path; ignore silently.
       break;
 
-    case MsgTrunkHeartbeat::TYPE:
+    case MsgPeerHeartbeat::TYPE:
       // hb_rx_cnt already reset above; nothing else needed
       break;
 
@@ -1518,20 +1518,20 @@ void TrunkLink::onPairedInboundFrame(Async::FramedTcpConnection* con,
       // Dispatch data messages to shared handlers
       switch (header.type())
       {
-        case MsgTrunkTalkerStart::TYPE:
-          handleMsgTrunkTalkerStart(ss);
+        case MsgPeerTalkerStart::TYPE:
+          handleMsgPeerTalkerStart(ss);
           break;
-        case MsgTrunkTalkerStop::TYPE:
-          handleMsgTrunkTalkerStop(ss);
+        case MsgPeerTalkerStop::TYPE:
+          handleMsgPeerTalkerStop(ss);
           break;
-        case MsgTrunkAudio::TYPE:
-          handleMsgTrunkAudio(ss);
+        case MsgPeerAudio::TYPE:
+          handleMsgPeerAudio(ss);
           break;
-        case MsgTrunkFlush::TYPE:
-          handleMsgTrunkFlush(ss);
+        case MsgPeerFlush::TYPE:
+          handleMsgPeerFlush(ss);
           break;
-        case MsgTrunkNodeList::TYPE:
-          handleMsgTrunkNodeList(ss);
+        case MsgPeerNodeList::TYPE:
+          handleMsgPeerNodeList(ss);
           break;
         default:
           geulog::warn("trunk", "[", m_section, "] Unknown trunk message type=",
@@ -1574,8 +1574,8 @@ void TrunkLink::onPairedOutboundConnected(FramedTcpClient* client)
                 " sending hello with priority=", m_priority);
 
   sendMsgOnPairedOutbound(idx,
-      MsgTrunkHello(m_peer_id_config, joinPrefixes(m_local_prefix),
-                    m_priority, m_secret, MsgTrunkHello::ROLE_PEER));
+      MsgPeerHello(m_peer_id_config, joinPrefixes(m_local_prefix),
+                    m_priority, m_secret, MsgPeerHello::ROLE_PEER));
 } /* TrunkLink::onPairedOutboundConnected */
 
 
@@ -1628,8 +1628,8 @@ void TrunkLink::onPairedOutboundFrame(FramedTcpClient* client,
 
   // Only allow hello and heartbeat before handshake completes
   if (!m_ob_states[idx].hello_received &&
-      header.type() != MsgTrunkHello::TYPE &&
-      header.type() != MsgTrunkHeartbeat::TYPE)
+      header.type() != MsgPeerHello::TYPE &&
+      header.type() != MsgPeerHeartbeat::TYPE)
   {
     geulog::warn("trunk", "[", m_section, "] Ignoring paired ob#", idx,
                  " msg type=", header.type(), " before hello");
@@ -1638,9 +1638,9 @@ void TrunkLink::onPairedOutboundFrame(FramedTcpClient* client,
 
   switch (header.type())
   {
-    case MsgTrunkHello::TYPE:
+    case MsgPeerHello::TYPE:
     {
-      MsgTrunkHello msg;
+      MsgPeerHello msg;
       if (!msg.unpack(ss)) return;
 
       if (msg.id().empty())
@@ -1672,7 +1672,7 @@ void TrunkLink::onPairedOutboundFrame(FramedTcpClient* client,
       break;
     }
 
-    case MsgTrunkHeartbeat::TYPE:
+    case MsgPeerHeartbeat::TYPE:
       // hb_rx_cnt already reset above; nothing else needed
       break;
 
@@ -1682,20 +1682,20 @@ void TrunkLink::onPairedOutboundFrame(FramedTcpClient* client,
       // `ss` is already positioned past the header so we can pass it directly.
       switch (header.type())
       {
-        case MsgTrunkTalkerStart::TYPE:
-          handleMsgTrunkTalkerStart(ss);
+        case MsgPeerTalkerStart::TYPE:
+          handleMsgPeerTalkerStart(ss);
           break;
-        case MsgTrunkTalkerStop::TYPE:
-          handleMsgTrunkTalkerStop(ss);
+        case MsgPeerTalkerStop::TYPE:
+          handleMsgPeerTalkerStop(ss);
           break;
-        case MsgTrunkAudio::TYPE:
-          handleMsgTrunkAudio(ss);
+        case MsgPeerAudio::TYPE:
+          handleMsgPeerAudio(ss);
           break;
-        case MsgTrunkFlush::TYPE:
-          handleMsgTrunkFlush(ss);
+        case MsgPeerFlush::TYPE:
+          handleMsgPeerFlush(ss);
           break;
-        case MsgTrunkNodeList::TYPE:
-          handleMsgTrunkNodeList(ss);
+        case MsgPeerNodeList::TYPE:
+          handleMsgPeerNodeList(ss);
           break;
         default:
           geulog::warn("trunk", "[", m_section, "] Unknown trunk message type=",
@@ -1787,31 +1787,31 @@ void TrunkLink::reloadConfig(void)
 
 
 void TrunkLink::sendNodeList(
-    const std::vector<MsgTrunkNodeList::NodeEntry>& nodes)
+    const std::vector<MsgPeerNodeList::NodeEntry>& nodes)
 {
   if (!isActive()) return;
-  sendMsg(MsgTrunkNodeList(nodes));
+  sendMsg(MsgPeerNodeList(nodes));
 } /* TrunkLink::sendNodeList */
 
 
-void TrunkLink::handleMsgTrunkNodeList(std::istream& is)
+void TrunkLink::handleMsgPeerNodeList(std::istream& is)
 {
-  MsgTrunkNodeList msg;
+  MsgPeerNodeList msg;
   if (!msg.unpack(is))
   {
-    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgTrunkNodeList");
+    geulog::error("trunk", "[", m_section, "] Failed to unpack MsgPeerNodeList");
     return;
   }
 
   // Sanitize every entry before handing off. Untrusted strings from peer
   // reflectors flow into Redis key names, MQTT payloads and log output;
   // keep them byte-bounded and free of control / delimiter characters.
-  std::vector<MsgTrunkNodeList::NodeEntry> sanitized;
+  std::vector<MsgPeerNodeList::NodeEntry> sanitized;
   sanitized.reserve(msg.nodes().size());
   unsigned dropped = 0;
   for (const auto& n : msg.nodes())
   {
-    MsgTrunkNodeList::NodeEntry e;
+    MsgPeerNodeList::NodeEntry e;
     e.callsign = sanitizeIdent(n.callsign, 32);
     if (e.callsign.empty())
     {
@@ -1852,7 +1852,7 @@ void TrunkLink::handleMsgTrunkNodeList(std::istream& is)
 
   m_reflector->onPeerNodeList(peerId(), sanitized);
   m_partner_nodes = std::move(sanitized);
-} /* TrunkLink::handleMsgTrunkNodeList */
+} /* TrunkLink::handleMsgPeerNodeList */
 
 
 std::string TrunkLink::statusLine(void) const

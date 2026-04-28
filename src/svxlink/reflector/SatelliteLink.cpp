@@ -118,7 +118,7 @@ SatelliteLink::~SatelliteLink(void)
   if (!m_partner_nodes.empty() && !m_satellite_id.empty())
   {
     m_reflector->onPeerNodeList(m_satellite_id,
-        std::vector<MsgTrunkNodeList::NodeEntry>{});
+        std::vector<MsgPeerNodeList::NodeEntry>{});
     m_partner_nodes.clear();
   }
 } /* SatelliteLink::~SatelliteLink */
@@ -171,7 +171,7 @@ void SatelliteLink::onParentTalkerStart(uint32_t tg,
 {
   if (!m_hello_received) return;
   if (!filterPassesTg(tg)) return;
-  sendMsg(MsgTrunkTalkerStart(tg, callsign));
+  sendMsg(MsgPeerTalkerStart(tg, callsign));
 } /* SatelliteLink::onParentTalkerStart */
 
 
@@ -179,7 +179,7 @@ void SatelliteLink::onParentTalkerStop(uint32_t tg)
 {
   if (!m_hello_received) return;
   if (!filterPassesTg(tg)) return;
-  sendMsg(MsgTrunkTalkerStop(tg));
+  sendMsg(MsgPeerTalkerStop(tg));
 } /* SatelliteLink::onParentTalkerStop */
 
 
@@ -188,7 +188,7 @@ void SatelliteLink::onParentAudio(uint32_t tg,
 {
   if (!m_hello_received) return;
   if (!filterPassesTg(tg)) return;
-  sendMsg(MsgTrunkAudio(tg, audio));
+  sendMsg(MsgPeerAudio(tg, audio));
 } /* SatelliteLink::onParentAudio */
 
 
@@ -196,7 +196,7 @@ void SatelliteLink::onParentFlush(uint32_t tg)
 {
   if (!m_hello_received) return;
   if (!filterPassesTg(tg)) return;
-  sendMsg(MsgTrunkFlush(tg));
+  sendMsg(MsgPeerFlush(tg));
 } /* SatelliteLink::onParentFlush */
 
 
@@ -215,8 +215,8 @@ void SatelliteLink::onFrameReceived(FramedTcpConnection* con,
   }
 
   if (!m_hello_received &&
-      header.type() != MsgTrunkHello::TYPE &&
-      header.type() != MsgTrunkHeartbeat::TYPE)
+      header.type() != MsgPeerHello::TYPE &&
+      header.type() != MsgPeerHeartbeat::TYPE)
   {
     geulog::warn("satellite", "Ignoring message type=", header.type(),
                  " before hello");
@@ -227,29 +227,29 @@ void SatelliteLink::onFrameReceived(FramedTcpConnection* con,
 
   switch (header.type())
   {
-    case MsgTrunkHeartbeat::TYPE:
-      handleMsgTrunkHeartbeat();
+    case MsgPeerHeartbeat::TYPE:
+      handleMsgPeerHeartbeat();
       break;
-    case MsgTrunkHello::TYPE:
-      handleMsgTrunkHello(ss);
+    case MsgPeerHello::TYPE:
+      handleMsgPeerHello(ss);
       break;
-    case MsgTrunkTalkerStart::TYPE:
-      handleMsgTrunkTalkerStart(ss);
+    case MsgPeerTalkerStart::TYPE:
+      handleMsgPeerTalkerStart(ss);
       break;
-    case MsgTrunkTalkerStop::TYPE:
-      handleMsgTrunkTalkerStop(ss);
+    case MsgPeerTalkerStop::TYPE:
+      handleMsgPeerTalkerStop(ss);
       break;
-    case MsgTrunkAudio::TYPE:
-      handleMsgTrunkAudio(ss);
+    case MsgPeerAudio::TYPE:
+      handleMsgPeerAudio(ss);
       break;
-    case MsgTrunkFlush::TYPE:
-      handleMsgTrunkFlush(ss);
+    case MsgPeerFlush::TYPE:
+      handleMsgPeerFlush(ss);
       break;
-    case MsgTrunkFilter::TYPE:
-      handleMsgTrunkFilter(ss);
+    case MsgPeerFilter::TYPE:
+      handleMsgPeerFilter(ss);
       break;
-    case MsgTrunkNodeList::TYPE:
-      handleMsgTrunkNodeList(ss);
+    case MsgPeerNodeList::TYPE:
+      handleMsgPeerNodeList(ss);
       break;
     default:
       geulog::warn("satellite", "Unknown message type=", header.type());
@@ -258,17 +258,17 @@ void SatelliteLink::onFrameReceived(FramedTcpConnection* con,
 } /* SatelliteLink::onFrameReceived */
 
 
-void SatelliteLink::handleMsgTrunkHeartbeat(void)
+void SatelliteLink::handleMsgPeerHeartbeat(void)
 {
-} /* SatelliteLink::handleMsgTrunkHeartbeat */
+} /* SatelliteLink::handleMsgPeerHeartbeat */
 
 
-void SatelliteLink::handleMsgTrunkHello(std::istream& is)
+void SatelliteLink::handleMsgPeerHello(std::istream& is)
 {
-  MsgTrunkHello msg;
+  MsgPeerHello msg;
   if (!msg.unpack(is))
   {
-    geulog::error("satellite", "Failed to unpack MsgTrunkHello");
+    geulog::error("satellite", "Failed to unpack MsgPeerHello");
     return;
   }
 
@@ -279,7 +279,7 @@ void SatelliteLink::handleMsgTrunkHello(std::istream& is)
     return;
   }
 
-  if (msg.role() != MsgTrunkHello::ROLE_SATELLITE)
+  if (msg.role() != MsgPeerHello::ROLE_SATELLITE)
   {
     geulog::error("satellite", "Expected ROLE_SATELLITE from '", msg.id(),
                   "' but got role=", (int)msg.role());
@@ -304,8 +304,8 @@ void SatelliteLink::handleMsgTrunkHello(std::istream& is)
   // and start forwarding local events.  This also generates early
   // parent→satellite traffic, keeping the connection alive through
   // firewalls / NAT devices that drop idle TCP sessions.
-  sendMsg(MsgTrunkHello("PARENT", "", 0, m_secret,
-                         MsgTrunkHello::ROLE_PEER));
+  sendMsg(MsgPeerHello("PARENT", "", 0, m_secret,
+                         MsgPeerHello::ROLE_PEER));
 
   // Bring the new satellite up to speed: schedule a debounced node-list
   // emission so it receives the parent's combined view (parent-local
@@ -313,12 +313,12 @@ void SatelliteLink::handleMsgTrunkHello(std::istream& is)
   m_reflector->scheduleNodeListUpdate();
 
   statusChanged(this);
-} /* SatelliteLink::handleMsgTrunkHello */
+} /* SatelliteLink::handleMsgPeerHello */
 
 
-void SatelliteLink::handleMsgTrunkTalkerStart(std::istream& is)
+void SatelliteLink::handleMsgPeerTalkerStart(std::istream& is)
 {
-  MsgTrunkTalkerStart msg;
+  MsgPeerTalkerStart msg;
   if (!msg.unpack(is)) return;
 
   uint32_t tg = msg.tg();
@@ -333,12 +333,12 @@ void SatelliteLink::handleMsgTrunkTalkerStart(std::istream& is)
   m_reflector->forwardSatelliteAudioToTrunks(tg, msg.callsign());
 
   statusChanged(this);
-} /* SatelliteLink::handleMsgTrunkTalkerStart */
+} /* SatelliteLink::handleMsgPeerTalkerStart */
 
 
-void SatelliteLink::handleMsgTrunkTalkerStop(std::istream& is)
+void SatelliteLink::handleMsgPeerTalkerStop(std::istream& is)
 {
-  MsgTrunkTalkerStop msg;
+  MsgPeerTalkerStop msg;
   if (!msg.unpack(is)) return;
 
   uint32_t tg = msg.tg();
@@ -349,12 +349,12 @@ void SatelliteLink::handleMsgTrunkTalkerStop(std::istream& is)
   m_reflector->forwardSatelliteStopToTrunks(tg);
 
   statusChanged(this);
-} /* SatelliteLink::handleMsgTrunkTalkerStop */
+} /* SatelliteLink::handleMsgPeerTalkerStop */
 
 
-void SatelliteLink::handleMsgTrunkAudio(std::istream& is)
+void SatelliteLink::handleMsgPeerAudio(std::istream& is)
 {
-  MsgTrunkAudio msg;
+  MsgPeerAudio msg;
   if (!msg.unpack(is)) return;
 
   uint32_t tg = msg.tg();
@@ -370,12 +370,12 @@ void SatelliteLink::handleMsgTrunkAudio(std::istream& is)
 
   // Forward to other satellites (not this one)
   m_reflector->forwardAudioToSatellitesExcept(this, tg, msg.audio());
-} /* SatelliteLink::handleMsgTrunkAudio */
+} /* SatelliteLink::handleMsgPeerAudio */
 
 
-void SatelliteLink::handleMsgTrunkFlush(std::istream& is)
+void SatelliteLink::handleMsgPeerFlush(std::istream& is)
 {
-  MsgTrunkFlush msg;
+  MsgPeerFlush msg;
   if (!msg.unpack(is)) return;
 
   uint32_t tg = msg.tg();
@@ -385,7 +385,7 @@ void SatelliteLink::handleMsgTrunkFlush(std::istream& is)
 
   m_reflector->forwardSatelliteFlushToTrunks(tg);
   m_reflector->forwardFlushToSatellitesExcept(this, tg);
-} /* SatelliteLink::handleMsgTrunkFlush */
+} /* SatelliteLink::handleMsgPeerFlush */
 
 
 void SatelliteLink::sendMsg(const ReflectorMsg& msg)
@@ -407,7 +407,7 @@ void SatelliteLink::heartbeatTick(Async::Timer* t)
   if (--m_hb_tx_cnt == 0)
   {
     m_hb_tx_cnt = HEARTBEAT_TX_CNT_RESET;
-    sendMsg(MsgTrunkHeartbeat());
+    sendMsg(MsgPeerHeartbeat());
   }
 
   if (--m_hb_rx_cnt == 0)
@@ -420,12 +420,12 @@ void SatelliteLink::heartbeatTick(Async::Timer* t)
 } /* SatelliteLink::heartbeatTick */
 
 
-void SatelliteLink::handleMsgTrunkFilter(std::istream& is)
+void SatelliteLink::handleMsgPeerFilter(std::istream& is)
 {
-  MsgTrunkFilter msg;
+  MsgPeerFilter msg;
   if (!msg.unpack(is))
   {
-    geulog::error("satellite", "Failed to unpack MsgTrunkFilter from '",
+    geulog::error("satellite", "Failed to unpack MsgPeerFilter from '",
                   m_satellite_id, "'");
     return;
   }
@@ -445,7 +445,7 @@ void SatelliteLink::handleMsgTrunkFilter(std::istream& is)
   }
 
   statusChanged(this);
-} /* SatelliteLink::handleMsgTrunkFilter */
+} /* SatelliteLink::handleMsgPeerFilter */
 
 
 bool SatelliteLink::filterPassesTg(uint32_t tg) const
@@ -456,22 +456,22 @@ bool SatelliteLink::filterPassesTg(uint32_t tg) const
 } /* SatelliteLink::filterPassesTg */
 
 
-void SatelliteLink::handleMsgTrunkNodeList(std::istream& is)
+void SatelliteLink::handleMsgPeerNodeList(std::istream& is)
 {
-  MsgTrunkNodeList msg;
+  MsgPeerNodeList msg;
   if (!msg.unpack(is))
   {
-    geulog::error("satellite", "Failed to unpack MsgTrunkNodeList from '",
+    geulog::error("satellite", "Failed to unpack MsgPeerNodeList from '",
                   m_satellite_id, "'");
     return;
   }
 
-  std::vector<MsgTrunkNodeList::NodeEntry> sanitized;
+  std::vector<MsgPeerNodeList::NodeEntry> sanitized;
   sanitized.reserve(msg.nodes().size());
   unsigned dropped = 0;
   for (const auto& n : msg.nodes())
   {
-    MsgTrunkNodeList::NodeEntry e;
+    MsgPeerNodeList::NodeEntry e;
     e.callsign = sanitizeIdent(n.callsign, 32);
     if (e.callsign.empty()) { ++dropped; continue; }
     e.tg       = n.tg;
@@ -507,22 +507,22 @@ void SatelliteLink::handleMsgTrunkNodeList(std::istream& is)
   m_reflector->scheduleNodeListUpdate();
 
   statusChanged(this);
-} /* SatelliteLink::handleMsgTrunkNodeList */
+} /* SatelliteLink::handleMsgPeerNodeList */
 
 
 void SatelliteLink::sendNodeList(
-    const std::vector<MsgTrunkNodeList::NodeEntry>& nodes)
+    const std::vector<MsgPeerNodeList::NodeEntry>& nodes)
 {
   if (!m_hello_received) return;
 
   // Apply this satellite's announced filter so we only forward TGs the
   // satellite cares about (matches the audio-path scoping rule).
-  std::vector<MsgTrunkNodeList::NodeEntry> filtered;
+  std::vector<MsgPeerNodeList::NodeEntry> filtered;
   filtered.reserve(nodes.size());
   for (const auto& n : nodes)
   {
     if (!filterPassesTg(n.tg)) continue;
     filtered.push_back(n);
   }
-  sendMsg(MsgTrunkNodeList(filtered));
+  sendMsg(MsgPeerNodeList(filtered));
 } /* SatelliteLink::sendNodeList */

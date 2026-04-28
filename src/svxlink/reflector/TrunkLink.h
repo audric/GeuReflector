@@ -64,7 +64,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 class Reflector;
 class ReflectorMsg;
-class MsgTrunkHello;
+class MsgPeerHello;
 class MsgUdpAudio;
 
 
@@ -87,7 +87,7 @@ connection (with inbound as fallback). Heartbeats are sent on each connection
 independently to detect dead sockets.
 
 Talker arbitration tie-break: each side generates a random 32-bit priority at
-startup and exchanges it in MsgTrunkHello. When both sides claim the same TG
+startup and exchanges it in MsgPeerHello. When both sides claim the same TG
 simultaneously, the side with the lower priority value defers (clears its local
 talker and accepts the remote one).
 */
@@ -129,7 +129,7 @@ class TrunkLink : public sigc::trackable
 
     // Accept an inbound connection from a peer that has already sent a hello
     void acceptInboundConnection(Async::FramedTcpConnection* con,
-                                  const MsgTrunkHello& hello);
+                                  const MsgPeerHello& hello);
 
     // Called by Reflector when the inbound connection disconnects
     void onInboundDisconnected(Async::FramedTcpConnection* con,
@@ -147,7 +147,7 @@ class TrunkLink : public sigc::trackable
 
     // Send the local node list (callsign + current TG per local client)
     // to the peer. Called from Reflector after debounce.
-    void sendNodeList(const std::vector<MsgTrunkNodeList::NodeEntry>& nodes);
+    void sendNodeList(const std::vector<MsgPeerNodeList::NodeEntry>& nodes);
 
     // PTY-driven controls
     void muteCallsign(const std::string& callsign)
@@ -189,7 +189,7 @@ class TrunkLink : public sigc::trackable
     std::vector<std::string> m_local_prefix;   // our authoritative TG prefixes
     std::vector<std::string> m_remote_prefix;  // peer's authoritative TG prefixes
     uint32_t            m_priority;       // our tie-break nonce (random, set once)
-    uint32_t            m_peer_priority;  // peer's nonce, from MsgTrunkHello
+    uint32_t            m_peer_priority;  // peer's nonce, from MsgPeerHello
     FramedTcpClient     m_con;            // outbound client connection
     Async::FramedTcpConnection* m_inbound_con = nullptr;  // accepted inbound
     Async::Timer        m_heartbeat_timer;
@@ -204,10 +204,10 @@ class TrunkLink : public sigc::trackable
     // TGs currently held by this specific trunk peer (for scoped cleanup)
     std::set<uint32_t>  m_peer_active_tgs;
 
-    // Most recent MsgTrunkNodeList we received from the peer, sanitized.
+    // Most recent MsgPeerNodeList we received from the peer, sanitized.
     // Surfaced in statusJson() so /status can attribute nodes to a peer.
     // Cleared when the link goes fully inactive.
-    std::vector<MsgTrunkNodeList::NodeEntry> m_partner_nodes;
+    std::vector<MsgPeerNodeList::NodeEntry> m_partner_nodes;
 
     // TGs the peer has shown interest in (sent TalkerStart for).
     // Maps TG number to last activity timestamp.  Entries expire after
@@ -256,13 +256,13 @@ class TrunkLink : public sigc::trackable
     void onFrameReceived(Async::FramedTcpConnection* con,
                          std::vector<uint8_t>& data);
 
-    void handleMsgTrunkHello(std::istream& is, bool is_inbound);
-    void handleMsgTrunkTalkerStart(std::istream& is);
-    void handleMsgTrunkTalkerStop(std::istream& is);
-    void handleMsgTrunkAudio(std::istream& is);
-    void handleMsgTrunkFlush(std::istream& is);
-    void handleMsgTrunkHeartbeat(void);
-    void handleMsgTrunkNodeList(std::istream& is);
+    void handleMsgPeerHello(std::istream& is, bool is_inbound);
+    void handleMsgPeerTalkerStart(std::istream& is);
+    void handleMsgPeerTalkerStop(std::istream& is);
+    void handleMsgPeerAudio(std::istream& is);
+    void handleMsgPeerFlush(std::istream& is);
+    void handleMsgPeerHeartbeat(void);
+    void handleMsgPeerNodeList(std::istream& is);
 
     void sendMsg(const ReflectorMsg& msg);
     void sendMsgOnOutbound(const ReflectorMsg& msg);

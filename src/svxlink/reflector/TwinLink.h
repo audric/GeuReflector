@@ -86,7 +86,7 @@ class TwinLink
     // Inbound path: the twin server accepted a connection and the hello
     // HMAC verified — hand it off here.
     void acceptInboundConnection(Async::FramedTcpConnection* con,
-                                 const MsgTrunkHello& hello);
+                                 const MsgPeerHello& hello);
 
     // Called by Reflector when local TGHandler state changes
     void onLocalTalkerUpdated(uint32_t tg, const std::string& callsign);
@@ -104,7 +104,7 @@ class TwinLink
     // Called by Reflector when the local node roster changes, to mirror
     // our connected-stations list to the twin partner.
     void onLocalNodeListUpdated(
-        const std::vector<MsgTrunkNodeList::NodeEntry>& nodes);
+        const std::vector<MsgPeerNodeList::NodeEntry>& nodes);
 
     bool isActive(void) const;
     const std::string& partnerHost(void) const { return m_peer_host; }
@@ -145,7 +145,7 @@ class TwinLink
     bool                          m_ib_hello_received;
     unsigned                      m_ib_hb_tx_cnt;
     unsigned                      m_ib_hb_rx_cnt;
-    std::vector<MsgTrunkNodeList::NodeEntry> m_partner_nodes;
+    std::vector<MsgPeerNodeList::NodeEntry> m_partner_nodes;
 
     // No copy
     TwinLink(const TwinLink&);
@@ -156,13 +156,13 @@ class TwinLink
                         Async::TcpConnection::DisconnectReason reason);
     void onFrameReceived(Async::FramedTcpConnection* con,
                          std::vector<uint8_t>& data);
-    void handleMsgTrunkHello(std::istream& is, bool is_inbound);
-    void handleMsgTrunkTalkerStart(std::istream& is);
-    void handleMsgTrunkTalkerStop(std::istream& is);
-    void handleMsgTrunkAudio(std::istream& is);
-    void handleMsgTrunkFlush(std::istream& is);
-    void handleMsgTrunkHeartbeat(void);
-    void handleMsgTrunkNodeList(std::istream& is);
+    void handleMsgPeerHello(std::istream& is, bool is_inbound);
+    void handleMsgPeerTalkerStart(std::istream& is);
+    void handleMsgPeerTalkerStop(std::istream& is);
+    void handleMsgPeerAudio(std::istream& is);
+    void handleMsgPeerFlush(std::istream& is);
+    void handleMsgPeerHeartbeat(void);
+    void handleMsgPeerNodeList(std::istream& is);
     void clearPartnerRosterIfInactive(void);
     void handleMsgTwinExtTalkerStart(std::istream& is);
     void handleMsgTwinExtTalkerStop(std::istream& is);

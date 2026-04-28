@@ -242,7 +242,7 @@ bool TwinLink::initialize(void)
 
 
 void TwinLink::acceptInboundConnection(Async::FramedTcpConnection* con,
-                                       const MsgTrunkHello& hello)
+                                       const MsgPeerHello& hello)
 {
   if (m_inbound_con != nullptr)
   {
@@ -294,9 +294,9 @@ void TwinLink::acceptInboundConnection(Async::FramedTcpConnection* con,
       "' priority=", m_peer_priority);
 
   // Send our hello back on the inbound connection
-  sendMsgOnInbound(MsgTrunkHello(m_peer_id_config, m_local_prefix,
+  sendMsgOnInbound(MsgPeerHello(m_peer_id_config, m_local_prefix,
                                   m_priority, m_secret,
-                                  MsgTrunkHello::ROLE_TWIN));
+                                  MsgPeerHello::ROLE_TWIN));
 } /* TwinLink::acceptInboundConnection */
 
 
@@ -306,11 +306,11 @@ void TwinLink::onLocalTalkerUpdated(uint32_t tg,
   if (!isActive()) return;
   if (callsign.empty())
   {
-    sendMsg(MsgTrunkTalkerStop(tg));
+    sendMsg(MsgPeerTalkerStop(tg));
   }
   else
   {
-    sendMsg(MsgTrunkTalkerStart(tg, callsign));
+    sendMsg(MsgPeerTalkerStart(tg, callsign));
   }
 } /* TwinLink::onLocalTalkerUpdated */
 
@@ -319,14 +319,14 @@ void TwinLink::onLocalAudio(uint32_t tg,
                             const std::vector<uint8_t>& audio)
 {
   if (!isActive()) return;
-  sendMsg(MsgTrunkAudio(tg, audio));
+  sendMsg(MsgPeerAudio(tg, audio));
 } /* TwinLink::onLocalAudio */
 
 
 void TwinLink::onLocalFlush(uint32_t tg)
 {
   if (!isActive()) return;
-  sendMsg(MsgTrunkFlush(tg));
+  sendMsg(MsgPeerFlush(tg));
 } /* TwinLink::onLocalFlush */
 
 
@@ -348,10 +348,10 @@ void TwinLink::onExternalTrunkTalkerStop(uint32_t tg,
 
 
 void TwinLink::onLocalNodeListUpdated(
-    const std::vector<MsgTrunkNodeList::NodeEntry>& nodes)
+    const std::vector<MsgPeerNodeList::NodeEntry>& nodes)
 {
   if (!isActive()) return;
-  sendMsg(MsgTrunkNodeList(nodes));
+  sendMsg(MsgPeerNodeList(nodes));
 } /* TwinLink::onLocalNodeListUpdated */
 
 
@@ -415,9 +415,9 @@ void TwinLink::onConnected(void)
   m_ob_hb_rx_cnt = 0;
   m_heartbeat_timer.setEnable(true);
 
-  sendMsgOnOutbound(MsgTrunkHello(m_peer_id_config, m_local_prefix,
+  sendMsgOnOutbound(MsgPeerHello(m_peer_id_config, m_local_prefix,
                                    m_priority, m_secret,
-                                   MsgTrunkHello::ROLE_TWIN));
+                                   MsgPeerHello::ROLE_TWIN));
 } /* TwinLink::onConnected */
 
 
@@ -461,8 +461,8 @@ void TwinLink::onFrameReceived(FramedTcpConnection* con,
 
   // Only allow hello and heartbeat before hello exchange completes
   if (!hello_done &&
-      header.type() != MsgTrunkHello::TYPE &&
-      header.type() != MsgTrunkHeartbeat::TYPE)
+      header.type() != MsgPeerHello::TYPE &&
+      header.type() != MsgPeerHeartbeat::TYPE)
   {
     geulog::warn("twin", "TWIN: Ignoring message type=", header.type(), " before hello");
     return;
@@ -480,26 +480,26 @@ void TwinLink::onFrameReceived(FramedTcpConnection* con,
 
   switch (header.type())
   {
-    case MsgTrunkHello::TYPE:
-      handleMsgTrunkHello(ss, is_inbound);
+    case MsgPeerHello::TYPE:
+      handleMsgPeerHello(ss, is_inbound);
       break;
-    case MsgTrunkHeartbeat::TYPE:
-      handleMsgTrunkHeartbeat();
+    case MsgPeerHeartbeat::TYPE:
+      handleMsgPeerHeartbeat();
       break;
-    case MsgTrunkTalkerStart::TYPE:
-      handleMsgTrunkTalkerStart(ss);
+    case MsgPeerTalkerStart::TYPE:
+      handleMsgPeerTalkerStart(ss);
       break;
-    case MsgTrunkTalkerStop::TYPE:
-      handleMsgTrunkTalkerStop(ss);
+    case MsgPeerTalkerStop::TYPE:
+      handleMsgPeerTalkerStop(ss);
       break;
-    case MsgTrunkAudio::TYPE:
-      handleMsgTrunkAudio(ss);
+    case MsgPeerAudio::TYPE:
+      handleMsgPeerAudio(ss);
       break;
-    case MsgTrunkFlush::TYPE:
-      handleMsgTrunkFlush(ss);
+    case MsgPeerFlush::TYPE:
+      handleMsgPeerFlush(ss);
       break;
-    case MsgTrunkNodeList::TYPE:
-      handleMsgTrunkNodeList(ss);
+    case MsgPeerNodeList::TYPE:
+      handleMsgPeerNodeList(ss);
       break;
     case MsgTwinExtTalkerStart::TYPE:
       handleMsgTwinExtTalkerStart(ss);
@@ -514,7 +514,7 @@ void TwinLink::onFrameReceived(FramedTcpConnection* con,
 } /* TwinLink::onFrameReceived */
 
 
-void TwinLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
+void TwinLink::handleMsgPeerHello(std::istream& is, bool is_inbound)
 {
   // Inbound hellos are already handled by acceptInboundConnection.
   // A duplicate arriving here means the peer re-sent — ignore it silently.
@@ -524,14 +524,14 @@ void TwinLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
   }
 
   // Hello on outbound = peer's reply to our outbound hello
-  MsgTrunkHello msg;
+  MsgPeerHello msg;
   if (!msg.unpack(is))
   {
-    geulog::error("twin", "TWIN: Failed to unpack MsgTrunkHello");
+    geulog::error("twin", "TWIN: Failed to unpack MsgPeerHello");
     return;
   }
 
-  if (msg.role() != MsgTrunkHello::ROLE_TWIN)
+  if (msg.role() != MsgPeerHello::ROLE_TWIN)
   {
     geulog::error("twin", "TWIN: peer sent role=", int(msg.role()),
         " but we expect ROLE_TWIN");
@@ -563,70 +563,70 @@ void TwinLink::handleMsgTrunkHello(std::istream& is, bool is_inbound)
 
   geulog::info("twin", "TWIN: hello from partner '", msg.id(),
       "' priority=", m_peer_priority, " (authenticated)");
-} /* TwinLink::handleMsgTrunkHello */
+} /* TwinLink::handleMsgPeerHello */
 
 
-void TwinLink::handleMsgTrunkTalkerStart(std::istream& is)
+void TwinLink::handleMsgPeerTalkerStart(std::istream& is)
 {
-  MsgTrunkTalkerStart msg;
+  MsgPeerTalkerStart msg;
   if (!msg.unpack(is))
   {
-    geulog::error("twin", "TWIN: Failed to unpack MsgTrunkTalkerStart");
+    geulog::error("twin", "TWIN: Failed to unpack MsgPeerTalkerStart");
     return;
   }
   // setTrunkTalkerForTG fires trunkTalkerUpdated → onTrunkTalkerUpdated in
   // Reflector, which broadcasts MsgTalkerStart to all local clients on this TG.
   TGHandler::instance()->setTrunkTalkerForTG(msg.tg(), msg.callsign());
-} /* TwinLink::handleMsgTrunkTalkerStart */
+} /* TwinLink::handleMsgPeerTalkerStart */
 
 
-void TwinLink::handleMsgTrunkTalkerStop(std::istream& is)
+void TwinLink::handleMsgPeerTalkerStop(std::istream& is)
 {
-  MsgTrunkTalkerStop msg;
+  MsgPeerTalkerStop msg;
   if (!msg.unpack(is))
   {
-    geulog::error("twin", "TWIN: Failed to unpack MsgTrunkTalkerStop");
+    geulog::error("twin", "TWIN: Failed to unpack MsgPeerTalkerStop");
     return;
   }
   // clearTrunkTalkerForTG fires trunkTalkerUpdated → onTrunkTalkerUpdated,
   // which broadcasts MsgTalkerStop and MsgUdpFlushSamples to local clients.
   TGHandler::instance()->clearTrunkTalkerForTG(msg.tg());
-} /* TwinLink::handleMsgTrunkTalkerStop */
+} /* TwinLink::handleMsgPeerTalkerStop */
 
 
-void TwinLink::handleMsgTrunkAudio(std::istream& is)
+void TwinLink::handleMsgPeerAudio(std::istream& is)
 {
-  MsgTrunkAudio msg;
+  MsgPeerAudio msg;
   if (!msg.unpack(is))
   {
-    geulog::error("twin", "TWIN: Failed to unpack MsgTrunkAudio");
+    geulog::error("twin", "TWIN: Failed to unpack MsgPeerAudio");
     return;
   }
   if (msg.audio().empty()) return;
   MsgUdpAudio udp_msg(msg.audio());
   m_reflector->broadcastUdpMsg(udp_msg, ReflectorClient::TgFilter(msg.tg()));
   m_reflector->forwardAudioToSatellitesExcept(nullptr, msg.tg(), msg.audio());
-} /* TwinLink::handleMsgTrunkAudio */
+} /* TwinLink::handleMsgPeerAudio */
 
 
-void TwinLink::handleMsgTrunkFlush(std::istream& is)
+void TwinLink::handleMsgPeerFlush(std::istream& is)
 {
-  MsgTrunkFlush msg;
+  MsgPeerFlush msg;
   if (!msg.unpack(is))
   {
-    geulog::error("twin", "TWIN: Failed to unpack MsgTrunkFlush");
+    geulog::error("twin", "TWIN: Failed to unpack MsgPeerFlush");
     return;
   }
   m_reflector->broadcastUdpMsg(MsgUdpFlushSamples(),
       ReflectorClient::TgFilter(msg.tg()));
   m_reflector->forwardFlushToSatellitesExcept(nullptr, msg.tg());
-} /* TwinLink::handleMsgTrunkFlush */
+} /* TwinLink::handleMsgPeerFlush */
 
 
-void TwinLink::handleMsgTrunkHeartbeat(void)
+void TwinLink::handleMsgPeerHeartbeat(void)
 {
   // RX counter already reset in onFrameReceived
-} /* TwinLink::handleMsgTrunkHeartbeat */
+} /* TwinLink::handleMsgPeerHeartbeat */
 
 
 void TwinLink::handleMsgTwinExtTalkerStart(std::istream& is)
@@ -660,21 +660,21 @@ void TwinLink::handleMsgTwinExtTalkerStop(std::istream& is)
 } /* TwinLink::handleMsgTwinExtTalkerStop */
 
 
-void TwinLink::handleMsgTrunkNodeList(std::istream& is)
+void TwinLink::handleMsgPeerNodeList(std::istream& is)
 {
-  MsgTrunkNodeList msg;
+  MsgPeerNodeList msg;
   if (!msg.unpack(is))
   {
-    geulog::error("twin", "TWIN: Failed to unpack MsgTrunkNodeList");
+    geulog::error("twin", "TWIN: Failed to unpack MsgPeerNodeList");
     return;
   }
 
-  std::vector<MsgTrunkNodeList::NodeEntry> sanitized;
+  std::vector<MsgPeerNodeList::NodeEntry> sanitized;
   sanitized.reserve(msg.nodes().size());
   unsigned dropped = 0;
   for (const auto& n : msg.nodes())
   {
-    MsgTrunkNodeList::NodeEntry e;
+    MsgPeerNodeList::NodeEntry e;
     e.callsign = sanitizeIdent(n.callsign, 32);
     if (e.callsign.empty())
     {
@@ -705,7 +705,7 @@ void TwinLink::handleMsgTrunkNodeList(std::istream& is)
   // the twin's peer_id.  Keeps /status, MQTT and Redis consistent.
   m_reflector->onPeerNodeList(peerId(), sanitized);
   m_partner_nodes = std::move(sanitized);
-} /* TwinLink::handleMsgTrunkNodeList */
+} /* TwinLink::handleMsgPeerNodeList */
 
 
 void TwinLink::clearPartnerRosterIfInactive(void)
@@ -717,7 +717,7 @@ void TwinLink::clearPartnerRosterIfInactive(void)
   // clearPeerNode each callsign previously cached under peerId() in
   // Redis and publish an empty list to MQTT.
   m_reflector->onPeerNodeList(peerId(),
-      std::vector<MsgTrunkNodeList::NodeEntry>{});
+      std::vector<MsgPeerNodeList::NodeEntry>{});
 } /* TwinLink::clearPartnerRosterIfInactive */
 
 
@@ -728,7 +728,7 @@ void TwinLink::heartbeatTick(Async::Timer* /*t*/)
   {
     if (++m_ob_hb_tx_cnt >= TWIN_HB_TX_THRESHOLD)
     {
-      sendMsgOnOutbound(MsgTrunkHeartbeat());
+      sendMsgOnOutbound(MsgPeerHeartbeat());
       m_ob_hb_tx_cnt = 0;
     }
     if (++m_ob_hb_rx_cnt >= TWIN_HB_RX_THRESHOLD)
@@ -744,7 +744,7 @@ void TwinLink::heartbeatTick(Async::Timer* /*t*/)
   {
     if (++m_ib_hb_tx_cnt >= TWIN_HB_TX_THRESHOLD)
     {
-      sendMsgOnInbound(MsgTrunkHeartbeat());
+      sendMsgOnInbound(MsgPeerHeartbeat());
       m_ib_hb_tx_cnt = 0;
     }
     if (++m_ib_hb_rx_cnt >= TWIN_HB_RX_THRESHOLD)

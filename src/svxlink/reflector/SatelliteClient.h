@@ -26,7 +26,7 @@ An optional SATELLITE_FILTER scopes which TGs this satellite cares about,
 in both directions (TgFilter syntax: exact, prefix "24*", range
 "2427-2438", comma-separated):
  - outbound: local events for non-matching TGs are not sent to the parent;
- - inbound:  the filter is sent to the parent via MsgTrunkFilter (type 122)
+ - inbound:  the filter is sent to the parent via MsgPeerFilter (type 122)
    after authentication; the parent skips forwarding non-matching TGs.
 */
 class SatelliteClient : public sigc::trackable
@@ -46,11 +46,11 @@ class SatelliteClient : public sigc::trackable
     // Send our local roster up to the parent. Caller has already filtered
     // to "this satellite's local clients" (sat_id empty on the wire).
     void sendNodeList(
-        const std::vector<MsgTrunkNodeList::NodeEntry>& nodes);
+        const std::vector<MsgPeerNodeList::NodeEntry>& nodes);
 
     // Read-only access to the parent's combined-view roster, surfaced
     // by Reflector::statusJson under /status.parent.nodes.
-    const std::vector<MsgTrunkNodeList::NodeEntry>& parentNodes(void) const
+    const std::vector<MsgPeerNodeList::NodeEntry>& parentNodes(void) const
     {
       return m_parent_nodes;
     }
@@ -76,26 +76,26 @@ class SatelliteClient : public sigc::trackable
     unsigned        m_hb_tx_cnt;
     unsigned        m_hb_rx_cnt;
     TgFilter        m_filter;       // optional TG filter (SATELLITE_FILTER)
-    std::string     m_filter_str;   // raw config string for MsgTrunkFilter
-    // Parent's id from MsgTrunkHello (used as the peer_id key for Redis
+    std::string     m_filter_str;   // raw config string for MsgPeerFilter
+    // Parent's id from MsgPeerHello (used as the peer_id key for Redis
     // tombstone bookkeeping when storing the parent-supplied roster).
     std::string     m_parent_id;
     // Parent's combined roster (parent-local + every sibling satellite,
     // minus our own contribution). Surfaced via /status.parent.nodes.
-    std::vector<MsgTrunkNodeList::NodeEntry> m_parent_nodes;
+    std::vector<MsgPeerNodeList::NodeEntry> m_parent_nodes;
 
     void onConnected(void);
     void onDisconnected(Async::TcpConnection* con,
                         Async::TcpConnection::DisconnectReason reason);
     void onFrameReceived(Async::FramedTcpConnection* con,
                          std::vector<uint8_t>& data);
-    void handleMsgTrunkHello(std::istream& is);
-    void handleMsgTrunkTalkerStart(std::istream& is);
-    void handleMsgTrunkTalkerStop(std::istream& is);
-    void handleMsgTrunkAudio(std::istream& is);
-    void handleMsgTrunkFlush(std::istream& is);
-    void handleMsgTrunkHeartbeat(void);
-    void handleMsgTrunkNodeList(std::istream& is);
+    void handleMsgPeerHello(std::istream& is);
+    void handleMsgPeerTalkerStart(std::istream& is);
+    void handleMsgPeerTalkerStop(std::istream& is);
+    void handleMsgPeerAudio(std::istream& is);
+    void handleMsgPeerFlush(std::istream& is);
+    void handleMsgPeerHeartbeat(void);
+    void handleMsgPeerNodeList(std::istream& is);
     void sendMsg(const ReflectorMsg& msg);
     void sendFilter(void);
     void heartbeatTick(Async::Timer* t);

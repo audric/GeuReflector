@@ -329,7 +329,7 @@ void MqttPublisher::publishFullStatus(const Json::Value& status)
 
 
 static Json::Value nodeListToJson(
-    const std::vector<MsgTrunkNodeList::NodeEntry>& nodes)
+    const std::vector<MsgPeerNodeList::NodeEntry>& nodes)
 {
   Json::Value arr(Json::arrayValue);
   for (const auto& n : nodes)
@@ -356,7 +356,7 @@ static Json::Value nodeListToJson(
 
 
 void MqttPublisher::publishLocalNodes(
-    const std::vector<MsgTrunkNodeList::NodeEntry>& nodes)
+    const std::vector<MsgPeerNodeList::NodeEntry>& nodes)
 {
   Json::StreamWriterBuilder wb;
   wb["indentation"] = "";
@@ -366,7 +366,7 @@ void MqttPublisher::publishLocalNodes(
 
 
 void MqttPublisher::publishPeerNodes(const std::string& peer_id,
-    const std::vector<MsgTrunkNodeList::NodeEntry>& nodes)
+    const std::vector<MsgPeerNodeList::NodeEntry>& nodes)
 {
   Json::StreamWriterBuilder wb;
   wb["indentation"] = "";

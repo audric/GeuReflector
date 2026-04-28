@@ -2428,7 +2428,7 @@ void Reflector::trunkClientConnected(Async::FramedTcpConnection* con)
   m_trunk_pending_cons[con] = timer;
 
   // Use a limited frame size — only a hello message is expected.
-  // MsgTrunkHello contains strings + HMAC, so needs more than PREAUTH (64).
+  // MsgPeerHello contains strings + HMAC, so needs more than PREAUTH (64).
   // Cap at SSL_SETUP size (4096) which is plenty for a hello.
   con->setMaxFrameSize(ReflectorMsg::MAX_SSL_SETUP_FRAME_SIZE);
   con->frameReceived.connect(
@@ -2492,18 +2492,18 @@ void Reflector::trunkPendingFrameReceived(Async::FramedTcpConnection* con,
     return;
   }
 
-  if (header.type() != MsgTrunkHello::TYPE)
+  if (header.type() != MsgPeerHello::TYPE)
   {
-    geulog::warn("trunk", "TRUNK inbound: expected MsgTrunkHello, got type=",
+    geulog::warn("trunk", "TRUNK inbound: expected MsgPeerHello, got type=",
               header.type());
     rejectPending();
     return;
   }
 
-  MsgTrunkHello msg;
+  MsgPeerHello msg;
   if (!msg.unpack(ss))
   {
-    geulog::error("trunk", "TRUNK inbound: failed to unpack MsgTrunkHello");
+    geulog::error("trunk", "TRUNK inbound: failed to unpack MsgPeerHello");
     rejectPending();
     return;
   }
@@ -3243,12 +3243,12 @@ void Reflector::scheduleNodeListUpdate(void)
 void Reflector::sendNodeListToAllPeers(void)
 {
   // 1. Local clients — sat_id stays empty (recipient-relative: "on me").
-  std::vector<MsgTrunkNodeList::NodeEntry> local_nodes;
+  std::vector<MsgPeerNodeList::NodeEntry> local_nodes;
   for (const auto& kv : m_client_con_map)
   {
     ReflectorClient* c = kv.second;
     if (c->callsign().empty()) continue;
-    MsgTrunkNodeList::NodeEntry e;
+    MsgPeerNodeList::NodeEntry e;
     e.callsign = c->callsign();
     e.tg       = c->currentTG();
     // Attach the rich per-client status blob so peers can render partner
@@ -3278,7 +3278,7 @@ void Reflector::sendNodeListToAllPeers(void)
 
   // 2. Combined view = local + every connected satellite's stamped roster.
   // Each sat-supplied entry already carries sat_id == its satelliteId.
-  std::vector<MsgTrunkNodeList::NodeEntry> combined = local_nodes;
+  std::vector<MsgPeerNodeList::NodeEntry> combined = local_nodes;
   for (const auto& kv : m_satellite_con_map)
   {
     const auto& sat_nodes = kv.second->partnerNodes();
@@ -3306,7 +3306,7 @@ void Reflector::sendNodeListToAllPeers(void)
     SatelliteLink* link = kv.second;
     const std::string& this_sat_id = link->satelliteId();
 
-    std::vector<MsgTrunkNodeList::NodeEntry> for_this_sat;
+    std::vector<MsgPeerNodeList::NodeEntry> for_this_sat;
     for_this_sat.reserve(combined.size());
     for (const auto& n : combined)
     {
@@ -3325,7 +3325,7 @@ void Reflector::sendNodeListToAllPeers(void)
   }
 
   // 6. MQTT — keep scope to parent-local clients (sat-supplied entries
-  // already get a publish via SatelliteLink::handleMsgTrunkNodeList
+  // already get a publish via SatelliteLink::handleMsgPeerNodeList
   // calling onPeerNodeList → MqttPublisher::publishPeerNodes).
   if (m_mqtt != nullptr)
   {
@@ -3335,7 +3335,7 @@ void Reflector::sendNodeListToAllPeers(void)
 
 
 void Reflector::onPeerNodeList(const std::string& peer_id,
-    const std::vector<MsgTrunkNodeList::NodeEntry>& nodes)
+    const std::vector<MsgPeerNodeList::NodeEntry>& nodes)
 {
   if (m_mqtt != nullptr)
   {
@@ -4374,26 +4374,26 @@ void Reflector::twinPendingFrameReceived(Async::FramedTcpConnection* con,
     return;
   }
 
-  if (header.type() != MsgTrunkHello::TYPE)
+  if (header.type() != MsgPeerHello::TYPE)
   {
-    geulog::warn("twin", "TWIN inbound: expected MsgTrunkHello, got type=",
+    geulog::warn("twin", "TWIN inbound: expected MsgPeerHello, got type=",
               header.type());
     rejectPending();
     return;
   }
 
-  MsgTrunkHello msg;
+  MsgPeerHello msg;
   if (!msg.unpack(ss))
   {
-    geulog::error("twin", "TWIN inbound: failed to unpack MsgTrunkHello");
+    geulog::error("twin", "TWIN inbound: failed to unpack MsgPeerHello");
     rejectPending();
     return;
   }
 
-  if (msg.role() != MsgTrunkHello::ROLE_TWIN)
+  if (msg.role() != MsgPeerHello::ROLE_TWIN)
   {
     geulog::error("twin", "TWIN inbound: peer sent role=", int(msg.role()),
-              ", expected ROLE_TWIN (", int(MsgTrunkHello::ROLE_TWIN),
+              ", expected ROLE_TWIN (", int(MsgPeerHello::ROLE_TWIN),
               ")");
     rejectPending();
     return;
