@@ -48,6 +48,14 @@ class SatelliteClient : public sigc::trackable
     void sendNodeList(
         const std::vector<MsgPeerNodeList::NodeEntry>& nodes);
 
+    void sendClientConnected(const std::string& callsign, uint32_t tg,
+                             const std::string& ip);
+    void sendClientDisconnected(const std::string& callsign);
+    void sendClientRx(const std::string& callsign,
+                      const std::string& rx_json);
+    void sendClientStatus(const std::string& callsign,
+                          const std::string& status_json);
+
     // Read-only access to the parent's combined-view roster, surfaced
     // by Reflector::statusJson under /status.parent.nodes.
     const std::vector<MsgPeerNodeList::NodeEntry>& parentNodes(void) const
@@ -96,6 +104,10 @@ class SatelliteClient : public sigc::trackable
     void handleMsgPeerFlush(std::istream& is);
     void handleMsgPeerHeartbeat(void);
     void handleMsgPeerNodeList(std::istream& is);
+    void handleMsgPeerClientConnected(std::istream& is);
+    void handleMsgPeerClientDisconnected(std::istream& is);
+    void handleMsgPeerClientRx(std::istream& is);
+    void handleMsgPeerClientStatus(std::istream& is);
     void sendMsg(const ReflectorMsg& msg);
     void sendFilter(void);
     void heartbeatTick(Async::Timer* t);
