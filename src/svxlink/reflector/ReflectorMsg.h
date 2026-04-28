@@ -1957,6 +1957,106 @@ class MsgPeerFilter : public ReflectorMsgBase<122>
 
 
 /**
+@brief Per-client liveness delta — connected (geureflector extension, type 125)
+
+Sent over satellite and twin links when a local client connects, so the
+receiving reflector can emit a peer/<peer_id>/client/<callsign>/connected
+MQTT event for live dashboard updates without waiting for the next
+MsgPeerNodeList snapshot.
+*/
+class MsgPeerClientConnected : public ReflectorMsgBase<125>
+{
+  public:
+    MsgPeerClientConnected(void) : m_tg(0) {}
+    MsgPeerClientConnected(const std::string& callsign, uint32_t tg,
+                           const std::string& ip)
+      : m_callsign(callsign), m_tg(tg), m_ip(ip) {}
+
+    const std::string& callsign(void) const { return m_callsign; }
+    uint32_t           tg(void)       const { return m_tg; }
+    const std::string& ip(void)       const { return m_ip; }
+
+    ASYNC_MSG_MEMBERS(m_callsign, m_tg, m_ip)
+
+  private:
+    std::string m_callsign;
+    uint32_t    m_tg;
+    std::string m_ip;
+}; /* MsgPeerClientConnected */
+
+
+/**
+@brief Per-client liveness delta — disconnected (type 126)
+*/
+class MsgPeerClientDisconnected : public ReflectorMsgBase<126>
+{
+  public:
+    MsgPeerClientDisconnected(void) {}
+    explicit MsgPeerClientDisconnected(const std::string& callsign)
+      : m_callsign(callsign) {}
+
+    const std::string& callsign(void) const { return m_callsign; }
+
+    ASYNC_MSG_MEMBERS(m_callsign)
+
+  private:
+    std::string m_callsign;
+}; /* MsgPeerClientDisconnected */
+
+
+/**
+@brief Per-client rx-status update (type 127)
+
+Carries an opaque rx status JSON blob (string-serialized — same pattern
+as MsgPeerNodeList::m_status_blobs, with a 64 KiB receiver-side parse
+cap). Sender-side debounced at 500 ms per callsign in
+Reflector::fanoutClientRx.
+*/
+class MsgPeerClientRx : public ReflectorMsgBase<127>
+{
+  public:
+    MsgPeerClientRx(void) {}
+    MsgPeerClientRx(const std::string& callsign,
+                    const std::string& rx_json)
+      : m_callsign(callsign), m_rx_json(rx_json) {}
+
+    const std::string& callsign(void) const { return m_callsign; }
+    const std::string& rxJson(void)   const { return m_rx_json; }
+
+    ASYNC_MSG_MEMBERS(m_callsign, m_rx_json)
+
+  private:
+    std::string m_callsign;
+    std::string m_rx_json;
+}; /* MsgPeerClientRx */
+
+
+/**
+@brief Per-client status update (type 128)
+
+Carries the rich client status JSON blob (location, QTH, etc.) as a
+string-serialized payload. Receiver-side parse cap 64 KiB.
+*/
+class MsgPeerClientStatus : public ReflectorMsgBase<128>
+{
+  public:
+    MsgPeerClientStatus(void) {}
+    MsgPeerClientStatus(const std::string& callsign,
+                        const std::string& status_json)
+      : m_callsign(callsign), m_status_json(status_json) {}
+
+    const std::string& callsign(void)   const { return m_callsign; }
+    const std::string& statusJson(void) const { return m_status_json; }
+
+    ASYNC_MSG_MEMBERS(m_callsign, m_status_json)
+
+  private:
+    std::string m_callsign;
+    std::string m_status_json;
+}; /* MsgPeerClientStatus */
+
+
+/**
  * @brief   Twin-link message: mirror an external peer's talker-start
  *
  * Sent over the [TWIN] link when this reflector receives a
