@@ -62,6 +62,15 @@ class SatelliteLink : public sigc::trackable
     void sendNodeList(
         const std::vector<MsgPeerNodeList::NodeEntry>& nodes);
 
+    // Per-client liveness events → send down to satellite.
+    void sendClientConnected(const std::string& callsign, uint32_t tg,
+                             const std::string& ip);
+    void sendClientDisconnected(const std::string& callsign);
+    void sendClientRx(const std::string& callsign,
+                      const std::string& rx_json);
+    void sendClientStatus(const std::string& callsign,
+                          const std::string& status_json);
+
     // Read-only access to the satellite-supplied roster (this satellite's
     // local clients), already sanitised and stamped with sat_id =
     // satelliteId(). Used by Reflector to merge into the parent's
@@ -102,6 +111,10 @@ class SatelliteLink : public sigc::trackable
     void handleMsgPeerHeartbeat(void);
     void handleMsgPeerFilter(std::istream& is);
     void handleMsgPeerNodeList(std::istream& is);
+    void handleMsgPeerClientConnected(std::istream& is);
+    void handleMsgPeerClientDisconnected(std::istream& is);
+    void handleMsgPeerClientRx(std::istream& is);
+    void handleMsgPeerClientStatus(std::istream& is);
     bool filterPassesTg(uint32_t tg) const;
     void sendMsg(const ReflectorMsg& msg);
     void heartbeatTick(Async::Timer* t);

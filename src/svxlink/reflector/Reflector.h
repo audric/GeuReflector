@@ -265,6 +265,7 @@ class Reflector : public sigc::trackable
                                               uint32_t tg);
 
     RedisStore* redisStore(void) const { return m_redis; }
+    MqttPublisher* mqtt(void) const { return m_mqtt; }
 
     // Callbacks for SatelliteLink to forward satellite events to trunk peers
     void forwardSatelliteAudioToTrunks(uint32_t tg,
