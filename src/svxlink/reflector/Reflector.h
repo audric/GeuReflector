@@ -286,7 +286,6 @@ class Reflector : public sigc::trackable
     // Per-client liveness fanout to satellite and twin peers. Iterates
     // m_satellite_con_map, m_satellite_client, and m_twin_link. Trunk
     // peers are intentionally NOT fanned out (deferred per design spec).
-    // Bodies are stubs in this commit and become real iteration in Task 8.
     void fanoutClientConnected(const std::string& callsign, uint32_t tg,
                                const std::string& ip);
     void fanoutClientDisconnected(const std::string& callsign);
