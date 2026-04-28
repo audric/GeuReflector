@@ -1023,7 +1023,8 @@ void TrunkLink::handleMsgPeerTalkerStart(std::istream& is)
 
   m_peer_active_tgs.insert(local_tg);
   m_peer_interested_tgs[local_tg] = std::time(nullptr);
-  TGHandler::instance()->setTrunkTalkerForTG(local_tg, msg.callsign());
+  TGHandler::instance()->setTrunkTalkerForTGViaPeer(local_tg, msg.callsign(),
+                                                    peerId());
   m_reflector->notifyExternalTrunkTalkerStart(local_tg, m_section, msg.callsign());
 
   // Owner-relay: if we own this TG, propagate the talker-start to every

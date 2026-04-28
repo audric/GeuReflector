@@ -210,9 +210,11 @@ class TGHandler : public sigc::trackable
     sigc::signal<void(uint32_t)> requestAutoQsy;
 
     // Fired when a trunk peer claims or releases a TG.
-    // Args: tg, old_callsign ("" = none), new_callsign ("" = none)
+    // Args: tg, old_callsign ("" = none), new_callsign ("" = none),
+    //       peer_id (the peer that originated the event, "" if unknown)
     sigc::signal<void(uint32_t,
-      std::string, std::string)> trunkTalkerUpdated;
+      std::string, std::string,
+      std::string)> trunkTalkerUpdated;
 
   private:
     static const time_t TALKER_AUDIO_TIMEOUT = 3; // Max three seconds gap

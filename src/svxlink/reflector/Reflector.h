@@ -430,7 +430,7 @@ class Reflector : public sigc::trackable
     void ctrlPtyDataReceived(const void *buf, size_t count);
     void cfgUpdated(const std::string& section, const std::string& tag);
     void onTrunkTalkerUpdated(uint32_t tg, std::string old_cs,
-                              std::string new_cs);
+                              std::string new_cs, std::string peer_id);
     void onRedisConfigChanged(std::string scope);
     void reloadClusterTgs(void);
     bool addTrunkLink(const std::string& section);

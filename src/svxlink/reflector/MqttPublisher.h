@@ -23,9 +23,15 @@ class MqttPublisher
     bool initialize(void);
     void shutdown(void);
 
-    // Talker events (local clients and trunk peers)
+    // Talker events (local clients)
     void onTalkerStart(uint32_t tg, const std::string& callsign, bool is_trunk);
     void onTalkerStop(uint32_t tg, const std::string& callsign, bool is_trunk);
+
+    // Talker events (peer/trunk side) — published to peer/<peer_id>/talker/<tg>/start|stop
+    void onPeerTalkerStart(const std::string& peer_id, uint32_t tg,
+                           const std::string& callsign);
+    void onPeerTalkerStop(const std::string& peer_id, uint32_t tg,
+                          const std::string& callsign);
 
     // Client events
     void onClientConnected(const std::string& callsign, uint32_t tg,
@@ -109,6 +115,8 @@ class MqttPublisher
     void shutdown(void) {}
     void onTalkerStart(uint32_t, const std::string&, bool) {}
     void onTalkerStop(uint32_t, const std::string&, bool) {}
+    void onPeerTalkerStart(const std::string&, uint32_t, const std::string&) {}
+    void onPeerTalkerStop(const std::string&, uint32_t, const std::string&) {}
     void onClientConnected(const std::string&, uint32_t,
                            const std::string&) {}
     void onClientDisconnected(const std::string&) {}

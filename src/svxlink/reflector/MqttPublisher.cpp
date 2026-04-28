@@ -262,6 +262,34 @@ void MqttPublisher::onTalkerStop(uint32_t tg, const std::string& callsign,
 }
 
 
+void MqttPublisher::onPeerTalkerStart(const std::string& peer_id,
+                                      uint32_t tg,
+                                      const std::string& callsign)
+{
+  Json::Value payload;
+  payload["callsign"] = callsign;
+  payload["tg"] = static_cast<Json::UInt>(tg);
+  Json::StreamWriterBuilder wb;
+  wb["indentation"] = "";
+  string topic = "peer/" + peer_id + "/talker/" + to_string(tg) + "/start";
+  publish(topic, Json::writeString(wb, payload));
+}
+
+
+void MqttPublisher::onPeerTalkerStop(const std::string& peer_id,
+                                     uint32_t tg,
+                                     const std::string& callsign)
+{
+  Json::Value payload;
+  payload["callsign"] = callsign;
+  payload["tg"] = static_cast<Json::UInt>(tg);
+  Json::StreamWriterBuilder wb;
+  wb["indentation"] = "";
+  string topic = "peer/" + peer_id + "/talker/" + to_string(tg) + "/stop";
+  publish(topic, Json::writeString(wb, payload));
+}
+
+
 void MqttPublisher::onClientConnected(const std::string& callsign,
                                       uint32_t tg, const std::string& ip)
 {

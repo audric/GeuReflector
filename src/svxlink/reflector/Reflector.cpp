@@ -2808,7 +2808,8 @@ void Reflector::forwardFlushToSatellitesExcept(SatelliteLink* except,
 
 
 void Reflector::onTrunkTalkerUpdated(uint32_t tg,
-                                     std::string old_cs, std::string new_cs)
+                                     std::string old_cs, std::string new_cs,
+                                     std::string peer_id)
 {
   auto ge_v2_client_filter =
       ReflectorClient::ProtoVerLargerOrEqualFilter(ProtoVer(2, 0));
@@ -2826,7 +2827,7 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
         ReflectorClient::TgFilter(tg));
     if (m_mqtt != nullptr)
     {
-      m_mqtt->onTalkerStop(tg, old_cs, true);
+      m_mqtt->onPeerTalkerStop(peer_id, tg, old_cs);
     }
     if (m_redis != nullptr)
     {
@@ -2844,7 +2845,7 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
             ReflectorClient::TgMonitorFilter(tg))));
     if (m_mqtt != nullptr)
     {
-      m_mqtt->onTalkerStart(tg, new_cs, true);
+      m_mqtt->onPeerTalkerStart(peer_id, tg, new_cs);
     }
     if (m_redis != nullptr)
     {

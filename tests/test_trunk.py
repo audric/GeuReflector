@@ -1484,12 +1484,14 @@ class TestTrunkIntegration(unittest.TestCase):
             client_b.close()
 
     def test_18_mqtt_talker_event(self):
-        """MQTT publishes talker start/stop events."""
+        """MQTT publishes talker start/stop events (peer-namespaced for trunk talkers)."""
         received = []
         connected_event = threading.Event()
 
         def on_connect(client, userdata, flags, rc):
+            # Subscribe to both local talker topics and peer-namespaced talker topics
             client.subscribe("svxreflector/a/talker/#")
+            client.subscribe("svxreflector/a/peer/#")
             connected_event.set()
 
         def on_message(client, userdata, msg):
@@ -1506,32 +1508,48 @@ class TestTrunkIntegration(unittest.TestCase):
                             "MQTT subscribe timed out")
             time.sleep(0.5)  # Let subscription settle
 
-            # Connect trunk peer and send talker start
+            # Connect trunk peer and send talker start.
+            # The peer sends trunk_id="TRUNK_TEST" in MsgPeerHello, so the
+            # reflector uses "TRUNK_TEST" as the peer_id for namespacing.
             peer = TrunkPeer()
             peer.connect(*_trunk("a"))
             peer.handshake()
 
+            peer_id = "TRUNK_TEST"
             tg = 1220  # Owned by reflector-a (prefix 122)
             peer.send_talker_start(tg, "N0MQTT")
             time.sleep(2)  # Allow propagation
 
-            # Verify MQTT talker start event
+            # Trunk talker events now go to peer/<peer_id>/talker/<tg>/start
+            expected_start_topic = (
+                f"svxreflector/a/peer/{peer_id}/talker/{tg}/start"
+            )
             start_events = [r for r in received
-                            if r[0] == f"svxreflector/a/talker/{tg}/start"]
+                            if r[0] == expected_start_topic]
             self.assertTrue(len(start_events) > 0,
-                            f"Expected MQTT talker start event on TG {tg}, "
+                            f"Expected MQTT talker start at '{expected_start_topic}', "
                             f"got topics: {[r[0] for r in received]}")
             self.assertEqual(start_events[0][1]["callsign"], "N0MQTT")
-            self.assertEqual(start_events[0][1]["source"], "trunk")
+
+            # Flat talker/<tg>/start should NOT be published for trunk talkers
+            flat_start_events = [r for r in received
+                                 if r[0] == f"svxreflector/a/talker/{tg}/start"]
+            self.assertEqual(len(flat_start_events), 0,
+                             "Flat talker/<tg>/start must not be published for "
+                             "trunk talkers (should use peer-namespaced topic)")
 
             # Send talker stop and verify
             peer.send_talker_stop(tg)
             time.sleep(2)
 
+            expected_stop_topic = (
+                f"svxreflector/a/peer/{peer_id}/talker/{tg}/stop"
+            )
             stop_events = [r for r in received
-                           if r[0] == f"svxreflector/a/talker/{tg}/stop"]
+                           if r[0] == expected_stop_topic]
             self.assertTrue(len(stop_events) > 0,
-                            f"Expected MQTT talker stop event on TG {tg}")
+                            f"Expected MQTT talker stop at '{expected_stop_topic}', "
+                            f"got topics: {[r[0] for r in received]}")
 
             peer.close()
         finally:

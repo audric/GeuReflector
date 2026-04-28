@@ -278,6 +278,13 @@ void TGHandler::setTrunkTalkerForTG(uint32_t tg, const std::string& callsign)
   {
     return;
   }
+  // Capture peer_id before any erase so stop events can carry it.
+  std::string peer_id;
+  auto pid_it = m_trunk_talker_peer_ids.find(tg);
+  if (pid_it != m_trunk_talker_peer_ids.end())
+  {
+    peer_id = pid_it->second;
+  }
   if (callsign.empty())
   {
     m_trunk_talkers.erase(tg);
@@ -294,20 +301,24 @@ void TGHandler::setTrunkTalkerForTG(uint32_t tg, const std::string& callsign)
     }
     m_trunk_talkers[tg] = callsign;
   }
-  trunkTalkerUpdated(tg, old, callsign);
+  trunkTalkerUpdated(tg, old, callsign, peer_id);
 } /* TGHandler::setTrunkTalkerForTG */
 
 
 void TGHandler::clearTrunkTalkerForTG(uint32_t tg)
 {
-  m_trunk_talker_peer_ids.erase(tg);
+  // Call setTrunkTalkerForTG first so it can capture peer_id from
+  // m_trunk_talker_peer_ids before we erase it (the signal handler
+  // needs it to publish peer-namespaced MQTT topics).
   setTrunkTalkerForTG(tg, "");
+  m_trunk_talker_peer_ids.erase(tg);
 } /* TGHandler::clearTrunkTalkerForTG */
 
 
 void TGHandler::clearAllTrunkTalkers(void)
 {
-  m_trunk_talker_peer_ids.clear();
+  // Collect keys first, then clear via clearTrunkTalkerForTG so the signal
+  // fires with the peer_id still present in m_trunk_talker_peer_ids.
   std::vector<uint32_t> keys;
   for (auto& kv : m_trunk_talkers)
   {
@@ -315,7 +326,7 @@ void TGHandler::clearAllTrunkTalkers(void)
   }
   for (uint32_t tg : keys)
   {
-    setTrunkTalkerForTG(tg, "");
+    clearTrunkTalkerForTG(tg);
   }
 } /* TGHandler::clearAllTrunkTalkers */
 
@@ -324,33 +335,35 @@ void TGHandler::setTrunkTalkerForTGViaPeer(uint32_t tg,
                                            const std::string& callsign,
                                            const std::string& peer_id)
 {
+  if (!callsign.empty())
+  {
+    // Store peer_id BEFORE firing the signal so the signal handler can read it.
+    m_trunk_talker_peer_ids[tg] = peer_id;
+  }
   setTrunkTalkerForTG(tg, callsign);
   if (callsign.empty())
   {
+    // Erase AFTER the signal has fired (setTrunkTalkerForTG captures it first).
     m_trunk_talker_peer_ids.erase(tg);
-  }
-  else
-  {
-    m_trunk_talker_peer_ids[tg] = peer_id;
   }
 } /* TGHandler::setTrunkTalkerForTGViaPeer */
 
 
 void TGHandler::clearTrunkTalkersForPeer(const std::string& peer_id)
 {
-  for (auto it = m_trunk_talker_peer_ids.begin();
-       it != m_trunk_talker_peer_ids.end(); )
+  // Collect matching TGs first so we can fire the signal while peer_id is
+  // still in m_trunk_talker_peer_ids (clearTrunkTalkerForTG erases afterwards).
+  std::vector<uint32_t> tgs_to_clear;
+  for (auto& kv : m_trunk_talker_peer_ids)
   {
-    if (it->second == peer_id)
+    if (kv.second == peer_id)
     {
-      uint32_t tg = it->first;
-      it = m_trunk_talker_peer_ids.erase(it);
-      setTrunkTalkerForTG(tg, "");
+      tgs_to_clear.push_back(kv.first);
     }
-    else
-    {
-      ++it;
-    }
+  }
+  for (uint32_t tg : tgs_to_clear)
+  {
+    clearTrunkTalkerForTG(tg);
   }
 } /* TGHandler::clearTrunkTalkersForPeer */
 
