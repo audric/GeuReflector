@@ -283,6 +283,11 @@ class Reflector : public sigc::trackable
     // to Redis. Cheap no-op if Redis is not configured.
     void publishClientStatus(ReflectorClient* client);
 
+    // Look up a local client's current talk group by callsign. Returns 0
+    // if the client is unknown. Used by fanoutClient{Disconnected,Rx,Status}
+    // to apply per-peer TG filter for events that don't carry an inline TG.
+    uint32_t currentClientTg(const std::string& callsign) const;
+
     // Per-client liveness fanout to satellite and twin peers. Iterates
     // m_satellite_con_map, m_satellite_client, and m_twin_link. Trunk
     // peers are intentionally NOT fanned out (deferred per design spec).
