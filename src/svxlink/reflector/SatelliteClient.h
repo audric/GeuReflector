@@ -10,9 +10,9 @@
 #include <AsyncTimer.h>
 
 #include "TgFilter.h"
+#include "ReflectorMsg.h"
 
 class Reflector;
-class ReflectorMsg;
 
 /**
 @brief  Satellite-side outbound connection to a parent reflector
@@ -43,6 +43,19 @@ class SatelliteClient : public sigc::trackable
     void onLocalAudio(uint32_t tg, const std::vector<uint8_t>& audio);
     void onLocalFlush(uint32_t tg);
 
+    // Send our local roster up to the parent. Caller has already filtered
+    // to "this satellite's local clients" (sat_id empty on the wire).
+    void sendNodeList(
+        const std::vector<MsgTrunkNodeList::NodeEntry>& nodes);
+
+    // Read-only access to the parent's combined-view roster, surfaced
+    // by Reflector::statusJson under /status.parent.nodes.
+    const std::vector<MsgTrunkNodeList::NodeEntry>& parentNodes(void) const
+    {
+      return m_parent_nodes;
+    }
+    const std::string& parentId(void) const { return m_parent_id; }
+
   private:
     static const unsigned HEARTBEAT_TX_CNT_RESET = 10;
     static const unsigned HEARTBEAT_RX_CNT_RESET = 15;
@@ -64,6 +77,12 @@ class SatelliteClient : public sigc::trackable
     unsigned        m_hb_rx_cnt;
     TgFilter        m_filter;       // optional TG filter (SATELLITE_FILTER)
     std::string     m_filter_str;   // raw config string for MsgTrunkFilter
+    // Parent's id from MsgTrunkHello (used as the peer_id key for Redis
+    // tombstone bookkeeping when storing the parent-supplied roster).
+    std::string     m_parent_id;
+    // Parent's combined roster (parent-local + every sibling satellite,
+    // minus our own contribution). Surfaced via /status.parent.nodes.
+    std::vector<MsgTrunkNodeList::NodeEntry> m_parent_nodes;
 
     void onConnected(void);
     void onDisconnected(Async::TcpConnection* con,
@@ -76,6 +95,7 @@ class SatelliteClient : public sigc::trackable
     void handleMsgTrunkAudio(std::istream& is);
     void handleMsgTrunkFlush(std::istream& is);
     void handleMsgTrunkHeartbeat(void);
+    void handleMsgTrunkNodeList(std::istream& is);
     void sendMsg(const ReflectorMsg& msg);
     void sendFilter(void);
     void heartbeatTick(Async::Timer* t);

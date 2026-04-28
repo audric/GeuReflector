@@ -178,39 +178,48 @@ def build_trunk_filter(filter_str: str) -> bytes:
 def build_node_list(nodes) -> bytes:
     """Build a MsgTrunkNodeList frame.
 
-    `nodes` is an iterable of (callsign, tg[, lat, lon, qth_name]) tuples.
-    Unspecified lat/lon default to 0.0 and qth_name to "".
-    Matches the on-wire layout: vec<string> callsigns, vec<u32> tgs,
-    vec<float> lat, vec<float> lon, vec<string> qth_names — each vector
+    `nodes` is an iterable of (callsign, tg[, lat, lon, qth_name[, status_blob, sat_id]])
+    tuples. Unspecified fields default to 0.0/"". Wire layout: 7 vectors
+    (callsigns, tgs, lats, lons, qth_names, status_blobs, sat_ids), each
     prefixed with a u16 element count.
     """
     norm = []
     for n in nodes:
         if len(n) == 2:
             cs, tg = n
-            lat, lon, qth = 0.0, 0.0, ""
+            lat, lon, qth, blob, sat_id = 0.0, 0.0, "", "", ""
         elif len(n) == 5:
             cs, tg, lat, lon, qth = n
+            blob, sat_id = "", ""
+        elif len(n) == 7:
+            cs, tg, lat, lon, qth, blob, sat_id = n
         else:
-            raise ValueError("node tuple must be (cs, tg) or (cs, tg, lat, lon, qth)")
-        norm.append((cs, tg, lat, lon, qth))
+            raise ValueError("node tuple must be (cs,tg), (cs,tg,lat,lon,qth) "
+                             "or (cs,tg,lat,lon,qth,blob,sat_id)")
+        norm.append((cs, tg, lat, lon, qth, blob, sat_id))
 
     payload = struct.pack("!H", MSG_TRUNK_NODE_LIST)
     payload += struct.pack("!H", len(norm))
-    for cs, _tg, _lat, _lon, _qth in norm:
+    for cs, *_ in norm:
         payload += pack_string(cs)
     payload += struct.pack("!H", len(norm))
-    for _cs, tg, _lat, _lon, _qth in norm:
+    for _cs, tg, *_ in norm:
         payload += struct.pack("!I", tg)
     payload += struct.pack("!H", len(norm))
-    for _cs, _tg, lat, _lon, _qth in norm:
+    for _cs, _tg, lat, *_ in norm:
         payload += struct.pack("!f", lat)
     payload += struct.pack("!H", len(norm))
-    for _cs, _tg, _lat, lon, _qth in norm:
+    for _cs, _tg, _lat, lon, *_ in norm:
         payload += struct.pack("!f", lon)
     payload += struct.pack("!H", len(norm))
-    for _cs, _tg, _lat, _lon, qth in norm:
+    for _cs, _tg, _lat, _lon, qth, *_ in norm:
         payload += pack_string(qth)
+    payload += struct.pack("!H", len(norm))
+    for *_, blob, _sat_id in norm:
+        payload += pack_string(blob)
+    payload += struct.pack("!H", len(norm))
+    for *_, sat_id in norm:
+        payload += pack_string(sat_id)
     return payload
 
 
@@ -251,10 +260,9 @@ def parse_msg(data: bytes):
     elif msg_type == MSG_TRUNK_HEARTBEAT:
         return msg_type, {}
     elif msg_type == MSG_TRUNK_NODE_LIST:
-        # vec<string> callsigns, vec<u32> tgs, vec<float> lat, vec<float> lon,
-        # vec<string> qth_names. Each vector is u32-prefixed length.
-        # Vector length prefixes are u16 (MsgPacker<std::vector> in
-        # AsyncMsg.h uses uint16_t for element counts).
+        # 7 u16-prefixed vectors: callsigns, tgs, lats, lons, qth_names,
+        # status_blobs, sat_ids. (MsgPacker<std::vector> in AsyncMsg.h
+        # uses uint16_t for element counts.)
         def read_vec_str(off):
             n = struct.unpack_from("!H", data, off)[0]; off += 2
             out = []
@@ -277,7 +285,18 @@ def parse_msg(data: bytes):
 
         callsigns, off = read_vec_str(off)
         tgs,       off = read_vec_u32(off)
-        return msg_type, {"callsigns": callsigns, "tgs": tgs}
+        # Best-effort decode of trailing vectors. Older builds may emit
+        # fewer than 7 vectors; tolerate truncation.
+        try:
+            _lats,         off = read_vec_f32(off)
+            _lons,         off = read_vec_f32(off)
+            _qth_names,    off = read_vec_str(off)
+            _status_blobs, off = read_vec_str(off)
+            sat_ids,       off = read_vec_str(off)
+        except struct.error:
+            sat_ids = []
+        return msg_type, {"callsigns": callsigns, "tgs": tgs,
+                          "sat_ids": sat_ids}
     else:
         return msg_type, {"raw": data[off:]}
 
@@ -2233,6 +2252,206 @@ class TestTrunkIntegration(unittest.TestCase):
         finally:
             for c in clients.values():
                 c.close()
+
+    # ------------------------------------------------------------------
+    # Test 33: Satellite-attached client visible on parent /status
+    # ------------------------------------------------------------------
+    def test_33_satellite_attached_client_on_parent_status(self):
+        """A V2 client attached to the satellite reflector (sat) shows up
+        in the parent's /status under satellites[<sat_id>].nodes.
+
+        Verifies the sat → parent MsgTrunkNodeList carriage and the
+        per-satellite roster surfacing in Reflector::refreshStatus.
+        """
+        sat_id = T.SATELLITE_NODE["id"]
+        parent = T.sat_node_parent()
+        callsign = "N0THRD"  # third test client to avoid colliding with others
+
+        client = ClientPeer()
+        try:
+            client.connect(HOST, T.sat_node_mapped_client_port())
+            client.authenticate(callsign=callsign,
+                                password=CLIENT_PASSWORD)
+
+            def has_node():
+                status = get_status(*_http(parent))
+                sat = status.get("satellites", {}).get(sat_id, {})
+                for n in sat.get("nodes", []):
+                    if n.get("callsign") == callsign:
+                        return True
+                return False
+
+            wait_until(has_node, timeout=8.0,
+                       msg=f"satellite-attached client {callsign} not "
+                           f"visible under /status.satellites.{sat_id}.nodes "
+                           f"on parent {parent}")
+        finally:
+            client.close()
+
+    # ------------------------------------------------------------------
+    # Test 34: Satellite-attached client visible on a far-trunk peer
+    # ------------------------------------------------------------------
+    def test_34_satellite_attached_client_on_trunk_peer(self):
+        """A V2 client attached to the satellite reflector shows up on a
+        far-trunk peer's /status.trunks[<section>].nodes with the sat_id
+        field set, proving the parent re-merges sat-supplied entries
+        into its outbound MsgTrunkNodeList with attribution.
+        """
+        sat_id = T.SATELLITE_NODE["id"]
+        parent = T.sat_node_parent()
+        callsign = "N0THRD"
+
+        # Pick any reflector that trunks to the parent
+        peer = next(n for n in REFLECTOR_NAMES if n != parent)
+        section = T.trunk_section_name(peer, parent)
+
+        client = ClientPeer()
+        try:
+            client.connect(HOST, T.sat_node_mapped_client_port())
+            client.authenticate(callsign=callsign,
+                                password=CLIENT_PASSWORD)
+
+            def has_attributed_node():
+                status = get_status(*_http(peer))
+                trunk = status.get("trunks", {}).get(section, {})
+                for n in trunk.get("nodes", []):
+                    if n.get("callsign") == callsign and \
+                       n.get("sat_id") == sat_id:
+                        return True
+                return False
+
+            wait_until(has_attributed_node, timeout=10.0,
+                       msg=f"satellite client {callsign} not visible with "
+                           f"sat_id={sat_id} under /status.trunks.{section} "
+                           f".nodes on far-trunk peer {peer}")
+        finally:
+            client.close()
+
+    # ------------------------------------------------------------------
+    # Test 35: Parent-local clients visible on the satellite's /status
+    # ------------------------------------------------------------------
+    def test_35_parent_local_visible_on_satellite_status(self):
+        """A V2 client connected to the parent reflector shows up on the
+        satellite's /status under satellite.parent_nodes — proving the
+        parent → satellite MsgTrunkNodeList path delivers the parent's
+        combined view down to subordinate sats.
+        """
+        parent = T.sat_node_parent()
+        sat_name = T.SATELLITE_NODE["name"]
+        callsign = CLIENT_CALLSIGN  # standard test client
+
+        client = ClientPeer()
+        try:
+            client.connect(HOST, T.mapped_client_port(parent))
+            client.authenticate(callsign=callsign,
+                                password=CLIENT_PASSWORD)
+
+            def has_parent_node():
+                status = get_status(HOST, T.sat_node_mapped_http_port())
+                sat_blob = status.get("satellite", {})
+                for n in sat_blob.get("parent_nodes", []):
+                    if n.get("callsign") == callsign:
+                        # parent-local entries must NOT carry a sat_id;
+                        # absence (or empty) means "on the parent itself"
+                        return n.get("sat_id", "") == ""
+                return False
+
+            wait_until(has_parent_node, timeout=8.0,
+                       msg=f"parent-local client {callsign} not visible "
+                           f"under /status.satellite.parent_nodes on "
+                           f"satellite {sat_name}")
+        finally:
+            client.close()
+
+    # ------------------------------------------------------------------
+    # Test 36: Multi-satellite cross-visibility through the parent
+    # ------------------------------------------------------------------
+    def test_36_multi_sat_cross_visibility(self):
+        """Two fake satellites attached to the same parent each see the
+        other's roster contribution, with sat_id stamping that identifies
+        the originating satellite. Self-echo guard: neither satellite
+        ever sees its own contribution echoed back.
+
+        Exercises:
+          - parent stamps incoming sat-supplied entries with the SatelliteLink's
+            satelliteId() on ingest
+          - sendNodeListToAllPeers merges every satellite's roster into
+            the outbound list to other satellites and trunks
+          - per-recipient skip rule: combined view minus the recipient's
+            own contribution
+        """
+        parent = T.sat_node_parent()
+        sat_a = SatellitePeer()
+        sat_b = SatellitePeer()
+
+        SAT_A_ID  = "SAT_FAKE_A"
+        SAT_B_ID  = "SAT_FAKE_B"
+        A_CS, A_TG = "S1CLIENT", 12200
+        B_CS, B_TG = "S2CLIENT", 12201
+
+        def find_entry(fields, callsign):
+            """Return the sat_id stamp for `callsign` in this NodeList,
+            or None if the callsign isn't present."""
+            for cs, sat_id in zip(fields["callsigns"], fields["sat_ids"]):
+                if cs == callsign:
+                    return sat_id
+            return None
+
+        def wait_for_entry(peer, target_cs, target_sat_id, forbid_cs,
+                           forbid_sat_id, timeout=8.0):
+            """Drain NodeLists until we see (target_cs, target_sat_id).
+            Fails the test if (forbid_cs, forbid_sat_id) is ever seen
+            (self-echo guard violation)."""
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                try:
+                    msg_type, fields = peer.recv_msg(timeout=1.0)
+                except socket.timeout:
+                    continue
+                if msg_type != MSG_TRUNK_NODE_LIST:
+                    continue
+                forbid_stamp = find_entry(fields, forbid_cs)
+                if forbid_stamp == forbid_sat_id:
+                    self.fail(
+                        f"self-echo violation: callsign {forbid_cs} "
+                        f"appeared with sat_id={forbid_sat_id} on the "
+                        f"recipient that owns it")
+                if find_entry(fields, target_cs) == target_sat_id:
+                    return True
+            return False
+
+        try:
+            sat_a.connect_satellite(name=parent)
+            sat_a.handshake(sat_id=SAT_A_ID, secret=SAT_SECRET)
+            sat_b.connect_satellite(name=parent)
+            sat_b.handshake(sat_id=SAT_B_ID, secret=SAT_SECRET)
+
+            # Drain any node lists already queued from the parent's
+            # bootstrap fanout (debounce + initial scheduleNodeListUpdate
+            # on hello completion).
+            for s in (sat_a, sat_b):
+                s.sock.settimeout(0.5)
+                try:
+                    while True:
+                        recv_frame(s.sock)
+                except (socket.timeout, ConnectionError):
+                    pass
+                s.sock.settimeout(5.0)
+
+            # Both satellites publish their local rosters. Each push
+            # triggers the parent to re-broadcast its combined view.
+            sat_a.send_node_list([(A_CS, A_TG)])
+            sat_b.send_node_list([(B_CS, B_TG)])
+
+            self.assertTrue(
+                wait_for_entry(sat_b, A_CS, SAT_A_ID, B_CS, SAT_B_ID),
+                f"sat_b never received {A_CS} stamped with sat_id={SAT_A_ID}")
+            self.assertTrue(
+                wait_for_entry(sat_a, B_CS, SAT_B_ID, A_CS, SAT_A_ID),
+                f"sat_a never received {B_CS} stamped with sat_id={SAT_B_ID}")
+        finally:
+            sat_a.close()
+            sat_b.close()
 
 
 # ---------------------------------------------------------------------------

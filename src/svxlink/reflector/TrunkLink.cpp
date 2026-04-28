@@ -571,6 +571,7 @@ Json::Value TrunkLink::statusJson(void) const
       entry["lon"] = n.lon;
     }
     if (!n.qth_name.empty()) entry["qth_name"] = n.qth_name;
+    if (!n.sat_id.empty())   entry["sat_id"]   = n.sat_id;
     // Derive isTalker from the live trunk-talker map maintained by
     // MsgTrunkTalkerStart/Stop. Authoritative for partner nodes; the
     // sender's own isTalker is stale by the time it arrives in the
@@ -1837,6 +1838,10 @@ void TrunkLink::handleMsgTrunkNodeList(std::istream& is)
     }
     e.status = n.status;
     sanitizeJsonStrings(e.status);
+    // Recipient-relative sat_id from the peer. Pass through as-is after
+    // bounded sanitisation: empty = "on the peer itself", non-empty =
+    // "on a satellite attached to the peer".
+    e.sat_id = sanitizeIdent(n.sat_id, 64);
     sanitized.push_back(std::move(e));
   }
   if (dropped > 0)

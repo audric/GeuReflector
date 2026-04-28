@@ -1,3 +1,4 @@
+#include <cmath>
 #include <iostream>
 #include <sstream>
 #include <random>
@@ -15,6 +16,75 @@
 using namespace std;
 using namespace Async;
 using namespace sigc;
+
+namespace {
+
+std::string sanitizeIdent(const std::string& in, size_t max_len)
+{
+  std::string out;
+  out.reserve(std::min(in.size(), max_len));
+  for (char c : in)
+  {
+    unsigned char u = static_cast<unsigned char>(c);
+    if (u < 0x20 || u == 0x7f) continue;
+    if (c == ':') continue;
+    out += c;
+    if (out.size() >= max_len) break;
+  }
+  return out;
+}
+
+std::string sanitizeText(const std::string& in, size_t max_bytes)
+{
+  std::string out;
+  out.reserve(std::min(in.size(), max_bytes));
+  for (char c : in)
+  {
+    unsigned char u = static_cast<unsigned char>(c);
+    if (u < 0x20 || u == 0x7f) continue;
+    out += c;
+    if (out.size() >= max_bytes) break;
+  }
+  return out;
+}
+
+void sanitizeJsonStrings(Json::Value& v, unsigned depth = 0)
+{
+  static constexpr unsigned MAX_DEPTH       = 8;
+  static constexpr Json::ArrayIndex MAX_LEN = 256;
+  static constexpr size_t MAX_STR_BYTES     = 1024;
+  if (depth >= MAX_DEPTH) { v = Json::Value(); return; }
+  if (v.isString())
+  {
+    v = sanitizeText(v.asString(), MAX_STR_BYTES);
+  }
+  else if (v.isArray())
+  {
+    if (v.size() > MAX_LEN) v.resize(MAX_LEN);
+    for (Json::ArrayIndex i = 0; i < v.size(); ++i)
+    {
+      sanitizeJsonStrings(v[i], depth + 1);
+    }
+  }
+  else if (v.isObject())
+  {
+    auto names = v.getMemberNames();
+    if (names.size() > MAX_LEN)
+    {
+      for (size_t i = MAX_LEN; i < names.size(); ++i)
+      {
+        v.removeMember(names[i]);
+      }
+      names.resize(MAX_LEN);
+    }
+    for (const auto& k : names)
+    {
+      sanitizeJsonStrings(v[k], depth + 1);
+    }
+  }
+}
+
+}  // namespace
 
 
 SatelliteClient::SatelliteClient(Reflector* reflector, Async::Config& cfg)
@@ -143,6 +213,15 @@ void SatelliteClient::onDisconnected(TcpConnection* con,
   m_heartbeat_timer.setEnable(false);
   m_hello_received = false;
   TGHandler::instance()->clearAllTrunkTalkers();
+
+  if (!m_parent_nodes.empty() && !m_parent_id.empty())
+  {
+    // Tombstone-clear Redis live:peer_node:<parent_id>:* and let MQTT
+    // emit an empty list so consumers see the partner roster drop.
+    m_reflector->onPeerNodeList(m_parent_id,
+        std::vector<MsgTrunkNodeList::NodeEntry>{});
+    m_parent_nodes.clear();
+  }
 } /* SatelliteClient::onDisconnected */
 
 
@@ -189,6 +268,9 @@ void SatelliteClient::onFrameReceived(FramedTcpConnection* con,
     case MsgTrunkFlush::TYPE:
       handleMsgTrunkFlush(ss);
       break;
+    case MsgTrunkNodeList::TYPE:
+      handleMsgTrunkNodeList(ss);
+      break;
     default:
       break;
   }
@@ -217,11 +299,17 @@ void SatelliteClient::handleMsgTrunkHello(std::istream& is)
   }
 
   m_hello_received = true;
+  m_parent_id = sanitizeIdent(msg.id(), 64);
   geulog::info("satellite", "Parent authenticated (id='", msg.id(), "')");
 
   // Advertise our TG filter to the parent so it can skip TGs we
   // don't want. The parent applies the filter on its outbound path.
   sendFilter();
+
+  // Trigger the reflector to push our local roster up immediately so the
+  // parent can fan it out (debounced) — otherwise the first node-list
+  // emission only happens on the next client login/TG-change.
+  m_reflector->scheduleNodeListUpdate();
 } /* SatelliteClient::handleMsgTrunkHello */
 
 
@@ -274,6 +362,72 @@ void SatelliteClient::handleMsgTrunkFlush(std::istream& is)
   m_reflector->broadcastUdpMsg(MsgUdpFlushSamples(),
       ReflectorClient::TgFilter(msg.tg()));
 } /* SatelliteClient::handleMsgTrunkFlush */
+
+
+void SatelliteClient::handleMsgTrunkNodeList(std::istream& is)
+{
+  MsgTrunkNodeList msg;
+  if (!msg.unpack(is))
+  {
+    geulog::error("satellite", "Failed to unpack MsgTrunkNodeList");
+    return;
+  }
+
+  std::vector<MsgTrunkNodeList::NodeEntry> sanitized;
+  sanitized.reserve(msg.nodes().size());
+  unsigned dropped = 0;
+  for (const auto& n : msg.nodes())
+  {
+    MsgTrunkNodeList::NodeEntry e;
+    e.callsign = sanitizeIdent(n.callsign, 32);
+    if (e.callsign.empty()) { ++dropped; continue; }
+    e.tg       = n.tg;
+    e.qth_name = sanitizeText(n.qth_name, 64);
+    if (std::isfinite(n.lat) && std::isfinite(n.lon) &&
+        n.lat >= -90.0f && n.lat <= 90.0f &&
+        n.lon >= -180.0f && n.lon <= 180.0f)
+    {
+      e.lat = n.lat;
+      e.lon = n.lon;
+    }
+    e.status = n.status;
+    sanitizeJsonStrings(e.status);
+    // Recipient-relative sat_id from the parent passes through unchanged:
+    // empty = "on the parent itself", non-empty = "on a sibling sat
+    // attached to the parent".
+    e.sat_id = sanitizeIdent(n.sat_id, 64);
+    sanitized.push_back(std::move(e));
+  }
+  if (dropped > 0)
+  {
+    geulog::warn("satellite", "Dropped ", dropped,
+                 " parent-roster entrie(s) with empty/invalid callsign");
+  }
+
+  if (!m_parent_id.empty())
+  {
+    m_reflector->onPeerNodeList(m_parent_id, sanitized);
+  }
+  m_parent_nodes = std::move(sanitized);
+} /* SatelliteClient::handleMsgTrunkNodeList */
+
+
+void SatelliteClient::sendNodeList(
+    const std::vector<MsgTrunkNodeList::NodeEntry>& nodes)
+{
+  if (!m_con.isConnected() || !m_hello_received) return;
+
+  // Apply our outbound TG filter so we only push roster entries the
+  // parent cares about (consistent with the audio-path scoping rule).
+  std::vector<MsgTrunkNodeList::NodeEntry> filtered;
+  filtered.reserve(nodes.size());
+  for (const auto& n : nodes)
+  {
+    if (!m_filter.empty() && !m_filter.matches(n.tg)) continue;
+    filtered.push_back(n);
+  }
+  sendMsg(MsgTrunkNodeList(filtered));
+} /* SatelliteClient::sendNodeList */
 
 
 void SatelliteClient::sendMsg(const ReflectorMsg& msg)

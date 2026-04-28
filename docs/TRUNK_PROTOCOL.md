@@ -388,7 +388,7 @@ payload, packed using the `ASYNC_MSG_MEMBERS` macro.
 | 118  | `MsgTrunkAudio`       | `uint32 tg`, `uint8[] audio`                     |
 | 119  | `MsgTrunkFlush`       | `uint32 tg`                                      |
 | 120  | `MsgTrunkHeartbeat`   | *(no fields)*                                    |
-| 121  | `MsgTrunkNodeList`    | `string[] callsigns`, `uint32[] tgs`, `float[] lats`, `float[] lons`, `string[] qth_names`, `string[] status_blobs` |
+| 121  | `MsgTrunkNodeList`    | `string[] callsigns`, `uint32[] tgs`, `float[] lats`, `float[] lons`, `string[] qth_names`, `string[] status_blobs`, `string[] sat_ids` |
 | 122  | `MsgTrunkFilter`      | `string filter` (shared-syntax TG filter: exact / `24*` / `10-20`, comma-separated) |
 
 Type numbers 115–120 are chosen to follow the last existing SvxReflector TCP
@@ -414,12 +414,47 @@ would be stale by the time it arrives); it is derived on the receive side
 from the live trunk-talker map maintained by `MsgTrunkTalkerStart` /
 `MsgTrunkTalkerStop`.
 
-Wire-format note: extending this message (the `status_blobs` vector was
-added on top of the original 5 vectors) is a lockstep change. A peer
-running an older fork build that knows type 121 but expects only 5
-vectors will fail to unpack and reject the message, which silently empties
-the partner roster on that peer until it is upgraded. Peers that don't
-know type 121 at all (pre-jayReflector) keep ignoring it as before.
+The optional `sat_ids[i]` field tags each entry with the satellite that
+the client is actually attached to. Interpretation is **recipient-relative**:
+an empty string means *"on whoever sent this list"*, and a non-empty value
+identifies a satellite hanging off the sender. The field exists so a parent
+reflector can advertise both its own clients (`sat_id=""`) and clients
+learned from each connected satellite (`sat_id=<satellite_id>`) in a single
+message, while letting the recipient distinguish them in `/status` and
+Redis. Receivers preserve `sat_id` verbatim under
+`/status.trunks[<section>].nodes[i].sat_id` (and `/status.twin.nodes[i].sat_id`
+on twin links).
+
+Wire-format note: type 121 has been extended **twice** since its initial
+shipment. Each addition is a hard lockstep change (Async-msg unpack
+expects an exact vector count): first `status_blobs` (raising the count
+from 5 to 6), then `sat_ids` (raising it to 7). A peer running an older
+fork build that knows type 121 but expects fewer vectors will fail to
+unpack and reject the message, which silently empties the partner roster
+on that peer until it is upgraded. **All trunk, twin, and satellite peers
+in a mesh must be upgraded together.** Peers that don't know type 121 at
+all (pre-jayReflector) keep ignoring it as before.
+
+### Node-list flow with multiple satellites
+
+When a parent reflector has two or more satellites (S1, S2) attached, each
+participant is given a single shared view of the mesh roster:
+
+- **Parent → trunks/twin:** sends parent-local clients (`sat_id=""`)
+  merged with every connected satellite's contribution (`sat_id=<sat_id>`).
+- **Parent → satellite S<sub>i</sub>:** sends parent-local + every *other*
+  satellite's contribution; S<sub>i</sub>'s own roster is excluded
+  (self-echo guard). The list is additionally filtered by
+  S<sub>i</sub>'s `SATELLITE_FILTER` if any.
+- **Satellite → parent:** sends the satellite's local clients only, with
+  `sat_id=""` on the wire. The parent stamps each ingested entry with
+  `sat_id=<satellite_id>` so subsequent fanouts attribute correctly.
+
+Result: every reflector and every satellite shows the same set of callsigns
+in its `/status`, with each entry tagged so consumers can tell where it
+physically lives. Re-broadcasts are debounced (500 ms) and triggered by:
+local client login/logout/TG change, satellite hello completion, and
+inbound satellite node-list updates.
 
 `MsgTrunkFilter` is used by satellite links to advertise TG interest to the
 parent. A satellite with `SATELLITE_FILTER` set sends one `MsgTrunkFilter`

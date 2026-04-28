@@ -390,6 +390,7 @@ Json::Value TwinLink::statusJson(void) const
       entry["lon"] = n.lon;
     }
     if (!n.qth_name.empty()) entry["qth_name"] = n.qth_name;
+    if (!n.sat_id.empty())   entry["sat_id"]   = n.sat_id;
     entry["isTalker"] =
         (TGHandler::instance()->trunkTalkerForTG(n.tg) == n.callsign);
     nodes_arr.append(entry);
@@ -691,6 +692,7 @@ void TwinLink::handleMsgTrunkNodeList(std::istream& is)
     }
     e.status = n.status;
     sanitizeJsonStrings(e.status);
+    e.sat_id = sanitizeIdent(n.sat_id, 64);
     sanitized.push_back(std::move(e));
   }
   if (dropped > 0)
