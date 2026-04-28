@@ -266,6 +266,12 @@ void MqttPublisher::onPeerTalkerStart(const std::string& peer_id,
                                       uint32_t tg,
                                       const std::string& callsign)
 {
+  if (peer_id.empty())
+  {
+    geulog::warn("mqtt", "Skipping onPeerTalkerStart with empty peer_id"
+                 " (tg=", tg, " callsign='", callsign, "')");
+    return;
+  }
   Json::Value payload;
   payload["callsign"] = callsign;
   payload["tg"] = static_cast<Json::UInt>(tg);
@@ -280,6 +286,12 @@ void MqttPublisher::onPeerTalkerStop(const std::string& peer_id,
                                      uint32_t tg,
                                      const std::string& callsign)
 {
+  if (peer_id.empty())
+  {
+    geulog::warn("mqtt", "Skipping onPeerTalkerStop with empty peer_id"
+                 " (tg=", tg, " callsign='", callsign, "')");
+    return;
+  }
   Json::Value payload;
   payload["callsign"] = callsign;
   payload["tg"] = static_cast<Json::UInt>(tg);

@@ -339,7 +339,8 @@ void SatelliteLink::handleMsgPeerTalkerStart(std::istream& is)
   // local clients. Reflector::onTrunkTalkerUpdated also forwards to
   // other satellites and trunk peers.
   m_sat_active_tgs.insert(tg);
-  TGHandler::instance()->setTrunkTalkerForTG(tg, msg.callsign());
+  TGHandler::instance()->setTrunkTalkerForTGViaPeer(tg, msg.callsign(),
+                                                    m_satellite_id);
 
   // Forward to trunk peers
   m_reflector->forwardSatelliteAudioToTrunks(tg, msg.callsign());

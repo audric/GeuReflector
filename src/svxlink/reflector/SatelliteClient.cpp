@@ -340,7 +340,8 @@ void SatelliteClient::handleMsgPeerTalkerStart(std::istream& is)
 
   // Register as trunk talker — fires trunkTalkerUpdated which
   // broadcasts MsgTalkerStart to local clients
-  TGHandler::instance()->setTrunkTalkerForTG(msg.tg(), msg.callsign());
+  TGHandler::instance()->setTrunkTalkerForTGViaPeer(msg.tg(), msg.callsign(),
+                                                    m_parent_id);
 } /* SatelliteClient::handleMsgPeerTalkerStart */
 
 
