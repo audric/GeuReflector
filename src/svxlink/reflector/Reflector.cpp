@@ -3144,6 +3144,20 @@ void Reflector::publishClientStatus(ReflectorClient* client)
 } /* Reflector::publishClientStatus */
 
 
+uint32_t Reflector::currentClientTg(const std::string& callsign) const
+{
+  for (const auto& it : m_client_con_map)
+  {
+    ReflectorClient* c = it.second;
+    if (c != nullptr && c->callsign() == callsign)
+    {
+      return c->currentTG();
+    }
+  }
+  return 0;
+} /* Reflector::currentClientTg */
+
+
 void Reflector::fanoutClientConnected(const std::string& callsign,
                                       uint32_t tg,
                                       const std::string& ip)
@@ -3168,9 +3182,11 @@ void Reflector::fanoutClientConnected(const std::string& callsign,
 
 void Reflector::fanoutClientDisconnected(const std::string& callsign)
 {
+  uint32_t tg = currentClientTg(callsign);
   for (auto& kv : m_satellite_con_map)
   {
-    if (kv.second != nullptr)
+    if (kv.second != nullptr &&
+        (tg == 0 || kv.second->filterPassesTg(tg)))
     {
       kv.second->sendClientDisconnected(callsign);
     }
@@ -3192,9 +3208,11 @@ void Reflector::fanoutClientRx(const std::string& callsign,
   Json::StreamWriterBuilder wb;
   wb["indentation"] = "";
   std::string s = Json::writeString(wb, rx_json);
+  uint32_t tg = currentClientTg(callsign);
   for (auto& kv : m_satellite_con_map)
   {
-    if (kv.second != nullptr)
+    if (kv.second != nullptr &&
+        (tg == 0 || kv.second->filterPassesTg(tg)))
     {
       kv.second->sendClientRx(callsign, s);
     }
@@ -3216,9 +3234,11 @@ void Reflector::fanoutClientStatus(const std::string& callsign,
   Json::StreamWriterBuilder wb;
   wb["indentation"] = "";
   std::string s = Json::writeString(wb, status_json);
+  uint32_t tg = currentClientTg(callsign);
   for (auto& kv : m_satellite_con_map)
   {
-    if (kv.second != nullptr)
+    if (kv.second != nullptr &&
+        (tg == 0 || kv.second->filterPassesTg(tg)))
     {
       kv.second->sendClientStatus(callsign, s);
     }

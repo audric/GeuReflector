@@ -80,6 +80,11 @@ class SatelliteLink : public sigc::trackable
       return m_partner_nodes;
     }
 
+    // Returns true if the given TG passes this satellite's filter (or if no
+    // filter is set). Used by Reflector::fanoutClient{Disconnected,Rx,Status}
+    // which lack an inline TG and must look it up externally.
+    bool filterPassesTg(uint32_t tg) const;
+
   private:
     static const unsigned HEARTBEAT_TX_CNT_RESET = 10;
     static const unsigned HEARTBEAT_RX_CNT_RESET = 15;
@@ -115,7 +120,6 @@ class SatelliteLink : public sigc::trackable
     void handleMsgPeerClientDisconnected(std::istream& is);
     void handleMsgPeerClientRx(std::istream& is);
     void handleMsgPeerClientStatus(std::istream& is);
-    bool filterPassesTg(uint32_t tg) const;
     void sendMsg(const ReflectorMsg& msg);
     void heartbeatTick(Async::Timer* t);
 };
