@@ -106,6 +106,15 @@ class TwinLink
     void onLocalNodeListUpdated(
         const std::vector<MsgPeerNodeList::NodeEntry>& nodes);
 
+    // Per-client liveness deltas — mirrored symmetrically to twin partner
+    void sendClientConnected(const std::string& callsign, uint32_t tg,
+                             const std::string& ip);
+    void sendClientDisconnected(const std::string& callsign);
+    void sendClientRx(const std::string& callsign,
+                      const std::string& rx_json);
+    void sendClientStatus(const std::string& callsign,
+                          const std::string& status_json);
+
     bool isActive(void) const;
     const std::string& partnerHost(void) const { return m_peer_host; }
     uint16_t partnerPort(void) const { return m_peer_port; }
@@ -166,6 +175,10 @@ class TwinLink
     void clearPartnerRosterIfInactive(void);
     void handleMsgTwinExtTalkerStart(std::istream& is);
     void handleMsgTwinExtTalkerStop(std::istream& is);
+    void handleMsgPeerClientConnected(std::istream& is);
+    void handleMsgPeerClientDisconnected(std::istream& is);
+    void handleMsgPeerClientRx(std::istream& is);
+    void handleMsgPeerClientStatus(std::istream& is);
     void heartbeatTick(Async::Timer*);
 
     bool sendMsg(const ReflectorMsg& msg);

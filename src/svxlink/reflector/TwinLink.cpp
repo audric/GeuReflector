@@ -507,6 +507,18 @@ void TwinLink::onFrameReceived(FramedTcpConnection* con,
     case MsgTwinExtTalkerStop::TYPE:
       handleMsgTwinExtTalkerStop(ss);
       break;
+    case MsgPeerClientConnected::TYPE:
+      handleMsgPeerClientConnected(ss);
+      break;
+    case MsgPeerClientDisconnected::TYPE:
+      handleMsgPeerClientDisconnected(ss);
+      break;
+    case MsgPeerClientRx::TYPE:
+      handleMsgPeerClientRx(ss);
+      break;
+    case MsgPeerClientStatus::TYPE:
+      handleMsgPeerClientStatus(ss);
+      break;
     default:
       // Unknown / not-yet-implemented types silently ignored for now
       break;
@@ -574,9 +586,12 @@ void TwinLink::handleMsgPeerTalkerStart(std::istream& is)
     geulog::error("twin", "TWIN: Failed to unpack MsgPeerTalkerStart");
     return;
   }
-  // setTrunkTalkerForTG fires trunkTalkerUpdated → onTrunkTalkerUpdated in
-  // Reflector, which broadcasts MsgTalkerStart to all local clients on this TG.
-  TGHandler::instance()->setTrunkTalkerForTG(msg.tg(), msg.callsign());
+  // setTrunkTalkerForTGViaPeer records peer attribution and fires
+  // trunkTalkerUpdated → onTrunkTalkerUpdated in Reflector, which broadcasts
+  // MsgTalkerStart to all local clients on this TG and emits the correct
+  // peer/<twin_id>/talker/<tg>/start MQTT topic.
+  TGHandler::instance()->setTrunkTalkerForTGViaPeer(
+      msg.tg(), msg.callsign(), m_peer_id_config);
 } /* TwinLink::handleMsgPeerTalkerStart */
 
 
@@ -812,6 +827,131 @@ void TwinLink::sendMsgOnInbound(const ReflectorMsg& msg)
   m_ib_hb_tx_cnt = 0;
   m_inbound_con->write(ss.str().data(), ss.str().size());
 } /* TwinLink::sendMsgOnInbound */
+
+
+void TwinLink::sendClientConnected(const std::string& callsign,
+                                   uint32_t tg,
+                                   const std::string& ip)
+{
+  if (!isActive()) return;
+  sendMsg(MsgPeerClientConnected(callsign, tg, ip));
+} /* TwinLink::sendClientConnected */
+
+
+void TwinLink::sendClientDisconnected(const std::string& callsign)
+{
+  if (!isActive()) return;
+  sendMsg(MsgPeerClientDisconnected(callsign));
+} /* TwinLink::sendClientDisconnected */
+
+
+void TwinLink::sendClientRx(const std::string& callsign,
+                            const std::string& rx_json)
+{
+  if (!isActive()) return;
+  sendMsg(MsgPeerClientRx(callsign, rx_json));
+} /* TwinLink::sendClientRx */
+
+
+void TwinLink::sendClientStatus(const std::string& callsign,
+                                const std::string& status_json)
+{
+  if (!isActive()) return;
+  sendMsg(MsgPeerClientStatus(callsign, status_json));
+} /* TwinLink::sendClientStatus */
+
+
+void TwinLink::handleMsgPeerClientConnected(std::istream& is)
+{
+  MsgPeerClientConnected msg;
+  if (!msg.unpack(is))
+  {
+    geulog::error("twin",
+        "Failed to unpack MsgPeerClientConnected from twin '",
+        m_peer_id_config, "'");
+    return;
+  }
+  Json::Value payload;
+  payload["tg"] = static_cast<Json::UInt>(msg.tg());
+  payload["ip"] = msg.ip();
+  if (m_reflector->mqtt() != nullptr)
+  {
+    m_reflector->mqtt()->publishPeerClientEvent(
+        m_peer_id_config, msg.callsign(), "connected", payload, false);
+  }
+} /* TwinLink::handleMsgPeerClientConnected */
+
+
+void TwinLink::handleMsgPeerClientDisconnected(std::istream& is)
+{
+  MsgPeerClientDisconnected msg;
+  if (!msg.unpack(is))
+  {
+    geulog::error("twin",
+        "Failed to unpack MsgPeerClientDisconnected from twin '",
+        m_peer_id_config, "'");
+    return;
+  }
+  Json::Value payload(Json::objectValue);
+  if (m_reflector->mqtt() != nullptr)
+  {
+    m_reflector->mqtt()->publishPeerClientEvent(
+        m_peer_id_config, msg.callsign(), "disconnected", payload, false);
+  }
+} /* TwinLink::handleMsgPeerClientDisconnected */
+
+
+void TwinLink::handleMsgPeerClientRx(std::istream& is)
+{
+  MsgPeerClientRx msg;
+  if (!msg.unpack(is))
+  {
+    geulog::error("twin",
+        "Failed to unpack MsgPeerClientRx from twin '", m_peer_id_config, "'");
+    return;
+  }
+  if (msg.rxJson().size() > 65536u) return;
+  Json::Value rx_json;
+  std::istringstream ss(msg.rxJson());
+  Json::CharReaderBuilder rb;
+  std::string err;
+  if (!Json::parseFromStream(rb, ss, &rx_json, &err))
+  {
+    return;
+  }
+  if (m_reflector->mqtt() != nullptr)
+  {
+    m_reflector->mqtt()->publishPeerClientEvent(
+        m_peer_id_config, msg.callsign(), "rx", rx_json, true);  // retained
+  }
+} /* TwinLink::handleMsgPeerClientRx */
+
+
+void TwinLink::handleMsgPeerClientStatus(std::istream& is)
+{
+  MsgPeerClientStatus msg;
+  if (!msg.unpack(is))
+  {
+    geulog::error("twin",
+        "Failed to unpack MsgPeerClientStatus from twin '",
+        m_peer_id_config, "'");
+    return;
+  }
+  if (msg.statusJson().size() > 65536u) return;
+  Json::Value status_json;
+  std::istringstream ss(msg.statusJson());
+  Json::CharReaderBuilder rb;
+  std::string err;
+  if (!Json::parseFromStream(rb, ss, &status_json, &err))
+  {
+    return;
+  }
+  if (m_reflector->mqtt() != nullptr)
+  {
+    m_reflector->mqtt()->publishPeerClientEvent(
+        m_peer_id_config, msg.callsign(), "status", status_json, true);  // retained
+  }
+} /* TwinLink::handleMsgPeerClientStatus */
 
 
 /*
