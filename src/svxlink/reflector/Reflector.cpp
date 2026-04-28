@@ -3148,32 +3148,89 @@ void Reflector::fanoutClientConnected(const std::string& callsign,
                                       uint32_t tg,
                                       const std::string& ip)
 {
-  // Stub — real iteration over m_satellite_con_map / m_satellite_client /
-  // m_twin_link is added in Task 8 of the peer-client-liveness plan.
-  (void)callsign; (void)tg; (void)ip;
+  for (auto& kv : m_satellite_con_map)
+  {
+    if (kv.second != nullptr)
+    {
+      kv.second->sendClientConnected(callsign, tg, ip);
+    }
+  }
+  if (m_satellite_client != nullptr)
+  {
+    m_satellite_client->sendClientConnected(callsign, tg, ip);
+  }
+  if (m_twin_link != nullptr)
+  {
+    m_twin_link->sendClientConnected(callsign, tg, ip);
+  }
 }
 
 
 void Reflector::fanoutClientDisconnected(const std::string& callsign)
 {
-  // Stub — see Task 8.
-  (void)callsign;
+  for (auto& kv : m_satellite_con_map)
+  {
+    if (kv.second != nullptr)
+    {
+      kv.second->sendClientDisconnected(callsign);
+    }
+  }
+  if (m_satellite_client != nullptr)
+  {
+    m_satellite_client->sendClientDisconnected(callsign);
+  }
+  if (m_twin_link != nullptr)
+  {
+    m_twin_link->sendClientDisconnected(callsign);
+  }
 }
 
 
 void Reflector::fanoutClientRx(const std::string& callsign,
                                const Json::Value& rx_json)
 {
-  // Stub — see Task 8.
-  (void)callsign; (void)rx_json;
+  Json::StreamWriterBuilder wb;
+  wb["indentation"] = "";
+  std::string s = Json::writeString(wb, rx_json);
+  for (auto& kv : m_satellite_con_map)
+  {
+    if (kv.second != nullptr)
+    {
+      kv.second->sendClientRx(callsign, s);
+    }
+  }
+  if (m_satellite_client != nullptr)
+  {
+    m_satellite_client->sendClientRx(callsign, s);
+  }
+  if (m_twin_link != nullptr)
+  {
+    m_twin_link->sendClientRx(callsign, s);
+  }
 }
 
 
 void Reflector::fanoutClientStatus(const std::string& callsign,
                                    const Json::Value& status_json)
 {
-  // Stub — see Task 8.
-  (void)callsign; (void)status_json;
+  Json::StreamWriterBuilder wb;
+  wb["indentation"] = "";
+  std::string s = Json::writeString(wb, status_json);
+  for (auto& kv : m_satellite_con_map)
+  {
+    if (kv.second != nullptr)
+    {
+      kv.second->sendClientStatus(callsign, s);
+    }
+  }
+  if (m_satellite_client != nullptr)
+  {
+    m_satellite_client->sendClientStatus(callsign, s);
+  }
+  if (m_twin_link != nullptr)
+  {
+    m_twin_link->sendClientStatus(callsign, s);
+  }
 }
 
 
