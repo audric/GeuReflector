@@ -40,6 +40,26 @@ class MqttPublisher
     // RX status update (per-client, all receivers)
     void onRxUpdate(const std::string& callsign, const Json::Value& rx_json);
 
+    // Rich per-client status blob (retained)
+    void onClientStatus(const std::string& callsign,
+                        const Json::Value& status_json);
+
+    // Receiver-side: republish a peer-side per-client event under
+    // peer/<peer_id>/client/<callsign>/<event>. retained controls broker
+    // retention. event must be one of: "connected", "disconnected", "rx",
+    // "status".
+    void publishPeerClientEvent(const std::string& peer_id,
+                                const std::string& callsign,
+                                const std::string& event,
+                                const Json::Value& payload,
+                                bool retained);
+
+    // Receiver-side: clear retained payload at peer/<peer_id>/client/<call>/{rx,status}.
+    // Used by snapshot-driven housekeeping when a callsign disappears between
+    // two consecutive MsgPeerNodeList snapshots.
+    void clearPeerClientRetained(const std::string& peer_id,
+                                 const std::string& callsign);
+
     // Periodic full status
     void publishFullStatus(const Json::Value& status);
 
@@ -96,6 +116,12 @@ class MqttPublisher
                    const std::string&, uint16_t) {}
     void onTrunkDown(const std::string&, const std::string&) {}
     void onRxUpdate(const std::string&, const Json::Value&) {}
+    void onClientStatus(const std::string&, const Json::Value&) {}
+    void publishPeerClientEvent(const std::string&, const std::string&,
+                                const std::string&, const Json::Value&,
+                                bool) {}
+    void clearPeerClientRetained(const std::string&,
+                                 const std::string&) {}
     void publishFullStatus(const Json::Value&) {}
     void publishLocalNodes(
         const std::vector<MsgPeerNodeList::NodeEntry>&) {}

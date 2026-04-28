@@ -280,8 +280,12 @@ void MqttPublisher::onClientDisconnected(const std::string& callsign)
   Json::StreamWriterBuilder wb;
   wb["indentation"] = "";
   Json::Value payload(Json::objectValue);
-  string topic = "client/" + callsign + "/disconnected";
-  publish(topic, Json::writeString(wb, payload));
+  publish("client/" + callsign + "/disconnected",
+          Json::writeString(wb, payload));
+  // Clear retained per-client topics so a long-disconnected callsign
+  // does not linger in the broker store.
+  publish("client/" + callsign + "/rx", "", true);
+  publish("client/" + callsign + "/status", "", true);
 }
 
 
@@ -316,7 +320,7 @@ void MqttPublisher::onRxUpdate(const std::string& callsign,
   Json::StreamWriterBuilder wb;
   wb["indentation"] = "";
   string topic = "client/" + callsign + "/rx";
-  publish(topic, Json::writeString(wb, rx_json));
+  publish(topic, Json::writeString(wb, rx_json), true);  // retained
 }
 
 
@@ -372,4 +376,37 @@ void MqttPublisher::publishPeerNodes(const std::string& peer_id,
   wb["indentation"] = "";
   publish("nodes/" + peer_id,
           Json::writeString(wb, nodeListToJson(nodes)), true);
+}
+
+
+void MqttPublisher::onClientStatus(const std::string& callsign,
+                                   const Json::Value& status_json)
+{
+  Json::StreamWriterBuilder wb;
+  wb["indentation"] = "";
+  publish("client/" + callsign + "/status",
+          Json::writeString(wb, status_json), true);  // retained
+}
+
+
+void MqttPublisher::publishPeerClientEvent(const std::string& peer_id,
+                                           const std::string& callsign,
+                                           const std::string& event,
+                                           const Json::Value& payload,
+                                           bool retained)
+{
+  Json::StreamWriterBuilder wb;
+  wb["indentation"] = "";
+  std::string topic =
+      "peer/" + peer_id + "/client/" + callsign + "/" + event;
+  publish(topic, Json::writeString(wb, payload), retained);
+}
+
+
+void MqttPublisher::clearPeerClientRetained(const std::string& peer_id,
+                                            const std::string& callsign)
+{
+  std::string base = "peer/" + peer_id + "/client/" + callsign + "/";
+  publish(base + "rx", "", true);
+  publish(base + "status", "", true);
 }
