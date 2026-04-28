@@ -784,6 +784,41 @@ void TrunkLink::onLocalFlush(uint32_t tg)
   sendMsg(MsgTrunkFlush(mapTgOut(tg)));
 } /* TrunkLink::onLocalFlush */
 
+void TrunkLink::onSendTGlist(std::vector<int> tgs)
+{
+ 
+    std::vector<int> filtered;
+
+    for (int tg : tgs)
+    {
+        int ret = mapTgOut(tg);   // <-- mapping step
+
+        // assume ret.tg holds the mapped talkgroup
+        int mapped_tg = ret;
+
+        std::string tg_str = std::to_string(mapped_tg);
+        bool match = false;
+
+        for (const auto& prefix : m_remote_prefix)
+        {
+            if (tg_str.rfind(prefix, 0) == 0)
+            {
+                match = true;
+                break;
+            }
+        }
+
+        if (match)
+        {
+            filtered.push_back(mapped_tg); // or push tg if you want original
+        }
+    }
+
+    sendMsg(MsgTgIntress(m_peer_id_config, filtered));
+}
+
+
+
 
 /****************************************************************************
  *
@@ -911,6 +946,9 @@ void TrunkLink::onFrameReceived(FramedTcpConnection* con,
     case MsgTrunkNodeList::TYPE:
       handleMsgTrunkNodeList(ss);
       break;
+    case MsgTgIntress::TYPE:	
+      handleMsgTGIntress(ss);
+      break;      
     default:
       geulog::warn("trunk", "[", m_section, "] Unknown trunk message type=",
                    header.type());
@@ -1159,6 +1197,29 @@ void TrunkLink::handleMsgTrunkFlush(std::istream& is)
     m_reflector->forwardTrunkFlushToOtherTrunks(this, local_tg);
   }
 } /* TrunkLink::handleMsgTrunkFlush */
+
+void TrunkLink::handleMsgTGIntress(std::istream& is)
+{
+
+    MsgTgIntress  msg;
+    if (!msg.unpack(is))
+    {
+        geulog::error("trunk", "[", m_section, "] Failed to unpack MsgTgIntress ");
+        return;
+    }
+
+
+    for (int tg : msg.interests())
+    {
+        m_peer_interested_tgs[tg] = std::time(nullptr);
+    }
+    
+    
+
+
+}/* TrunkLink::handleMsgTGIntress */
+
+
 
 
 void TrunkLink::sendMsg(const ReflectorMsg& msg)
@@ -1502,6 +1563,8 @@ void TrunkLink::onPairedInboundFrame(Async::FramedTcpConnection* con,
                   "] Failed to unpack frame on paired inbound #", idx);
     return;
   }
+  
+
 
   switch (header.type())
   {
