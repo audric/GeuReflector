@@ -399,6 +399,52 @@ were added by the jayReflector integration (v1.1.0) and are optional —
 older peers silently ignore unknown message types, preserving backward
 compatibility.
 
+### `MsgPeerClient*` — per-client liveness deltas (types 125–128)
+
+Types 123–124 are reserved for `MsgTwinExt*` (twin-only talker extensions).
+Types 125–128 carry per-client liveness deltas for satellite and twin links.
+
+| Type | Name | Fields |
+|------|------|--------|
+| 125  | `MsgPeerClientConnected`    | `string callsign`, `uint32 tg`, `string ip` |
+| 126  | `MsgPeerClientDisconnected` | `string callsign` |
+| 127  | `MsgPeerClientRx`           | `string callsign`, `string rx_json` |
+| 128  | `MsgPeerClientStatus`       | `string callsign`, `string status_json` |
+
+**Routing:** these types are emitted only over `SatelliteLink`, `SatelliteClient`,
+and `TwinLink`. `TrunkLink` does not emit them. The wire format is general, so
+future trunk-axis enablement is purely additive.
+
+**`MsgPeerClientConnected` (125):** sent when a local client successfully
+authenticates. `tg` is the client's initial talk group; `ip` is the client's
+remote address. Receiver republishes to MQTT `peer/{peer_id}/client/{callsign}/connected`.
+
+**`MsgPeerClientDisconnected` (126):** sent on client disconnect. Receiver
+republishes to MQTT `peer/{peer_id}/client/{callsign}/disconnected`.
+
+**`MsgPeerClientRx` (127):** sent on rx-status changes. `rx_json` is a
+JSON-serialized receiver map (same schema as `client/{callsign}/rx`), capped
+at 64 KiB on receive (matching `MsgPeerNodeList` status-blob cap). The sender
+debounces per callsign at 500 ms to limit rate. Receiver publishes as a
+**retained** MQTT topic.
+
+**`MsgPeerClientStatus` (128):** sent on per-client status changes.
+`status_json` is the same rich per-client blob that appears in
+`MsgPeerNodeList::status_blobs`, capped at 64 KiB. Receiver publishes as a
+**retained** MQTT topic.
+
+**TG filter interaction.** If the receiver has advertised a `MsgPeerFilter`
+(e.g. a satellite with `SATELLITE_FILTER`), the sender checks the originating
+client's current TG against that filter before emitting any `MsgPeerClient*`
+message. Clients on filtered-out TGs produce no delta traffic toward that peer.
+
+**Backward compatibility.** All three peer-protocol dispatch sites
+(`SatelliteLink`, `SatelliteClient`, `TwinLink`) have graceful unknown-type
+fall-through — unrecognised frames are silently ignored (heartbeat reset
+happens before dispatch, so unknown frames count as keepalive). An old peer
+receiving these types ignores them and falls back to the existing
+`MsgPeerNodeList` snapshot mechanism.
+
 `MsgPeerNodeList` is emitted by the reflector on local client login, logout,
 or TG change, debounced to 500 ms, and broadcast to every trunk peer. Peers
 republish it via MQTT under `nodes/<peer_id>` so a central dashboard can see
@@ -598,7 +644,7 @@ REMOTE_PREFIX=2
 
 | File | Change |
 |------|--------|
-| `src/svxlink/reflector/ReflectorMsg.h` | Added `MsgPeerHello`–`MsgPeerHeartbeat` (types 115–120); `MsgPeerHello` carries `local_prefix` string instead of TG list |
+| `src/svxlink/reflector/ReflectorMsg.h` | Added `MsgPeerHello`–`MsgPeerHeartbeat` (types 115–120); `MsgPeerHello` carries `local_prefix` string instead of TG list. Added `MsgPeerClientConnected`–`MsgPeerClientStatus` (types 125–128). Renamed from `MsgTrunk*` (wire IDs unchanged). |
 | `src/svxlink/reflector/TGHandler.h` | Added trunk talker map, 5 methods + snapshot accessor, `trunkTalkerUpdated` signal |
 | `src/svxlink/reflector/TGHandler.cpp` | Implemented trunk talker methods including `clearAllTrunkTalkers` |
 | `src/svxlink/reflector/Reflector.h` | Added `m_trunk_links`, `m_trunk_srv`, `initTrunkLinks()`, `initTrunkServer()`, `onTrunkTalkerUpdated()`, trunk inbound connection handling |
