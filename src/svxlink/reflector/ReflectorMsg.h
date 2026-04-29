@@ -112,7 +112,16 @@ class ReflectorMsg : public Async::Msg
   public:
     static const uint32_t MAX_PREAUTH_FRAME_SIZE    = 64;
     static const uint32_t MAX_SSL_SETUP_FRAME_SIZE  = 4096;
-    static const uint32_t MAX_POSTAUTH_FRAME_SIZE   = 32768;
+    // 4 MiB — was 32 KiB but became too tight after MsgPeerNodeList grew a
+    // per-client rich-status JSON blob (b4b06f9) and a sat_id vector
+    // (4bb6477) in v1.3.6. A reflector with even a few dozen clients can
+    // exceed 32 KiB on every snapshot, and the receiver's framed-tcp guard
+    // (Async::FramedTcpConnection::onDataReceived) closes the connection
+    // with DR_PROTOCOL_ERROR when m_frame_size > m_max_rx_frame_size —
+    // visible to the sender as "Connection closed by remote peer" on every
+    // NodeList send, producing twin/trunk-link flap. 4 MiB comfortably fits
+    // thousands of clients while keeping the rx-buffer ceiling bounded.
+    static const uint32_t MAX_POSTAUTH_FRAME_SIZE   = 4 * 1024 * 1024;
 
     /**
      * @brief 	Constuctor
