@@ -21,13 +21,18 @@ Docker must be running and the TWIN topology must have been generated:
 
 import os
 import re
+import struct
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import unittest
 from urllib.request import urlopen
 from urllib.error import URLError
 import json
+
+import paho.mqtt.client as mqtt_client
 
 # Reuse the V2 mock client from test_trunk.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -63,6 +68,13 @@ def _trunk(name: str):
 
 COMPOSE_FILE = "docker-compose.test.yml"
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# MQTT broker for the twin topology (host-mapped mosquitto port)
+TWIN_MQTT_PORT = 21883
+# Path to the svxreflector binary (two dirs up from tests/)
+SVXREFLECTOR_BIN = os.path.join(
+    os.path.dirname(TESTS_DIR), "build", "bin", "svxreflector"
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -679,6 +691,177 @@ class TestTwinIntegration(unittest.TestCase):
             interval=0.25,
             msg=f"{CLIENT_CALLSIGN} still in ref2 /status.twin.nodes after "
                 f"disconnect from ref1",
+        )
+
+
+    # ------------------------------------------------------------------
+    # Test X1: Per-client delta visible across twin link
+    # ------------------------------------------------------------------
+    def test_X1_per_client_visible_across_twin(self):
+        """A V2 client connecting to ref1 causes ref2's MQTT broker to emit
+        peer/TWIN/client/<call>/connected within 2s.
+
+        The path is:
+          ref1 local client auth -> Reflector::onClientAuthenticated
+          -> fanoutClientConnected -> TwinLink::sendClientConnected
+          -> MsgPeerClientConnected over [TWIN] -> ref2.handleMsgPeerClientConnected
+          -> ref2 MqttPublisher::publishPeerClientEvent
+          -> svxreflector/ref2/ref2/peer/TWIN/client/<call>/connected
+
+        Note: ref2's TOPIC_PREFIX=svxreflector/ref2 and MQTT_NAME=ref2, so
+        the effective prefix is svxreflector/ref2/ref2.
+        """
+        # ref2 has TOPIC_PREFIX=svxreflector/ref2 and MQTT_NAME=ref2 so the
+        # effective prefix is svxreflector/ref2/ref2.
+        # Peer events from the twin appear under peer/TWIN/client/<call>/...
+        # (m_peer_id_config = "TWIN" hardcoded in TwinLink constructor).
+        topic = "svxreflector/ref2/ref2/peer/TWIN/client/+/connected"
+        received = []
+        sub_event = threading.Event()
+
+        def on_connect(client, userdata, flags, rc):
+            client.subscribe(topic)
+            sub_event.set()
+
+        def on_message(client, userdata, msg):
+            try:
+                payload = json.loads(msg.payload)
+            except (ValueError, json.JSONDecodeError):
+                payload = {}
+            received.append((msg.topic, payload))
+
+        mc = mqtt_client.Client()
+        mc.on_connect = on_connect
+        mc.on_message = on_message
+        mc.connect(HOST, TWIN_MQTT_PORT, 60)
+        mc.loop_start()
+
+        client = ClientPeer()
+        try:
+            self.assertTrue(sub_event.wait(timeout=5),
+                            "MQTT subscribe to ref2 broker timed out")
+            time.sleep(0.3)
+
+            ref1_port = T.twin_mapped_client_port("ref1")
+            client.connect(HOST, ref1_port)
+            client.authenticate(callsign=CLIENT_CALLSIGN,
+                                password=CLIENT_PASSWORD)
+
+            # Wait up to 2s for the connected event to appear
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                if any(CLIENT_CALLSIGN in t for t, _ in received):
+                    break
+                time.sleep(0.1)
+
+            matches = [(t, p) for t, p in received
+                       if CLIENT_CALLSIGN in t]
+            self.assertGreater(
+                len(matches), 0,
+                f"ref2 broker did not receive per-client connected event for "
+                f"{CLIENT_CALLSIGN} after connecting to ref1. "
+                f"Topics received: {[t for t, _ in received]}\n"
+                f"Expected: {topic}",
+            )
+            topic_str, payload = matches[0]
+            self.assertIn("TWIN", topic_str,
+                          f"peer_id should be 'TWIN' in topic, got: {topic_str}")
+            self.assertIn("tg", payload,
+                          f"connected payload missing 'tg': {payload}")
+            self.assertIn("ip", payload,
+                          f"connected payload missing 'ip': {payload}")
+        finally:
+            client.close()
+            mc.loop_stop()
+            mc.disconnect()
+
+    # ------------------------------------------------------------------
+    # Test X2: MQTT_NAME required when [TWIN] is configured
+    # ------------------------------------------------------------------
+    def test_X2_mqtt_name_required_in_twin_mode(self):
+        """A reflector with [TWIN] configured but MQTT_NAME missing/empty
+        must exit non-zero and log an error containing 'MQTT_NAME is required'.
+
+        This protects against retained-topic collisions when twin pair members
+        share the same MQTT broker (both would publish to the same retained
+        topics without distinct MQTT_NAME sub-trees).
+        """
+        if not os.path.isfile(SVXREFLECTOR_BIN):
+            self.skipTest(
+                f"svxreflector binary not found at {SVXREFLECTOR_BIN}; "
+                f"run 'cmake --build build' first"
+            )
+
+        # Write a minimal config: has [TWIN] but MQTT with no MQTT_NAME.
+        # CERT_PKI_DIR is set to a writable tempdir so the reflector can
+        # generate its PKI files and proceed to the MQTT_NAME validation
+        # without hitting a permissions failure first.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pki_dir = os.path.join(tmpdir, "pki")
+            os.makedirs(pki_dir, exist_ok=True)
+            config_content = f"""\
+[GLOBAL]
+TIMESTAMP_FORMAT="%c"
+LISTEN_PORT=15399
+TG_FOR_V1_CLIENTS=999
+LOCAL_PREFIX=262
+TRUNK_LISTEN_PORT=15302
+HTTP_SRV_PORT=15080
+TWIN_LISTEN_PORT=15304
+CERT_PKI_DIR={pki_dir}
+
+[SERVER_CERT]
+COMMON_NAME=reflector-test-no-mqttname
+
+[USERS]
+N0TEST=TestGroup
+
+[PASSWORDS]
+TestGroup=testpass
+
+[TWIN]
+HOST=127.0.0.1
+PORT=15304
+SECRET=test_secret
+
+[MQTT]
+HOST=127.0.0.1
+PORT=11883
+USERNAME=test
+PASSWORD=testpass
+TOPIC_PREFIX=svxreflector/testnode
+"""
+            conf_path = os.path.join(tmpdir, "svxreflector.conf")
+            with open(conf_path, "w") as f:
+                f.write(config_content)
+
+            proc = subprocess.run(
+                [SVXREFLECTOR_BIN, f"--config={conf_path}"],
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                timeout=60.0,   # PKI key generation (4096-bit RSA) can be slow
+            )
+
+        # The reflector must log the expected error string and then exit.
+        # Note: the reflector process always exits with code 0 even on init
+        # failure (upstream svxreflector.cpp behaviour) — so we do not assert
+        # on returncode, only on the error message being present in stdout.
+        combined = proc.stdout + proc.stderr
+        self.assertIn(
+            "MQTT_NAME is required",
+            combined,
+            f"Expected error message 'MQTT_NAME is required' in output when "
+            f"[TWIN] is configured without MQTT_NAME, but it was absent.\n"
+            f"Full output (last 1000 chars):\n{combined[-1000:]}",
+        )
+
+        # Also verify it logged the initialization failure
+        self.assertIn(
+            "Initialization failed",
+            combined,
+            f"Expected 'Initialization failed' in output; "
+            f"got:\n{combined[-500:]}",
         )
 
 

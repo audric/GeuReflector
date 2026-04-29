@@ -17,6 +17,9 @@ docker compose -f docker-compose.test.yml up -d --build --wait
 echo "=== Running integration tests ==="
 python3 test_trunk.py
 
+echo "=== Running MQTT-deltas integration tests ==="
+python3 test_mqtt_deltas.py
+
 echo "=== Logging tests ==="
 python3 test_logging.py -v || exit 1
 
