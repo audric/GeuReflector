@@ -2115,6 +2115,32 @@ class MsgTwinExtTalkerStop : public ReflectorMsgBase<124>
 }; /* MsgTwinExtTalkerStop */
 
 
+/**
+ * @brief   trunk message exchange for monitored tg's
+ */
+
+class MsgTgIntress : public ReflectorMsgBase<125> // use a new unique ID
+{
+public:
+    MsgTgIntress(void) {}
+
+    MsgTgIntress(const std::string& peer_id, const std::vector<int>& interests)
+        : m_peer_id(peer_id), m_interests(interests) {
+    }
+
+    const std::string& peerId(void) const { return m_peer_id; }
+    const std::vector<int>& interests(void) const { return m_interests; }
+
+    ASYNC_MSG_MEMBERS(m_peer_id, m_interests)
+
+private:
+    std::string       m_peer_id;
+    std::vector<int>  m_interests;
+}; /* MsgTgIntress */
+
+
+
+
 #endif /* REFLECTOR_MSG_INCLUDED */
 
 

@@ -290,7 +290,7 @@ Reflector::~Reflector(void)
   m_mqtt_status_timer.setEnable(false);
   delete m_mqtt;
   m_mqtt = nullptr;
-
+  delete timmer_send_intresstedtg;
   delete m_http_server;
   m_http_server = 0;
   delete m_udp_sock;
@@ -563,6 +563,10 @@ bool Reflector::initialize(Async::Config &cfg)
 
   publishMetaToRedis();
   for (auto* link : m_trunk_links) publishTrunkStatusToRedis(link);
+
+  timmer_send_intresstedtg = new Timer(5000, Timer::TYPE_PERIODIC);
+  timmer_send_intresstedtg->expired.connect(mem_fun(*this, &Reflector::SendTgIntresse_timmer));    
+         
 
   return true;
 } /* Reflector::initialize */
@@ -4645,6 +4649,60 @@ void Reflector::twinPendingTimeout(Async::Timer* t)
     }
   }
 } /* Reflector::twinPendingTimeout */
+
+
+void Reflector::SendTgIntresse_timmer(Async::Timer* t)
+{
+    SendTgIntresse();
+    
+}
+
+
+
+void Reflector::SendTgIntresse()
+{
+    std::vector<int> result;
+
+    const Json::Value& nodes = m_status["nodes"];
+    if (nodes.isObject())
+    {
+
+
+        // Loop through all nodes
+        for (const auto& nodeName : nodes.getMemberNames())
+        {
+            const Json::Value& node = nodes[nodeName];
+
+            // Add tg
+            if (node.isMember("tg") && node["tg"].isInt())
+            {
+                if (node["tg"].asInt() > 0)
+                    result.push_back(node["tg"].asInt());
+            }
+
+            // Add monitoredTGs
+            if (node.isMember("monitoredTGs") && node["monitoredTGs"].isArray())
+            {
+                for (const auto& tg : node["monitoredTGs"])
+                {
+                    if (tg.isInt())
+                        result.push_back(tg.asInt());
+                }
+            }
+        }
+
+    }
+
+
+    for (auto* link : m_trunk_links)
+    {
+        link->onSendTGlist(result);
+    }
+
+
+}
+
+
 
 
 /*
