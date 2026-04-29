@@ -628,6 +628,88 @@ class TestMqttDeltas(unittest.TestCase):
             mc.loop_stop()
             mc.disconnect()
 
+    # ------------------------------------------------------------------
+    # Test 43: Full-status snapshot republishes on STATUS_INTERVAL cadence
+    # ------------------------------------------------------------------
+    def test_43_full_status_periodic_republish(self):
+        """The retained `<prefix>/status` snapshot must republish on the
+        configured STATUS_INTERVAL cadence (1000 ms in test configs), not
+        only once at startup.
+
+        Regression guard for an Async::Timer one-shot re-arm bug: calling
+        setEnable(true) on an already-enabled timer is a no-op, so the
+        original lambda re-arm path silently dropped after the first fire.
+        Fix uses reset() to force delTimer+addTimer.
+        """
+        topic = f"svxreflector/{PRIMARY}/status"
+        events: list = []   # (monotonic_ts, retain_flag, payload_dict)
+        lock = threading.Lock()
+        sub_event = threading.Event()
+
+        mc = mqtt_client.Client()
+
+        def on_connect(client, userdata, flags, rc):
+            client.subscribe(topic)
+            sub_event.set()
+
+        def on_message(client, userdata, msg):
+            try:
+                payload = json.loads(msg.payload)
+            except (ValueError, json.JSONDecodeError):
+                payload = None
+            with lock:
+                events.append((time.monotonic(), bool(msg.retain), payload))
+
+        mc.on_connect = on_connect
+        mc.on_message = on_message
+        mc.connect(MQTT_HOST, MQTT_PORT, 60)
+        mc.loop_start()
+
+        try:
+            self.assertTrue(sub_event.wait(timeout=5),
+                            "MQTT subscribe to status topic timed out")
+
+            # Collect deliveries for 4s. With STATUS_INTERVAL=1000ms we
+            # expect ~4 fresh (non-retained) republishes plus the initial
+            # retained snapshot. Require >=3 fresh ones to confirm the
+            # one-shot timer actually re-arms each cycle (not just once).
+            time.sleep(4.0)
+
+            with lock:
+                snapshot = list(events)
+
+            fresh = [(ts, p) for ts, retain, p in snapshot if not retain]
+
+            self.assertGreaterEqual(
+                len(fresh), 3,
+                f"Expected >=3 non-retained publishes on '{topic}' over 4s "
+                f"with STATUS_INTERVAL=1000ms; got {len(fresh)}. "
+                f"All deliveries: {[(round(ts, 3), r) for ts, r, _ in snapshot]}. "
+                f"Likely the periodic timer is not re-arming after first fire.",
+            )
+
+            # Sanity: payload must be a JSON object (the full m_status blob)
+            self.assertIsInstance(
+                fresh[0][1], dict,
+                f"status payload is not a JSON object: {fresh[0][1]}",
+            )
+
+            # Inter-arrival cadence: 1000ms +/- 400ms tolerance for Docker
+            # scheduling jitter on consecutive fresh publishes.
+            gaps_ms = [
+                (fresh[i][0] - fresh[i - 1][0]) * 1000.0
+                for i in range(1, len(fresh))
+            ]
+            out_of_band = [g for g in gaps_ms if not (600 <= g <= 1400)]
+            self.assertEqual(
+                out_of_band, [],
+                f"status republish gaps out of 600-1400ms band on '{topic}'; "
+                f"all gaps (ms): {[round(g, 1) for g in gaps_ms]}",
+            )
+        finally:
+            mc.loop_stop()
+            mc.disconnect()
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers
