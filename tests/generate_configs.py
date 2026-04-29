@@ -417,8 +417,12 @@ def generate_twin_reflector_conf(name: str) -> str:
         f"PASSWORD={T.MQTT['password']}",
         f"TOPIC_PREFIX=svxreflector/{name}",
         "STATUS_INTERVAL=1000",
-        "",
     ]
+    # Twin pair members must have MQTT_NAME to avoid retained-topic collision
+    # when both reflectors share the same broker (enforced by Reflector::initialize).
+    if r.get("twin_of"):
+        lines.append(f"MQTT_NAME={name}")
+    lines.append("")
 
     if r.get("redis"):
         lines += [

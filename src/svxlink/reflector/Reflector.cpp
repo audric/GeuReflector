@@ -535,6 +535,29 @@ bool Reflector::initialize(Async::Config &cfg)
   initTrunkLinks();
   initTrunkServer();
   initTwinLink();
+
+  // Twin reflectors sharing a broker need disjoint MQTT subtrees;
+  // MQTT_NAME is the per-reflector path component. Fail fast at startup
+  // when the combination is unsafe.
+  {
+    std::string mqtt_topic_prefix;
+    const bool has_mqtt = m_cfg->getValue("MQTT", "TOPIC_PREFIX", mqtt_topic_prefix)
+                          && !mqtt_topic_prefix.empty();
+    if (m_twin_link != nullptr && has_mqtt)
+    {
+      std::string mqtt_name;
+      m_cfg->getValue("MQTT", "MQTT_NAME", mqtt_name);
+      if (mqtt_name.empty())
+      {
+        geulog::error("core",
+            "[MQTT] MQTT_NAME is required when [TWIN] is configured "
+            "(prevents retained-topic collision when twins share a broker). "
+            "Aborting startup.");
+        return false;
+      }
+    }
+  }
+
   initTwinServer();
   initSatelliteServer();
 
