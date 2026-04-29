@@ -548,6 +548,13 @@ void SatelliteLink::sendClientConnected(const std::string& callsign,
   if (!m_hello_received) return;
   // TG filter applied at sender — drop if the client's TG is outside
   // this satellite's filter.
+  //
+  // KNOWN ISSUE: V2 clients authenticate with tg=0 (TG selection happens
+  // later via select_tg), so a non-empty SATELLITE_FILTER currently
+  // suppresses every connect event. The fanoutClient{Disconnected,Rx,Status}
+  // paths in Reflector.cpp use `tg == 0 || link->filterPassesTg(tg)` to
+  // default-allow when no TG is selected yet — this method should mirror
+  // that pattern for consistency.
   if (!filterPassesTg(tg)) return;
   sendMsg(MsgPeerClientConnected(callsign, tg, ip));
 } /* SatelliteLink::sendClientConnected */
