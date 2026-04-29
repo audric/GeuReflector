@@ -510,7 +510,7 @@ bool Reflector::initialize(Async::Config &cfg)
           {
             refreshStatus();
             m_mqtt->publishFullStatus(m_status);
-            m_mqtt_status_timer.setEnable(true);
+            m_mqtt_status_timer.reset();
           });
     }
   }
