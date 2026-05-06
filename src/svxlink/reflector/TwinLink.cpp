@@ -750,6 +750,9 @@ void TwinLink::heartbeatTick(Async::Timer* /*t*/)
     {
       geulog::warn("twin", "TWIN: outbound RX timeout, disconnecting");
       m_con.disconnect();
+      // TcpPrioClient parks in StateDisconnected after a manual disconnect
+      // and won't auto-retry; re-arm explicitly so the link recovers.
+      m_con.connect();
       m_ob_hb_rx_cnt = 0;
     }
   }

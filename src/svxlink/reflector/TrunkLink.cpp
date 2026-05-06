@@ -1272,6 +1272,9 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
         geulog::error("trunk", "[", m_section, "] Paired outbound #", i,
                       " heartbeat timeout");
         m_ob_cons[i]->disconnect();
+        // TcpPrioClient parks in StateDisconnected after a manual disconnect
+        // and won't auto-retry; re-arm explicitly so the link recovers.
+        m_ob_cons[i]->connect();
       }
       else if (m_ob_states[i].hb_rx_cnt <= 5)
       {
@@ -1338,6 +1341,9 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
     {
       geulog::error("trunk", "[", m_section, "] Outbound heartbeat timeout");
       m_con.disconnect();
+      // TcpPrioClient parks in StateDisconnected after a manual disconnect
+      // and won't auto-retry; re-arm explicitly so the link recovers.
+      m_con.connect();
     }
     else if (m_ob_hb_rx_cnt <= 5)
     {

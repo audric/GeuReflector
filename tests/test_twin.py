@@ -385,6 +385,97 @@ class TestTwinIntegration(unittest.TestCase):
                 pass
 
     # ------------------------------------------------------------------
+    # Test 12: heartbeat-driven recovery (regression for the StateDisconnected
+    # lockup) — pausing ref2 stalls heartbeats while keeping TCP alive,
+    # forcing ref1 down the active-disconnect path.  Without the m_con.connect()
+    # re-arm in heartbeatTick(), TcpPrioClient parks in StateDisconnected and
+    # the link never comes back without a process restart.
+    # ------------------------------------------------------------------
+    def test_12_twin_heartbeat_recovery(self):
+        """Pausing ref2 stalls heartbeats but keeps TCP alive.  ref1 must
+        time out, *re-arm its dialer*, and reconnect once ref2 resumes —
+        all without a restart.
+
+        Distinct from test_06 (kill+restart): a SIGKILL drops TCP and
+        triggers the passive-disconnect reconnect path, which has always
+        worked.  Pause freezes the partner's userspace while the kernel
+        keeps acking, so only the heartbeat-RX-timeout active-disconnect
+        path is exercised — the path the StateDisconnected lockup bug
+        lived in.
+        """
+        def twin_outbound_up(ref):
+            # outbound_connected is the field the bug parks at false: when
+            # m_con.disconnect() drops it into StateDisconnected without a
+            # re-arm, isConnected() never returns true again.  inbound (the
+            # accept-side socket) recovers on its own when the partner
+            # reconnects, so it is not a reliable witness for this regression.
+            try:
+                t = get_status(*_http(ref)).get("twin", {})
+                return bool(t.get("outbound_connected") and t.get("outbound_hello"))
+            except Exception:
+                return False
+
+        # Step 1: baseline — outbound side of the twin link must be live.
+        wait_until(
+            lambda: twin_outbound_up("ref1"),
+            timeout=30.0,
+            msg="ref1 reports twin outbound down at test start; "
+                "cannot exercise heartbeat recovery",
+        )
+
+        # Step 2: pause ref2 (cgroup freezer — TCP stays half-alive)
+        result = docker_compose("pause", "reflector-ref2")
+        if result.returncode != 0:
+            self.skipTest(
+                f"docker compose pause reflector-ref2 failed "
+                f"(rc={result.returncode}): {result.stderr.strip()}"
+            )
+
+        paused = True
+        try:
+            # Step 3: ref1 must log the heartbeat RX timeout.  TWIN_HB_RX
+            # threshold is 5s, so this should fire well within 20s.
+            def ref1_saw_rx_timeout():
+                logs = docker_logs("ref1", since="25s")
+                return "TWIN: outbound RX timeout" in logs
+
+            wait_until(
+                ref1_saw_rx_timeout,
+                timeout=25.0,
+                interval=1.0,
+                msg="ref1 did not log TWIN outbound RX timeout within 25s "
+                    "of pause",
+            )
+
+            # Step 4: unpause and let the re-armed dialer reach ref2.
+            result = docker_compose("unpause", "reflector-ref2")
+            self.assertEqual(
+                result.returncode, 0,
+                f"docker compose unpause reflector-ref2 failed: "
+                f"{result.stderr.strip()}",
+            )
+            paused = False
+
+            # Step 5: ref1's outbound side must come back.  Without the
+            # m_con.connect() re-arm, it stays parked in StateDisconnected
+            # forever (the inbound side will reappear on its own as ref2
+            # dials in, but that does not exercise this fix).
+            wait_until(
+                lambda: twin_outbound_up("ref1"),
+                timeout=30.0,
+                interval=1.0,
+                msg="ref1 outbound did not recover after unpause "
+                    "(StateDisconnected lockup regression)",
+            )
+        finally:
+            if paused:
+                docker_compose("unpause", "reflector-ref2")
+            try:
+                wait_for_reflector(*_http("ref2"), timeout=30.0)
+            except AssertionError:
+                pass
+
+    # ------------------------------------------------------------------
     # Test 7: PAIRED trunk failover — kill ref1, refa still routes via ref2
     # ------------------------------------------------------------------
     def test_07_paired_trunk_failover(self):
