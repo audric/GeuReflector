@@ -701,7 +701,7 @@ class TestTrunkIntegration(unittest.TestCase):
         sys.stderr.flush()
         for name in REFLECTOR_NAMES:
             for peer in REFLECTOR_NAMES:
-                if peer != name:
+                if peer != name and T.should_trunk(name, peer):
                     wait_for_trunk_connected(
                         *_http(name), T.trunk_section_name(name, peer), timeout=30.0)
         labels = "\u2194".join(n.upper() for n in REFLECTOR_NAMES)
@@ -729,11 +729,12 @@ class TestTrunkIntegration(unittest.TestCase):
     # Test 1: Mesh connectivity (no harness needed)
     # ------------------------------------------------------------------
     def test_01_mesh_connectivity(self):
-        """All trunk links in the mesh are connected."""
+        """All trunk links in the mesh are connected (only the trunks the
+        topology declares — sparse layouts skip non-existent pairs)."""
         for name in REFLECTOR_NAMES:
             status = get_status(*_http(name))
             for peer in REFLECTOR_NAMES:
-                if peer == name:
+                if peer == name or not T.should_trunk(name, peer):
                     continue
                 section = T.trunk_section_name(name, peer)
                 self.assertTrue(
@@ -2470,6 +2471,158 @@ class TestTrunkIntegration(unittest.TestCase):
         finally:
             sat_a.close()
             sat_b.close()
+
+    # ------------------------------------------------------------------
+    # Test 37: Gateway prefix-routing through a non-owner reflector
+    # ------------------------------------------------------------------
+    def test_37_gateway_prefix_routing(self):
+        """Audio crosses two trunk legs via a non-owner gateway, no
+        CLUSTER_TGS involved — pure longest-prefix-match.
+
+        Topology (from topology.py):
+          a  prefix 122   trunks: b, c           (no direct trunk to d)
+          b  prefix 121   trunks: a, c, d        (gateway)
+          c  prefix 1     trunks: a, b
+          d  prefix 1219  trunks: b only
+
+        TG `121950` is owned by d (longest match `1219`), but a has no
+        [TRUNK_*_D] section. a's longest match is `121` → routes to b.
+        b is a non-owner of `121950` (longer prefix `1219` wins in its
+        m_all_prefixes), so under the old `isLocalTG` gate b would have
+        delivered locally and stopped — d would never hear it. With the
+        gate dropped, b's per-trunk filter (isSharedTG selects TRUNK_B_D
+        as the longest-match owner) routes the audio onward to d.
+
+        This test is the cross-mesh case described in
+        docs/TOPOLOGY_EXAMPLES.md §2 — it must work without the operator
+        listing every regional TG in CLUSTER_TGS.
+        """
+        # Skip gracefully if the topology doesn't have d (e.g. a partial
+        # regeneration in someone's working tree).
+        if "d" not in REFLECTOR_NAMES:
+            self.skipTest("test_37 requires reflector 'd' in topology")
+
+        tg = 121950  # longest-match owner: d (1219); next-longest: b (121)
+
+        a_client = ClientPeer()
+        d_client = ClientPeer()
+        try:
+            for client, name, cs, pw in [
+                (a_client, "a", CLIENT_CALLSIGN,  CLIENT_PASSWORD),
+                (d_client, "d", CLIENT2_CALLSIGN, CLIENT2_PASSWORD),
+            ]:
+                port = T.mapped_client_port(name)
+                client.connect(HOST, port)
+                client.authenticate(callsign=cs, password=pw)
+                client.setup_udp(udp_port=port)
+                client.select_tg(tg)
+            time.sleep(0.8)
+
+            hb_frame = struct.pack("!H", 1)  # MsgHeartbeat
+            def keepalive():
+                for c in (a_client, d_client):
+                    try:
+                        send_frame(c.tcp, hb_frame)
+                    except OSError:
+                        pass
+
+            def send_burst(sender, frames=6):
+                for _ in range(frames):
+                    sender.send_udp_audio(b"\xAB\xCD" * 80)
+                    time.sleep(0.02)
+                sender.send_udp_flush()
+
+            # Pass 1: prime peer-interest on the return leg.
+            # a -> b (longest-match 121) -> d (b's longest-match 1219)
+            # registers a-interested at b's TRUNK_A_B and b-interested at
+            # d's TRUNK_B_D, so the return path d -> b -> a will work.
+            a_client.recv_udp_all(timeout=0.05)
+            d_client.recv_udp_all(timeout=0.05)
+            send_burst(a_client)
+            time.sleep(1.2)
+            keepalive()
+            d_client.recv_udp_all(timeout=0.3)
+
+            # Forward leg measurement: a -> ... -> d
+            a_client.recv_udp_all(timeout=0.05)
+            d_client.recv_udp_all(timeout=0.05)
+            send_burst(a_client)
+            time.sleep(1.2)
+            keepalive()
+            d_msgs = d_client.recv_udp_all(timeout=0.8)
+            d_audio = sum(1 for t, _ in d_msgs if t == UDP_AUDIO)
+            d_flush = sum(1 for t, _ in d_msgs if t == UDP_FLUSH)
+            self.assertGreater(d_audio + d_flush, 0,
+                f"forward leg failed: a->b->d on TG {tg} delivered no "
+                f"audio/flush to d (gateway forwarding broken)")
+
+            # Return leg measurement: d -> ... -> a
+            a_client.recv_udp_all(timeout=0.05)
+            d_client.recv_udp_all(timeout=0.05)
+            send_burst(d_client)
+            time.sleep(1.2)
+            keepalive()
+            a_msgs = a_client.recv_udp_all(timeout=0.8)
+            a_audio = sum(1 for t, _ in a_msgs if t == UDP_AUDIO)
+            a_flush = sum(1 for t, _ in a_msgs if t == UDP_FLUSH)
+            self.assertGreater(a_audio + a_flush, 0,
+                f"return leg failed: d->b->a on TG {tg} delivered no "
+                f"audio/flush to a (interest-based return path broken)")
+        finally:
+            a_client.close()
+            d_client.close()
+
+    # ------------------------------------------------------------------
+    # Test 38: Cluster TG broadcast from a local V2 client
+    # ------------------------------------------------------------------
+    def test_38_cluster_tg_local_client_broadcast(self):
+        """Local V2 client keys a cluster TG; another reflector's V2 client
+        on the same TG hears it.
+
+        Cluster TGs are broadcast by `onLocalAudio` regardless of prefix
+        ownership (the outbound path passes `isClusterTG`). This test
+        guards that property — the inbound trunk-to-trunk gate
+        (`shouldRelayInbound`) deliberately *blocks* cluster relay to
+        prevent loops, so the only way for a cluster TG to reach another
+        reflector is the local-client-originated broadcast.
+        """
+        if not T.CLUSTER_TGS:
+            self.skipTest("test_38 requires at least one CLUSTER_TG")
+
+        tg = T.CLUSTER_TGS[0]
+        other = next(n for n in REFLECTOR_NAMES if n != self.PRIMARY)
+
+        sender = ClientPeer()
+        receiver = ClientPeer()
+        try:
+            tx_port = T.mapped_client_port(self.PRIMARY)
+            sender.connect(HOST, tx_port)
+            sender.authenticate(callsign=CLIENT_CALLSIGN, password=CLIENT_PASSWORD)
+            sender.setup_udp(udp_port=tx_port)
+            sender.select_tg(tg)
+
+            rx_port = T.mapped_client_port(other)
+            receiver.connect(HOST, rx_port)
+            receiver.authenticate(callsign=CLIENT2_CALLSIGN, password=CLIENT2_PASSWORD)
+            receiver.setup_udp(udp_port=rx_port)
+            receiver.select_tg(tg)
+            time.sleep(0.4)
+
+            receiver.recv_udp_all(timeout=0.05)
+            for _ in range(6):
+                sender.send_udp_audio(b"\xBE\xEF" * 80)
+                time.sleep(0.02)
+            time.sleep(1.0)
+
+            msgs = receiver.recv_udp_all(timeout=1.5)
+            audio_count = sum(1 for t, _ in msgs if t == UDP_AUDIO)
+            flush_count = sum(1 for t, _ in msgs if t == UDP_FLUSH)
+            self.assertGreater(audio_count + flush_count, 0,
+                f"cluster TG {tg} broadcast from reflector-{self.PRIMARY} "
+                f"did not reach V2 client on reflector-{other}")
+        finally:
+            sender.close()
+            receiver.close()
 
 
 # ---------------------------------------------------------------------------

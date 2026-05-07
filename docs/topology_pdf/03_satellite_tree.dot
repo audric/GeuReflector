@@ -1,0 +1,49 @@
+// Satellite tree — Italian Zones are satellites of IT 222.
+// Only IT 222 is on the international trunk mesh.
+digraph SatTree {
+  layout = dot;
+  rankdir = TB;
+  bgcolor = "transparent";
+  margin = 0.3;
+  splines = true;
+  ranksep = 0.9;
+  nodesep = 0.4;
+
+  node [shape=box, style="filled,rounded", fontname="Helvetica-Bold",
+        fontsize=13, penwidth=2, width=1.05, height=0.65, fixedsize=true];
+
+  // Foreign country gateways (top row)
+  subgraph cluster_intl {
+    label = "International trunk mesh (port :5302)";
+    fontname = "Helvetica-Bold"; fontsize = 12; color = "#1a4fa3";
+    style = "rounded,dashed"; bgcolor = "#f4f8ff";
+    SE [label="SE\n240",  fillcolor="#dde8fb", color="#1a4fa3"];
+    DE [label="DE\n262",  fillcolor="#dde8fb", color="#1a4fa3"];
+    IT [label="IT\n222",  fillcolor="#fde2d4", color="#c0531c"];
+  }
+
+  // Satellite zones hanging off IT 222
+  subgraph cluster_sat {
+    label = "Italian satellite tree (port :5303)";
+    fontname = "Helvetica-Bold"; fontsize = 12; color = "#1e7d34";
+    style = "rounded,dashed"; bgcolor = "#f5fbf6";
+    Z1 [label="IT-Z1\n2221\nfilter=2221", fillcolor="#dff3e0", color="#1e7d34", height=0.85];
+    Z2 [label="IT-Z2\n2222\nfilter=2222", fillcolor="#dff3e0", color="#1e7d34", height=0.85];
+    Z3 [label="IT-Z3\n2223\nfilter=2223", fillcolor="#dff3e0", color="#1e7d34", height=0.85];
+    Z4 [label="IT-Z4\n2224\nfilter=2224", fillcolor="#dff3e0", color="#1e7d34", height=0.85];
+    Z5 [label="IT-Z5\n2225\nfilter=2225", fillcolor="#dff3e0", color="#1e7d34", height=0.85];
+  }
+
+  // Trunk edges (intl full mesh)
+  edge [color="#5f6368", penwidth=1.5, dir=none, constraint=false];
+  SE -> DE; SE -> IT; DE -> IT;
+
+  // Satellite mirror edges (IT 222 ↔ each zone)
+  edge [color="#c0531c", penwidth=1.6, style=dashed, dir=both,
+        arrowhead=normal, arrowtail=normal, arrowsize=0.6, constraint=true];
+  IT -> Z1;
+  IT -> Z2;
+  IT -> Z3;
+  IT -> Z4;
+  IT -> Z5;
+}

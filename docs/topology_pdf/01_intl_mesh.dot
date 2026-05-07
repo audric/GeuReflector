@@ -1,0 +1,18 @@
+// International full-mesh — 3 European country gateways, all-to-all trunk.
+graph IntlMesh {
+  layout = circo;
+  bgcolor = "transparent";
+  margin = 0.3;
+  node [shape=box, style="filled,rounded", fillcolor="#dde8fb",
+        color="#1a4fa3", fontname="Helvetica-Bold", fontsize=16, penwidth=2,
+        width=1.1, height=0.7, fixedsize=true];
+  edge [color="#5f6368", penwidth=1.6];
+
+  IT [label="IT\n222", fillcolor="#fde2d4", color="#c0531c"];
+  SE [label="SE\n240"];
+  DE [label="DE\n262"];
+
+  IT -- SE;
+  IT -- DE;
+  SE -- DE;
+}

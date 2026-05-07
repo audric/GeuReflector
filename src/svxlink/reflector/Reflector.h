@@ -253,6 +253,24 @@ class Reflector : public sigc::trackable
     // Used to gate owner-relay fanout of trunk-received audio.
     bool isLocalTG(uint32_t tg) const;
 
+    // True iff any prefix in m_all_prefixes (local + every configured
+    // [TRUNK_x] REMOTE_PREFIX) prefix-matches this TG. Used to gate
+    // trunk-to-trunk fanout: a non-owner gateway forwards onward only if
+    // it knows a route via prefix table. A bare cluster TG with no prefix
+    // anywhere in the mesh has no route and stays single-hop.
+    bool hasPrefixRoute(uint32_t tg) const;
+
+    // True iff inbound trunk traffic for this TG should be re-forwarded
+    // to other trunk peers. Composes ownership, prefix routing, and the
+    // anti-loop rule for cluster TGs:
+    //   - we own it -> yes (existing owner-fanout)
+    //   - it is a cluster TG -> no (deliberately single-hop; cluster TGs
+    //     are broadcast outbound from local clients, never relayed
+    //     between trunk peers, since they would loop in cyclic meshes)
+    //   - we have a prefix route (gateway between meshes) -> yes
+    //   - otherwise -> no
+    bool shouldRelayInbound(uint32_t tg) const;
+
     // Owner-relay fanout: when we receive trunk traffic for a TG we own,
     // forward to every other trunk peer except `src`. Each peer's TrunkLink
     // applies its own shared/cluster/interest filter, so links with no
