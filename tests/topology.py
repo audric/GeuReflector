@@ -14,6 +14,11 @@ REFLECTORS = {
     "a": {"prefix": ["122"],  "trunk_port_base": 15000},
     "b": {"prefix": ["121"],  "trunk_port_base": 25000},
     "c": {"prefix": ["1"],    "trunk_port_base": 35000},
+    # `d` is sparse-trunked: only connects to `b`. With prefix `1219`
+    # (sub-prefix of b's `121`), it lets test_37 verify gateway forwarding
+    # — a's audio for TG `121950` must reach d via the b gateway, even
+    # though a has no direct trunk to d.
+    "d": {"prefix": ["1219"], "trunk_port_base": 45000, "peers": ["b"]},
 }
 
 # Fake trunk peers used by the test harness.
@@ -101,6 +106,22 @@ TEST_CLIENTS = [
 def trunk_secret(name_a: str, name_b: str) -> str:
     pair = tuple(sorted([name_a, name_b]))
     return f"secret_{pair[0]}{pair[1]}"
+
+def _allowed_peers(name: str) -> set:
+    """Other reflector names that `name` is willing to trunk to.
+
+    Default is full mesh (all other reflectors). A reflector can opt into
+    a sparse layout by setting `peers: ["x", "y"]` in REFLECTORS — useful
+    for testing gateway-style prefix routing.
+    """
+    me = REFLECTORS[name]
+    if "peers" in me:
+        return set(me["peers"])
+    return {n for n in REFLECTORS if n != name}
+
+def should_trunk(a: str, b: str) -> bool:
+    """A trunk between a and b exists iff both sides allow it."""
+    return b in _allowed_peers(a) and a in _allowed_peers(b)
 
 # ---------------------------------------------------------------------------
 # Helpers for prefix handling

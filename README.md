@@ -40,12 +40,19 @@ automatically.
   multiple prefix groups (e.g. `LOCAL_PREFIX=11,12,13`)
 - **Server-to-server trunk links** — persistent TCP connections between pairs of
   reflectors carry talker state and audio for shared TGs
-- **Full-mesh topology** — any number of reflectors can be trunked together;
-  every pair has a direct link. Audio distribution uses **single-hop
-  owner-relay**: a non-owner sends to the TG's owner, and the owner fans the
-  audio out to every other trunk peer with interest. No daisy-chain relaying,
-  so conversations on a shared TG work between clients on any two (or more)
-  reflectors
+- **Full-mesh topology with gateway prefix routing** — any number of
+  reflectors can be trunked together; every pair has a direct link inside a
+  mesh. Audio distribution uses **owner-relay**: a non-owner sends to the
+  TG's owner, and the owner fans the audio out to every other trunk peer
+  with interest. A reflector with two trunk legs (e.g. a country gateway
+  between an international mesh and a national mesh) automatically bridges
+  inbound traffic toward the longest-prefix-match owner via
+  `Reflector::shouldRelayInbound` — no `CLUSTER_TGS` hack required.
+  Cluster TGs keep an anti-loop single-hop semantic. See
+  [`docs/TOPOLOGY_EXAMPLES.md`](docs/TOPOLOGY_EXAMPLES.md) for a visual
+  cookbook of the five supported shapes (international full-mesh,
+  national mesh joined at gateway, satellite tree, hybrid
+  satellite-under-regional, HA twin pair)
 - **Unlimited concurrent conversations** — the trunk TCP connection multiplexes
   all active TGs simultaneously; the only per-TG rule is one talker at a time
 - **Independent talker arbitration** — each reflector arbitrates its own clients;
@@ -524,6 +531,11 @@ The PTY path is set by `COMMAND_PTY` in `[GLOBAL]` (default
 - [`docs/PEER_PROTOCOL.md`](docs/PEER_PROTOCOL.md) — full wire protocol
   specification: message format, handshake sequence, talker arbitration
   tie-breaking, heartbeat, and the complete message type table
+- [`docs/TOPOLOGY_EXAMPLES.md`](docs/TOPOLOGY_EXAMPLES.md) — visual
+  cookbook of the five supported topology shapes (international
+  full-mesh, national mesh joined at gateway, satellite tree, hybrid,
+  HA twin pair) with rendered diagrams; PDF version in
+  [`docs/TOPOLOGY_EXAMPLES.pdf`](docs/TOPOLOGY_EXAMPLES.pdf)
 - [`docs/DEPLOYMENT_ITALY.md`](docs/DEPLOYMENT_ITALY.md) — complete national
   deployment example for Italy (20 regions, full mesh)
 - [`docs/DEPLOYMENT_ITALY_IT.md`](docs/DEPLOYMENT_ITALY_IT.md) — same document

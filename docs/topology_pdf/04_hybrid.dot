@@ -1,0 +1,43 @@
+// Hybrid — two-domain trunk topology (intl + national, joined at IT 222),
+// plus an MI club satellite hanging off Z2 over port :5303.
+graph Hybrid {
+  layout = neato;
+  bgcolor = "transparent";
+  margin = 0.3;
+  overlap = false;
+  splines = true;
+
+  node [shape=box, style="filled,rounded", fontname="Helvetica-Bold",
+        fontsize=13, penwidth=2, width=1.0, height=0.65, fixedsize=true];
+
+  // International domain on the left
+  SE [label="SE\n240", fillcolor="#dde8fb", color="#1a4fa3", pos="-2.8, 0.9!"];
+  DE [label="DE\n262", fillcolor="#dde8fb", color="#1a4fa3", pos="-2.8,-0.9!"];
+
+  // Country gateway (hinge)
+  IT [label="IT\n222", fillcolor="#fde2d4", color="#c0531c", pos="0,0!"];
+
+  // National domain on the right
+  Z1 [label="IT-Z1\n2221", fillcolor="#dff3e0", color="#1e7d34", pos="2.6, 1.5!"];
+  Z2 [label="IT-Z2\n2222", fillcolor="#dff3e0", color="#1e7d34", pos="3.1, 0.5!"];
+  Z3 [label="IT-Z3\n2223", fillcolor="#dff3e0", color="#1e7d34", pos="3.1,-0.5!"];
+  Z4 [label="IT-Z4\n2224", fillcolor="#dff3e0", color="#1e7d34", pos="2.6,-1.5!"];
+
+  // Satellite hanging off Z2 (NAT'd club reflector)
+  MI [label="MI club\n(satellite)\nfilter=2222",
+      fillcolor="#fff4d6", color="#a37300", style="filled,rounded,dashed",
+      height=0.95, width=1.4, pos="5.6, 0.5!"];
+
+  edge [color="#5f6368", penwidth=1.2];
+
+  // Two domains joined at IT
+  SE -- DE; SE -- IT; DE -- IT;
+  IT -- Z1; IT -- Z2; IT -- Z3; IT -- Z4;
+  Z1 -- Z2; Z1 -- Z3; Z1 -- Z4;
+  Z2 -- Z3; Z2 -- Z4;
+  Z3 -- Z4;
+
+  // Satellite mirror edge (Z2 ↔ MI)
+  edge [color="#a37300", penwidth=2.0, style=dashed];
+  Z2 -- MI;
+}

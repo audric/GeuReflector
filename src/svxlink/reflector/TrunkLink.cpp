@@ -1027,10 +1027,13 @@ void TrunkLink::handleMsgPeerTalkerStart(std::istream& is)
                                                     peerId());
   m_reflector->notifyExternalTrunkTalkerStart(local_tg, m_section, msg.callsign());
 
-  // Owner-relay: if we own this TG, propagate the talker-start to every
-  // other interested trunk peer so their local clients and our mesh-wide
-  // audience learn about the remote talker.
-  if (m_reflector->isLocalTG(local_tg))
+  // Prefix-routed fanout: forward to every other trunk peer if we have a
+  // route for this TG in our prefix table. isSharedTG inside the per-trunk
+  // filter (TrunkLink::onLocalTalkerStart) selects the longest-match owner;
+  // isPeerInterestedTG covers the return leg. Cluster TGs with no prefix
+  // match anywhere stay single-hop — gating on hasPrefixRoute prevents
+  // them from looping in cyclic trunk topologies.
+  if (m_reflector->shouldRelayInbound(local_tg))
   {
     m_reflector->forwardTrunkTalkerStartToOtherTrunks(this, local_tg,
                                                      msg.callsign());
@@ -1064,8 +1067,9 @@ void TrunkLink::handleMsgPeerTalkerStop(std::istream& is)
   TGHandler::instance()->clearTrunkTalkerForTG(local_tg);
   m_reflector->notifyExternalTrunkTalkerStop(local_tg, m_section);
 
-  // Owner-relay: propagate the talker-stop to every other interested peer.
-  if (m_reflector->isLocalTG(local_tg))
+  // Prefix-routed fanout (mirrors talker-start): only fan out if we have
+  // a route. Cluster TGs without a prefix match stay single-hop.
+  if (m_reflector->shouldRelayInbound(local_tg))
   {
     m_reflector->forwardTrunkTalkerStopToOtherTrunks(this, local_tg);
   }
@@ -1117,9 +1121,9 @@ void TrunkLink::handleMsgPeerAudio(std::istream& is)
   // Forward trunk audio to connected satellites
   m_reflector->forwardAudioToSatellitesExcept(nullptr, local_tg, msg.audio());
 
-  // Owner-relay: when the TG is ours, fan the audio out to every other
-  // trunk peer that has interest (so mesh-wide audience hears the talker).
-  if (m_reflector->isLocalTG(local_tg))
+  // Prefix-routed fanout (mirrors talker-start): only fan out if we have
+  // a route. Cluster TGs without a prefix match stay single-hop.
+  if (m_reflector->shouldRelayInbound(local_tg))
   {
     m_reflector->forwardTrunkAudioToOtherTrunks(this, local_tg, msg.audio());
   }
@@ -1153,9 +1157,9 @@ void TrunkLink::handleMsgPeerFlush(std::istream& is)
   // Forward trunk flush to connected satellites
   m_reflector->forwardFlushToSatellitesExcept(nullptr, local_tg);
 
-  // Owner-relay: when the TG is ours, fan the flush out to every other
-  // trunk peer so their clients see end-of-stream as well.
-  if (m_reflector->isLocalTG(local_tg))
+  // Prefix-routed fanout (mirrors talker-start): only fan out if we have
+  // a route. Cluster TGs without a prefix match stay single-hop.
+  if (m_reflector->shouldRelayInbound(local_tg))
   {
     m_reflector->forwardTrunkFlushToOtherTrunks(this, local_tg);
   }

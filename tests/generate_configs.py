@@ -48,8 +48,11 @@ def generate_reflector_conf(name: str) -> str:
             lines.append(f"{client['group']}={client['password']}")
             groups_seen.discard(client['group'])
 
-    # Trunk sections for each peer reflector
+    # Trunk sections for each peer reflector. Honour the `peers` filter
+    # so tests can build sparse trunk topologies (e.g. gateway routing).
     for peer_name in sorted(peers):
+        if not T.should_trunk(name, peer_name):
+            continue
         peer = peers[peer_name]
         section = T.trunk_section_name(name, peer_name)
         secret = T.trunk_secret(name, peer_name)

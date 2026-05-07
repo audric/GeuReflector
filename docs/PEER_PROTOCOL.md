@@ -98,27 +98,54 @@ at reflector B and carries only TGs whose decimal string starts with B's prefix
 hop is direct, and audio distribution across more than two reflectors is
 handled by owner-relay (see below), not by daisy-chain forwarding.
 
-### Owner-Relay Fanout
+### Inbound Relay (`shouldRelayInbound`)
 
 Prefix routing alone gets talker state and audio from a non-owner to the TG's
 owner, and from the owner to its local clients.  But in a mesh of 3+
 reflectors, the owner is also the only reflector that sees every non-owner's
 traffic on that TG — so for every non-owner to hear every other, the owner
-must fan out.
+must fan out.  Additionally, a reflector with two trunk legs (a *gateway*
+between meshes) needs to bridge prefix-routed traffic from one leg to the
+other.
 
-When `TrunkLink::handleMsgPeerTalkerStart` / `handleMsgPeerTalkerStop` /
-`handleMsgPeerAudio` / `handleMsgPeerFlush` runs on the reflector that
-**owns** the TG (`Reflector::isLocalTG(tg)`), after the existing local
-delivery the event is re-forwarded to every **other** trunk peer through the
-same per-link filter (`isSharedTG` / `isClusterTG` / `isPeerInterestedTG`).
-The source trunk is excluded from the fanout.
+`TrunkLink::handleMsgPeerTalkerStart` / `handleMsgPeerTalkerStop` /
+`handleMsgPeerAudio` / `handleMsgPeerFlush` invoke
+`Reflector::shouldRelayInbound(tg)` after local delivery to decide whether
+to re-forward to other trunk peers via the same per-link filter
+(`isSharedTG` / `isClusterTG` / `isPeerInterestedTG`).  The source trunk is
+always excluded from the fanout.
 
-This preserves the single-hop invariant:
+```cpp
+bool Reflector::shouldRelayInbound(uint32_t tg) const {
+  if (isLocalTG(tg))   return true;   // owner-relay fanout
+  if (isClusterTG(tg)) return false;  // anti-loop: cluster TGs stay single-hop
+  return hasPrefixRoute(tg);          // gateway: have route, forward onward
+}
+```
 
-- **Non-owners** receiving trunk audio deliver to local clients and stop —
-  they never relay to another trunk.
-- **The owner** is the one and only relay.  Because the source link is
-  skipped, the fanout cannot echo back.
+Three regimes follow:
+
+- **Owner relay (`isLocalTG`).** When we own the TG, we are the one and only
+  relay for full-mesh fanout.  Source-trunk exclusion prevents echo back.
+- **Cluster TGs.** Cluster TGs received inbound on a trunk are delivered
+  locally and *not* re-forwarded to other trunks — this is deliberate.
+  Cluster TGs are broadcast outbound by every reflector's *local* clients
+  (the `isClusterTG` branch in `onLocalAudio`); transitive trunk-to-trunk
+  relay would loop in any cyclic mesh.  The recipient still checks
+  `isClusterTG` on inbound to admit the frame for local delivery.
+- **Gateway prefix routing.** When we are a non-owner of the TG but
+  `hasPrefixRoute(tg)` returns true — i.e. some prefix in `m_all_prefixes`
+  prefix-matches the TG — we forward onward through `onLocal*`.  The
+  per-link `isSharedTG` filter (longest-prefix-match against the *remote*
+  prefix) selects the unique trunk whose `REMOTE_PREFIX` is the longest
+  match, so the relay goes toward the actual owner, not in all directions.
+  `isPeerInterestedTG` covers the return leg back through the same gateway.
+
+Loop safety holds because **peer interest is populated only on direct receive**
+(`TrunkLink.cpp:1025, 1111`).  In any chain X→Y→Z, Z registers Y as
+interested but never X — so when audio circulates back, Y's onward fanout
+finds nothing matching for X (no `isSharedTG`, no interest), and stops.  No
+TTLs, no path lists.
 
 Example (refA prefix `240`, refB prefix `262`, refC prefix `222`, mesh
 trunked, a client on each of refA and refC monitoring TG `2626` which is
@@ -132,12 +159,14 @@ refA client PTT on 2626
           └─► refC broadcasts to local clients on 2626 (no further relay)
 ```
 
-**Scales to any mesh size.**  In a mesh of N reflectors with owner B and
-N−1 non-owners, when any non-owner talks:
+**Scales to any mesh size.**  Inside a single mesh of N reflectors with
+owner B and N−1 non-owners, when any non-owner talks:
 
 - sender → B directly (prefix match)
 - B fans out to the other N−2 peers (source link excluded)
-- each non-owner delivers locally and stops
+- each non-owner delivers locally and stops *(unless it has a prefix route
+  into another mesh, in which case `shouldRelayInbound` bridges onward —
+  see the gateway case above)*
 
 Complexity per audio frame on the owner is **O(N) TCP sends** — inherent to
 any mesh fanout, not a new limitation.

@@ -1,0 +1,43 @@
+// HA twin pair — DE is run as a twin pair (DE-A and DE-B both own
+// LOCAL_PREFIX=262). External peers (IT, SE) hold one [TRUNK_x] section
+// with PAIRED=1 and HOST=de-a,de-b — each frame is sticky-routed to one
+// of the two TCP sockets with instant failover on socket failure.
+graph TwinPair {
+  layout = neato;
+  bgcolor = "transparent";
+  margin = 0.3;
+  overlap = false;
+  splines = true;
+
+  node [shape=box, style="filled,rounded", fontname="Helvetica-Bold",
+        fontsize=13, penwidth=2, width=1.05, height=0.7, fixedsize=true];
+
+  // External peers on the left
+  SE [label="SE\n240", fillcolor="#dde8fb", color="#1a4fa3", pos="-3.5, 1.5!"];
+  IT [label="IT\n222", fillcolor="#fde2d4", color="#c0531c", pos="-3.5,-1.5!"];
+
+  // Twin pair on the right (both own LOCAL_PREFIX=262)
+  DEA [label="DE-A\n262", fillcolor="#e6dcff", color="#5430a8", pos="3.0, 1.5!"];
+  DEB [label="DE-B\n262", fillcolor="#e6dcff", color="#5430a8", pos="3.0,-1.5!"];
+
+  // Annotation node sitting to the right of the twin link
+  TWINANN [label="[TWIN] link\nfull-state mirror\nheartbeat:\n  send every 2 s\n  fail after 5 s silence",
+           shape=plaintext, fontsize=10, fontcolor="#5430a8",
+           fontname="Helvetica-Bold",
+           pos="5.6, 0!", width=2.0, height=1.4];
+
+  // External trunk edges — each external peer holds ONE [TRUNK_x] toward
+  // the pair, manifested as two TCP sockets (sticky, failover).
+  edge [color="#5f6368", penwidth=1.2];
+  IT -- SE;
+  IT -- DEA; IT -- DEB;
+  SE -- DEA; SE -- DEB;
+
+  // Twin link (purpose-built, symmetric, full-state mirror).
+  edge [color="#5430a8", penwidth=3.0, style=bold];
+  DEA -- DEB;
+
+  // Invisible edge to anchor the annotation near the twin link
+  edge [style=invis, len=0.5];
+  DEB -- TWINANN;
+}

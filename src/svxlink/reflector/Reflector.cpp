@@ -2968,6 +2968,29 @@ bool Reflector::isLocalTG(uint32_t tg) const
 } /* Reflector::isLocalTG */
 
 
+bool Reflector::hasPrefixRoute(uint32_t tg) const
+{
+  const std::string s = std::to_string(tg);
+  for (const auto& prefix : m_all_prefixes)
+  {
+    if (s.size() >= prefix.size() &&
+        s.compare(0, prefix.size(), prefix) == 0)
+    {
+      return true;
+    }
+  }
+  return false;
+} /* Reflector::hasPrefixRoute */
+
+
+bool Reflector::shouldRelayInbound(uint32_t tg) const
+{
+  if (isLocalTG(tg)) return true;
+  if (isClusterTG(tg)) return false;
+  return hasPrefixRoute(tg);
+} /* Reflector::shouldRelayInbound */
+
+
 void Reflector::forwardTrunkAudioToOtherTrunks(const TrunkLink* src,
                                                uint32_t tg,
                                                const std::vector<uint8_t>& audio)
