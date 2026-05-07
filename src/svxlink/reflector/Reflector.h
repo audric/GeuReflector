@@ -414,6 +414,8 @@ class Reflector : public sigc::trackable
     MqttPublisher*              m_mqtt = nullptr;
     RedisStore*                 m_redis = nullptr;
     Async::Timer                m_mqtt_status_timer;
+    // Tg intresst tinmer 
+    Async::Timer* timmer_send_intresstedtg;
 
     // Per-local-callsign rx-debounce state used by fanoutClientRx so that
     // peer/<id>/client/<call>/rx wire emit is capped at 2 Hz per callsign.
@@ -499,6 +501,9 @@ class Reflector : public sigc::trackable
     std::vector<CertInfo> getAllCerts(void);
     std::vector<CertInfo> getAllPendingCSRs(void);
     std::string formatCerts(bool signedCerts=true, bool pendingCerts=true);
+    void SendTgIntresse();
+    void SendTgIntresse_timmer(Async::Timer* t);
+    
 };  /* class Reflector */
 
 
