@@ -193,10 +193,17 @@ CHAT_ID = "YOUR_CHAT_ID"
 
 def on_message(client, userdata, msg):
     data = json.loads(msg.payload)
+    tg = msg.topic.split("/")[-2]
     if msg.topic.endswith("/start"):
-        tg = msg.topic.split("/")[-2]
         bot.send_message(CHAT_ID,
             f"📡 {data['callsign']} talking on TG {tg}")
+    elif msg.topic.endswith("/stop") and "duration_ms" in data:
+        # Skip kerchunks under 1 s; pretty-print the rest.
+        if data["duration_ms"] >= 1000:
+            secs = data["duration_ms"] / 1000
+            bot.send_message(CHAT_ID,
+                f"🔇 {data['callsign']} stopped on TG {tg} "
+                f"({secs:.1f} s)")
 
 client = mqtt.Client()
 client.username_pw_set("user", "pass")
@@ -205,6 +212,13 @@ client.connect("mqtt.example.com", 1883)
 client.subscribe("svxreflector/+/talker/#")
 client.loop_forever()
 ```
+
+The `start` and `stop` payloads carry `ts` (Unix epoch ms) and `stop`
+additionally carries `duration_ms` when a matching start was observed —
+see [`docs/MQTT.md`](MQTT.md) for the schema and edge cases. Filtering
+on `duration_ms < 1000` is a cheap way to suppress kerchunks; using
+`ts` lets you compute end-to-end latency between the reflector and
+your bot pipeline.
 
 ---
 

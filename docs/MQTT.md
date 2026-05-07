@@ -62,10 +62,31 @@ below).
 {TOPIC_PREFIX}/talker/{tg}/stop
 ```
 
-Payload:
+Payload (start):
 ```json
-{"callsign": "ON4ABC", "source": "local"}
+{"callsign": "ON4ABC", "source": "local", "ts": 1730981234567}
 ```
+
+Payload (stop):
+```json
+{"callsign": "ON4ABC", "source": "local", "ts": 1730981258912, "duration_ms": 24345}
+```
+
+`ts` is the reflector's wall-clock time at publish, in Unix-epoch
+milliseconds. `duration_ms` is included on the stop event when a matching
+start was observed by the same `MqttPublisher` instance **and** the
+resulting duration is non-negative. It is omitted in two cases:
+
+- The reflector restarted (or the talker started before this process was
+  running) — no matching start was recorded.
+- Wall-clock time moved backwards between start and stop (e.g. an NTP
+  correction during a transmission). Negative durations are useless, so
+  the field is dropped rather than published as a confusing value;
+  consumers that need a duration can fall back to the gap between their
+  own observation timestamps for the start/stop topics.
+
+Both fields are **additive** — older consumers that only read `callsign`
+continue to work unchanged.
 
 These topics are **local-only** — they fire only for clients directly connected
 to this reflector. Non-retained. Dashboards that want every talker on the mesh
@@ -180,6 +201,11 @@ purely additive change.
 
 `rx` and `status` payloads are JSON strings with the same schema as their
 local equivalents (`client/.../rx` and `client/.../status`).
+
+`peer/.../talker/.../start` and `.../stop` carry the same `ts` /
+`duration_ms` fields as the local `talker/.../{start,stop}` topics
+(see above). On stop, `duration_ms` is included when a matching start
+was observed for the same `(peer_id, tg)` pair.
 
 **Retained-store growth note.** When a peer client disconnects, the retained
 `peer/{peer_id}/client/{callsign}/rx` and `.../status` topics survive in the

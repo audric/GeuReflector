@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <ctime>
 #include <vector>
+#include <map>
+#include <utility>
 #include <json/json.h>
 #include "ReflectorMsg.h"
 
@@ -91,6 +93,14 @@ class MqttPublisher
     int                 m_last_pub_err_code   = 0;
     time_t              m_last_pub_err_logged = 0;
     uint64_t            m_pub_err_suppressed  = 0;
+
+    // Talker-start timestamps, used to compute duration_ms on stop.
+    // Key for local talkers is ("", tg); for peer talkers ("<peer_id>", tg).
+    // At most one talker is active per (peer_id, tg) at any moment, so the
+    // pair is a sufficient key.
+    std::map<std::pair<std::string, uint32_t>, int64_t> m_talker_start_ms;
+
+    static int64_t nowMs(void);
 
     void publish(const std::string& topic_suffix, const std::string& payload,
                  bool retain = false);

@@ -1518,6 +1518,7 @@ class TestTrunkIntegration(unittest.TestCase):
 
             peer_id = "TRUNK_TEST"
             tg = 1220  # Owned by reflector-a (prefix 122)
+            t0_ms = int(time.time() * 1000)
             peer.send_talker_start(tg, "N0MQTT")
             time.sleep(2)  # Allow propagation
 
@@ -1530,7 +1531,15 @@ class TestTrunkIntegration(unittest.TestCase):
             self.assertTrue(len(start_events) > 0,
                             f"Expected MQTT talker start at '{expected_start_topic}', "
                             f"got topics: {[r[0] for r in received]}")
-            self.assertEqual(start_events[0][1]["callsign"], "N0MQTT")
+            start_payload = start_events[0][1]
+            self.assertEqual(start_payload["callsign"], "N0MQTT")
+            # New schema: ts is Unix epoch ms, close to "now".
+            self.assertIn("ts", start_payload,
+                          "talker start payload missing 'ts' field")
+            start_ts = start_payload["ts"]
+            self.assertIsInstance(start_ts, int)
+            self.assertGreaterEqual(start_ts, t0_ms - 5_000)
+            self.assertLessEqual(start_ts, t0_ms + 60_000)
 
             # Flat talker/<tg>/start should NOT be published for trunk talkers
             flat_start_events = [r for r in received
@@ -1539,7 +1548,8 @@ class TestTrunkIntegration(unittest.TestCase):
                              "Flat talker/<tg>/start must not be published for "
                              "trunk talkers (should use peer-namespaced topic)")
 
-            # Send talker stop and verify
+            # Hold the talker briefly so duration_ms is non-zero.
+            time.sleep(0.5)
             peer.send_talker_stop(tg)
             time.sleep(2)
 
@@ -1551,6 +1561,28 @@ class TestTrunkIntegration(unittest.TestCase):
             self.assertTrue(len(stop_events) > 0,
                             f"Expected MQTT talker stop at '{expected_stop_topic}', "
                             f"got topics: {[r[0] for r in received]}")
+            stop_payload = stop_events[0][1]
+            self.assertIn("ts", stop_payload,
+                          "talker stop payload missing 'ts' field")
+            self.assertGreaterEqual(stop_payload["ts"], start_ts)
+            # duration_ms should be present (matching start was observed)
+            # and roughly match the time between start and stop.
+            self.assertIn("duration_ms", stop_payload,
+                          "talker stop payload missing 'duration_ms' field")
+            self.assertGreaterEqual(stop_payload["duration_ms"], 400)
+            self.assertEqual(
+                stop_payload["duration_ms"], stop_payload["ts"] - start_ts,
+                "duration_ms should equal stop ts minus start ts")
+
+            # Note on edge cases not exercised here:
+            # MqttPublisher omits duration_ms when no matching start was
+            # recorded (reflector restart) or when the wall clock moved
+            # backwards between start and stop (NTP correction yielding a
+            # negative duration). Both paths are guarded in
+            # MqttPublisher::onTalkerStop / onPeerTalkerStop. Reaching
+            # them from this integration suite would require restarting
+            # the reflector mid-talker or manipulating its clock; the
+            # behaviour is documented in docs/MQTT.md instead.
 
             peer.close()
         finally:

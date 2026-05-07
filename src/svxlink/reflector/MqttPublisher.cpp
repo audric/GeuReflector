@@ -1,5 +1,6 @@
 #include "MqttPublisher.h"
 
+#include <chrono>
 #include <iostream>
 #include <sstream>
 #include <mosquitto.h>
@@ -7,6 +8,14 @@
 #include <Log.h>
 
 using namespace std;
+
+
+int64_t MqttPublisher::nowMs(void)
+{
+  using namespace std::chrono;
+  return duration_cast<milliseconds>(
+      system_clock::now().time_since_epoch()).count();
+}
 
 
 static void on_connect_cb(struct mosquitto*, void*, int rc)
@@ -239,9 +248,13 @@ void MqttPublisher::publish(const std::string& topic_suffix,
 void MqttPublisher::onTalkerStart(uint32_t tg, const std::string& callsign,
                                   bool is_trunk)
 {
+  const int64_t ts = nowMs();
+  m_talker_start_ms[{string(), tg}] = ts;
+
   Json::Value payload;
   payload["callsign"] = callsign;
-  payload["source"] = is_trunk ? "trunk" : "local";
+  payload["source"]   = is_trunk ? "trunk" : "local";
+  payload["ts"]       = static_cast<Json::Int64>(ts);
   Json::StreamWriterBuilder wb;
   wb["indentation"] = "";
   string topic = "talker/" + to_string(tg) + "/start";
@@ -252,9 +265,23 @@ void MqttPublisher::onTalkerStart(uint32_t tg, const std::string& callsign,
 void MqttPublisher::onTalkerStop(uint32_t tg, const std::string& callsign,
                                  bool is_trunk)
 {
+  const int64_t ts = nowMs();
   Json::Value payload;
   payload["callsign"] = callsign;
-  payload["source"] = is_trunk ? "trunk" : "local";
+  payload["source"]   = is_trunk ? "trunk" : "local";
+  payload["ts"]       = static_cast<Json::Int64>(ts);
+
+  auto it = m_talker_start_ms.find({string(), tg});
+  if (it != m_talker_start_ms.end())
+  {
+    const int64_t dur = ts - it->second;
+    // Omit duration_ms on a backwards clock jump (NTP correction mid-talker).
+    // The map entry is still consumed — there is no recovery from a
+    // jumped clock at the next stop event.
+    if (dur >= 0) payload["duration_ms"] = static_cast<Json::Int64>(dur);
+    m_talker_start_ms.erase(it);
+  }
+
   Json::StreamWriterBuilder wb;
   wb["indentation"] = "";
   string topic = "talker/" + to_string(tg) + "/stop";
@@ -272,9 +299,13 @@ void MqttPublisher::onPeerTalkerStart(const std::string& peer_id,
                  " (tg=", tg, " callsign='", callsign, "')");
     return;
   }
+  const int64_t ts = nowMs();
+  m_talker_start_ms[{peer_id, tg}] = ts;
+
   Json::Value payload;
   payload["callsign"] = callsign;
-  payload["tg"] = static_cast<Json::UInt>(tg);
+  payload["tg"]       = static_cast<Json::UInt>(tg);
+  payload["ts"]       = static_cast<Json::Int64>(ts);
   Json::StreamWriterBuilder wb;
   wb["indentation"] = "";
   string topic = "peer/" + peer_id + "/talker/" + to_string(tg) + "/start";
@@ -292,9 +323,21 @@ void MqttPublisher::onPeerTalkerStop(const std::string& peer_id,
                  " (tg=", tg, " callsign='", callsign, "')");
     return;
   }
+  const int64_t ts = nowMs();
   Json::Value payload;
   payload["callsign"] = callsign;
-  payload["tg"] = static_cast<Json::UInt>(tg);
+  payload["tg"]       = static_cast<Json::UInt>(tg);
+  payload["ts"]       = static_cast<Json::Int64>(ts);
+
+  auto it = m_talker_start_ms.find({peer_id, tg});
+  if (it != m_talker_start_ms.end())
+  {
+    const int64_t dur = ts - it->second;
+    // Omit duration_ms on a backwards clock jump (NTP correction mid-talker).
+    if (dur >= 0) payload["duration_ms"] = static_cast<Json::Int64>(dur);
+    m_talker_start_ms.erase(it);
+  }
+
   Json::StreamWriterBuilder wb;
   wb["indentation"] = "";
   string topic = "peer/" + peer_id + "/talker/" + to_string(tg) + "/stop";
