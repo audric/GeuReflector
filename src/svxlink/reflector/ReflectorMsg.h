@@ -2115,6 +2115,36 @@ class MsgTwinExtTalkerStop : public ReflectorMsgBase<124>
 }; /* MsgTwinExtTalkerStop */
 
 
+/**
+@brief Trunk message: advertise the TGs this peer is interested in (type 129)
+
+Lets a reflector tell its trunk peers which TGs its local clients have
+selected or are monitoring, so the peers can pre-populate their per-link
+peer-interest table and forward audio without requiring a PTT to bootstrap
+interest. Receivers re-advertise the set onward toward the prefix owner
+(longest-prefix-match in the local trunk table, source-link excluded), so
+multi-hop layouts (country gateway between an international mesh and a
+national mesh) work end-to-end.
+*/
+class MsgPeerTgInterest : public ReflectorMsgBase<129>
+{
+  public:
+    MsgPeerTgInterest(void) {}
+    MsgPeerTgInterest(const std::string& peer_id,
+                      const std::vector<uint32_t>& tgs)
+      : m_peer_id(peer_id), m_tgs(tgs) {}
+
+    const std::string&           peerId(void) const { return m_peer_id; }
+    const std::vector<uint32_t>& tgs(void)    const { return m_tgs; }
+
+    ASYNC_MSG_MEMBERS(m_peer_id, m_tgs)
+
+  private:
+    std::string           m_peer_id;
+    std::vector<uint32_t> m_tgs;
+}; /* MsgPeerTgInterest */
+
+
 #endif /* REFLECTOR_MSG_INCLUDED */
 
 

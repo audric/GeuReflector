@@ -53,10 +53,16 @@ forwards going down.
 
 Two other behaviours show up repeatedly in the flow descriptions below:
 
-- **Peer interest** is populated when a peer emits `PeerTalkerStart` /
-  `PeerAudio` for a TG. Until that happens, the owner doesn't know to
-  fan that TG back to that peer. Interest expires after **10 minutes** of
-  inactivity on that TG from that peer (or immediately on trunk disconnect).
+- **Peer interest** is populated either when a peer emits `PeerTalkerStart`
+  / `PeerAudio` on a TG, or proactively when a peer advertises its local
+  clients' selected / monitored TGs via `MsgPeerTgInterest` (type 129).
+  The proactive path means a passive listener — a SvxLink node that has
+  selected a foreign TG or added it to `monitoredTGs` without keying —
+  registers as interested at the owner without first transmitting; the
+  receiver re-advertises one hop further toward the owner so multi-hop
+  national-mesh layouts (§2) propagate correctly. Interest expires after
+  **10 minutes** of inactivity on that TG from that peer (or immediately
+  on trunk disconnect).
 - **MCC-style country prefixes** are used for the international mesh:
   IT = `222`, SE = `240`, DE = `262`. Reusing the DMR MCC layout makes
   ownership self-documenting.
@@ -152,7 +158,10 @@ section. SE only knows the prefixes it has trunks for: `222` (IT) and `262`
   route for `2222`). Z2 plays locally and fans the audio out to its national
   peers (excluding IT as the source). The return leg works the same way:
   audio from a Z3 client reaches SE because IT's `isPeerInterestedTG` for
-  `22221` was registered on the SE side when SE's PTT first arrived.
+  `22221` was registered on the SE side — either by a previous PTT from
+  SE, or proactively as soon as the Swedish operator selected (or
+  monitored) `22221` on their SvxLink node, via `MsgPeerTgInterest`
+  (type 129).
 
 > **Cluster TGs are for unowned TGs, not for cross-mesh routing.**
 > Gateway prefix routing handles foreign-to-regional reach automatically
