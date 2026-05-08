@@ -1826,14 +1826,22 @@ void TrunkLink::handleMsgPeerTgInterest(std::istream& is)
 
 void TrunkLink::onTgInterestTimer(Async::Timer*)
 {
-  sendTgInterest();
+  // Periodic refresh: always re-send (force=true) so the receiver's
+  // m_peer_interested_tgs entries get their timestamp refreshed and the
+  // 600 s TTL stays alive even when the local set hasn't changed since
+  // the last debounce send. Without this, a passive monitor would go
+  // deaf after 600 s of no-op heartbeats.
+  sendTgInterest(/*force=*/true);
 } /* TrunkLink::onTgInterestTimer */
 
 
 void TrunkLink::onTgInterestDebounce(Async::Timer* t)
 {
   t->setEnable(false);
-  sendTgInterest();
+  // Edge-triggered: skip when the outgoing set is unchanged. The 60 s
+  // heartbeat above takes care of receiver-TTL upkeep, so this path can
+  // safely no-op on idle changes.
+  sendTgInterest(/*force=*/false);
 } /* TrunkLink::onTgInterestDebounce */
 
 
@@ -1872,16 +1880,15 @@ std::set<uint32_t> TrunkLink::buildOutgoingTgInterest(void) const
 } /* TrunkLink::buildOutgoingTgInterest */
 
 
-void TrunkLink::sendTgInterest(void)
+void TrunkLink::sendTgInterest(bool force)
 {
   if (!isActive()) return;
 
   std::set<uint32_t> outgoing = buildOutgoingTgInterest();
-  if (outgoing == m_last_sent_tg_interest)
+  if (!force && outgoing == m_last_sent_tg_interest)
   {
-    // Nothing changed since the last advertisement — let the receiver's TTL
-    // ride on the previous send. Keeps the heartbeat refresh from generating
-    // idle traffic when the monitored set is stable.
+    // Edge-triggered debounce path with nothing changed: skip. The 60 s
+    // heartbeat (force=true) will refresh the receiver's TTL.
     return;
   }
 

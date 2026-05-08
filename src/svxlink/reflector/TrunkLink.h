@@ -294,7 +294,9 @@ class TrunkLink : public sigc::trackable
     void handleMsgPeerNodeList(std::istream& is);
     void handleMsgPeerTgInterest(std::istream& is);
 
-    void sendTgInterest(void);
+    // force=true bypasses skip-when-unchanged so the periodic 60 s
+    // heartbeat refreshes the receiver's m_peer_interested_tgs TTL.
+    void sendTgInterest(bool force = false);
     void onTgInterestTimer(Async::Timer* t);
     void onTgInterestDebounce(Async::Timer* t);
     // Build the set we should advertise to this peer: local interest, plus
