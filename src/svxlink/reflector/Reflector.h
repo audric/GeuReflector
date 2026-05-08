@@ -347,6 +347,19 @@ class Reflector : public sigc::trackable
     void onPeerNodeList(const std::string& peer_id,
                         const std::vector<MsgPeerNodeList::NodeEntry>& nodes);
 
+    // Triggered when a local client connects, disconnects, selects a TG, or
+    // changes its monitoredTGs set. Recomputes local TG interest (selected
+    // tg + monitoredTGs across every client, tg=0 excluded) and schedules a
+    // debounced advertisement to every trunk peer.
+    void scheduleTgInterestUpdate(void);
+    // Aggregate TGs other peers have advertised interest in (or have shown
+    // interest in via talker activity), filtered to the ones that match the
+    // destination link's prefix scope. Used by TrunkLink::sendTgInterest to
+    // propagate interest toward the prefix owner — the multi-hop leg the
+    // single-hop "advertise local clients only" approach can't do alone.
+    std::set<uint32_t> aggregatePeerInterestsForLink(
+        const TrunkLink* dest) const;
+
   protected:
 
   private:

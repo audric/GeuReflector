@@ -2656,6 +2656,78 @@ class TestTrunkIntegration(unittest.TestCase):
             sender.close()
             receiver.close()
 
+    # ------------------------------------------------------------------
+    # Test 39: passive monitor actually hears audio across a multi-hop gateway
+    # ------------------------------------------------------------------
+    def test_39_passive_monitor_multihop(self):
+        """A passive monitor on reflector-a hears audio from a TG owned by
+        reflector-d, with reflector-b acting as a gateway, *without* the
+        monitor ever PTT'ing to bootstrap interest.
+
+        Topology (test_37 setup):
+          a  prefix 122   trunks: b, c           (no direct trunk to d)
+          b  prefix 121   trunks: a, c, d        (gateway)
+          d  prefix 1219  trunks: b only
+
+        TG `121951` is owned by d. a's monitored set is advertised via
+        MsgPeerTgInterest to b; b longest-prefix-matches `1219` → d and
+        re-advertises the interest to d. d's PTT then fans out to b
+        (peer-interest), b forwards to a (peer-interest), and a delivers
+        UDP audio to the local monitoring client via TgMonitorFilter. The
+        whole chain works without a transmitting once.
+        """
+        if "d" not in REFLECTOR_NAMES:
+            self.skipTest("test_39 requires reflector 'd' in topology")
+
+        tg = 121951  # owned by d (longest 1219); next-longest at b is 121
+
+        a_client = ClientPeer()
+        d_client = ClientPeer()
+        try:
+            # a-client: connects to a, selects tg=0 (no PTT possible),
+            # monitors `tg` passively. This is the "Swedish ham listening
+            # to an Italian regional TG" case — interest must propagate to
+            # the owner without the monitor transmitting.
+            a_port = T.mapped_client_port("a")
+            a_client.connect(HOST, a_port)
+            a_client.authenticate(callsign=CLIENT_CALLSIGN, password=CLIENT_PASSWORD)
+            a_client.setup_udp(udp_port=a_port)
+            a_client.select_tg(0)
+            a_client.monitor_tgs([tg])
+
+            # d-client: connects to d, selects `tg`, will PTT.
+            d_port = T.mapped_client_port("d")
+            d_client.connect(HOST, d_port)
+            d_client.authenticate(callsign=CLIENT2_CALLSIGN, password=CLIENT2_PASSWORD)
+            d_client.setup_udp(udp_port=d_port)
+            d_client.select_tg(tg)
+
+            # Advertisement is debounced 500 ms in TrunkLink, then re-advertised
+            # at b on receipt → debounced again toward d. 2 s gives both legs
+            # plus a safety margin.
+            time.sleep(2.0)
+
+            # Drain any backlog before the measurement burst.
+            a_client.recv_udp_all(timeout=0.05)
+
+            for _ in range(6):
+                d_client.send_udp_audio(b"\xBE\xEF" * 80)
+                time.sleep(0.02)
+            d_client.send_udp_flush()
+            time.sleep(1.5)
+
+            msgs = a_client.recv_udp_all(timeout=1.0)
+            audio = sum(1 for t, _ in msgs if t == UDP_AUDIO)
+            flush = sum(1 for t, _ in msgs if t == UDP_FLUSH)
+            self.assertGreater(audio + flush, 0,
+                f"passive monitor on reflector-a did not hear TG {tg} "
+                f"audio from reflector-d via gateway b — "
+                f"MsgPeerTgInterest multi-hop propagation or "
+                f"TgMonitorFilter UDP delivery broken")
+        finally:
+            a_client.close()
+            d_client.close()
+
 
 # ---------------------------------------------------------------------------
 # Custom test runner with clean, readable output

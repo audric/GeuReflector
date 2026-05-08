@@ -1401,7 +1401,13 @@ void ReflectorClient::setMonitoredTGs(const std::set<uint32_t>& tgs)
       monitored_tgs.append(tg);
     }
   }
-  if (m_reflector != nullptr) m_reflector->publishClientStatus(this);
+  if (m_reflector != nullptr)
+  {
+    m_reflector->publishClientStatus(this);
+    // Monitored set drives MsgPeerTgInterest; tell trunk peers so they can
+    // forward audio without waiting for a PTT to bootstrap interest.
+    m_reflector->scheduleTgInterestUpdate();
+  }
 } /* ReflectorClient::setMonitoredTGs */
 
 
@@ -1422,7 +1428,11 @@ void ReflectorClient::setTg(uint32_t tg)
     }
 
     m_current_tg = tg;
-    if (m_reflector != nullptr) m_reflector->scheduleNodeListUpdate();
+    if (m_reflector != nullptr)
+    {
+      m_reflector->scheduleNodeListUpdate();
+      m_reflector->scheduleTgInterestUpdate();
+    }
   }
 
   if (m_status != nullptr)
