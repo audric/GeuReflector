@@ -194,7 +194,9 @@ TrunkLink::TrunkLink(Reflector* reflector, Async::Config& cfg,
                      const std::string& section)
   : m_reflector(reflector), m_cfg(cfg), m_section(section),
     m_peer_port(5302), m_priority(0), m_peer_priority(0),
-    m_heartbeat_timer(1000, Timer::TYPE_PERIODIC, false)
+    m_heartbeat_timer(1000, Timer::TYPE_PERIODIC, false),
+    m_tg_interest_timer(TG_INTEREST_HEARTBEAT_MS, Timer::TYPE_PERIODIC, false),
+    m_tg_interest_debounce(TG_INTEREST_DEBOUNCE_MS, Timer::TYPE_ONESHOT, false)
 {
   // Generate a random priority nonce for tie-breaking (once, for lifetime)
   std::random_device rd;
@@ -209,6 +211,10 @@ TrunkLink::TrunkLink(Reflector* reflector, Async::Config& cfg,
 
   m_heartbeat_timer.expired.connect(
       mem_fun(*this, &TrunkLink::heartbeatTick));
+  m_tg_interest_timer.expired.connect(
+      mem_fun(*this, &TrunkLink::onTgInterestTimer));
+  m_tg_interest_debounce.expired.connect(
+      mem_fun(*this, &TrunkLink::onTgInterestDebounce));
 } /* TrunkLink::TrunkLink */
 
 
@@ -622,6 +628,9 @@ void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
     sendMsgOnPairedInbound(m_ib_cons.size() - 1,
         MsgPeerHello(m_peer_id_config, joinPrefixes(m_local_prefix),
                       m_priority, m_secret));
+
+    m_tg_interest_timer.setEnable(true);
+    m_reflector->scheduleTgInterestUpdate();
     return;
   }
 
@@ -670,6 +679,12 @@ void TrunkLink::acceptInboundConnection(Async::FramedTcpConnection* con,
   sendMsgOnInbound(MsgPeerHello(m_peer_id_config,
                                   joinPrefixes(m_local_prefix),
                                   m_priority, m_secret));
+
+  // Arm the interest-refresh path now that the inbound link is up. The peer
+  // can authenticate via the inbound socket alone (outbound may still be
+  // pending), so the symmetric trigger to handleMsgPeerHello belongs here.
+  m_tg_interest_timer.setEnable(true);
+  m_reflector->scheduleTgInterestUpdate();
 } /* TrunkLink::acceptInboundConnection */
 
 
@@ -785,6 +800,18 @@ void TrunkLink::onLocalFlush(uint32_t tg)
 } /* TrunkLink::onLocalFlush */
 
 
+void TrunkLink::scheduleTgInterestRefresh(
+    const std::set<uint32_t>& local_interest)
+{
+  m_local_tg_interest = local_interest;
+  if (!isActive()) return;
+  // 500 ms one-shot debounce: coalesce rapid changes (e.g. a client toggling
+  // monitoredTGs entries one at a time) into a single advertisement.
+  m_tg_interest_debounce.reset();
+  m_tg_interest_debounce.setEnable(true);
+} /* TrunkLink::scheduleTgInterestRefresh */
+
+
 /****************************************************************************
  *
  * TrunkLink private methods
@@ -882,7 +909,11 @@ void TrunkLink::onFrameReceived(FramedTcpConnection* con,
     m_ob_hb_rx_cnt = HEARTBEAT_RX_CNT_RESET;
   }
 
-  if (header.type() != MsgPeerHeartbeat::TYPE)
+  // Suppress per-frame debug for routine, noisy message types: heartbeat
+  // (per-second) and MsgPeerTgInterest (60 s heartbeat plus edge triggers).
+  // Both have their own log lines at the dispatcher level.
+  if (header.type() != MsgPeerHeartbeat::TYPE &&
+      header.type() != MsgPeerTgInterest::TYPE)
   {
     geulog::debug("trunk", m_section, ": rx ", (is_inbound ? "IB" : "OB"),
                   " type=", header.type(), " len=", data.size());
@@ -910,6 +941,9 @@ void TrunkLink::onFrameReceived(FramedTcpConnection* con,
       break;
     case MsgPeerNodeList::TYPE:
       handleMsgPeerNodeList(ss);
+      break;
+    case MsgPeerTgInterest::TYPE:
+      handleMsgPeerTgInterest(ss);
       break;
     default:
       geulog::warn("trunk", "[", m_section, "] Unknown trunk message type=",
@@ -974,6 +1008,13 @@ void TrunkLink::handleMsgPeerHello(std::istream& is, bool is_inbound)
                 " ib_connected=", (m_inbound_con != nullptr),
                 " ib_hello=", m_ib_hello_received,
                 " isActive=", isActive());
+
+  // Hello complete -> arm the periodic interest refresh and ask the
+  // Reflector for a fresh local snapshot so we can advertise immediately
+  // (the receiver registers our interest only after receiving a frame, so
+  // the new peer needs the first send before any client transmits).
+  m_tg_interest_timer.setEnable(true);
+  m_reflector->scheduleTgInterestUpdate();
 } /* TrunkLink::handleMsgPeerHello */
 
 
@@ -1115,8 +1156,12 @@ void TrunkLink::handleMsgPeerAudio(std::istream& is)
   m_peer_interested_tgs[local_tg] = std::time(nullptr);
 
   // Rebuild a UDP audio message and broadcast to local clients on this TG
+  // — both clients with this TG selected and clients monitoring it.
   MsgUdpAudio udp_msg(msg.audio());
-  m_reflector->broadcastUdpMsg(udp_msg, ReflectorClient::TgFilter(local_tg));
+  m_reflector->broadcastUdpMsg(udp_msg,
+      ReflectorClient::mkOrFilter(
+        ReflectorClient::TgFilter(local_tg),
+        ReflectorClient::TgMonitorFilter(local_tg)));
 
   // Forward trunk audio to connected satellites
   m_reflector->forwardAudioToSatellitesExcept(nullptr, local_tg, msg.audio());
@@ -1152,7 +1197,9 @@ void TrunkLink::handleMsgPeerFlush(std::istream& is)
   }
 
   m_reflector->broadcastUdpMsg(MsgUdpFlushSamples(),
-      ReflectorClient::TgFilter(local_tg));
+      ReflectorClient::mkOrFilter(
+        ReflectorClient::TgFilter(local_tg),
+        ReflectorClient::TgMonitorFilter(local_tg)));
 
   // Forward trunk flush to connected satellites
   m_reflector->forwardFlushToSatellitesExcept(nullptr, local_tg);
@@ -1544,6 +1591,9 @@ void TrunkLink::onPairedInboundFrame(Async::FramedTcpConnection* con,
         case MsgPeerNodeList::TYPE:
           handleMsgPeerNodeList(ss);
           break;
+        case MsgPeerTgInterest::TYPE:
+          handleMsgPeerTgInterest(ss);
+          break;
         default:
           geulog::warn("trunk", "[", m_section, "] Unknown trunk message type=",
                        header.type(), " on paired ib#", idx);
@@ -1680,6 +1730,9 @@ void TrunkLink::onPairedOutboundFrame(FramedTcpClient* client,
       geulog::info("trunk", m_section, ": paired outbound #", idx,
                    " hello received (peer='", msg.id(),
                    "' priority=", msg.priority(), " authenticated)");
+
+      m_tg_interest_timer.setEnable(true);
+      m_reflector->scheduleTgInterestUpdate();
       break;
     }
 
@@ -1708,6 +1761,9 @@ void TrunkLink::onPairedOutboundFrame(FramedTcpClient* client,
         case MsgPeerNodeList::TYPE:
           handleMsgPeerNodeList(ss);
           break;
+        case MsgPeerTgInterest::TYPE:
+          handleMsgPeerTgInterest(ss);
+          break;
         default:
           geulog::warn("trunk", "[", m_section, "] Unknown trunk message type=",
                        header.type(), " on paired ob#", idx);
@@ -1728,7 +1784,122 @@ void TrunkLink::clearPeerTalkerState(void)
   m_peer_active_tgs.clear();
   m_yielded_tgs.clear();
   m_peer_interested_tgs.clear();
+  m_last_sent_tg_interest.clear();
+  m_tg_interest_timer.setEnable(false);
+  m_tg_interest_debounce.setEnable(false);
 } /* TrunkLink::clearPeerTalkerState */
+
+
+void TrunkLink::handleMsgPeerTgInterest(std::istream& is)
+{
+  MsgPeerTgInterest msg;
+  if (!msg.unpack(is))
+  {
+    geulog::error("trunk", "[", m_section,
+                  "] Failed to unpack MsgPeerTgInterest");
+    return;
+  }
+
+  const time_t now = std::time(nullptr);
+  for (uint32_t wire_tg : msg.tgs())
+  {
+    // Translate the peer's TG numbering into ours; existing entries in
+    // m_peer_interested_tgs (populated by talker activity at lines ~1025
+    // and ~1115) are keyed in local numbering, so we must match.
+    const uint32_t local_tg = mapTgIn(wire_tg);
+    if (local_tg == 0) continue;
+    m_peer_interested_tgs[local_tg] = now;
+  }
+
+  geulog::debug("trunk", m_section,
+                ": rx MsgPeerTgInterest count=", msg.tgs().size(),
+                " peer_interested_total=", m_peer_interested_tgs.size());
+
+  // Re-advertise across the mesh. This peer's interest may be relevant to
+  // a different trunk (e.g. SE -> IT 222 advertises 22212; IT 222 has a
+  // 2221 -> Z1 prefix route and must let Z1 know). The Reflector walks
+  // every trunk and triggers a refresh; each link's debounce will pick
+  // up the new aggregate via buildOutgoingTgInterest().
+  m_reflector->scheduleTgInterestUpdate();
+} /* TrunkLink::handleMsgPeerTgInterest */
+
+
+void TrunkLink::onTgInterestTimer(Async::Timer*)
+{
+  sendTgInterest();
+} /* TrunkLink::onTgInterestTimer */
+
+
+void TrunkLink::onTgInterestDebounce(Async::Timer* t)
+{
+  t->setEnable(false);
+  sendTgInterest();
+} /* TrunkLink::onTgInterestDebounce */
+
+
+std::set<uint32_t> TrunkLink::buildOutgoingTgInterest(void) const
+{
+  std::set<uint32_t> out;
+
+  // Only advertise to peers that are the longest-prefix-match for the TG
+  // (the owner, or the next hop toward the owner). Advertising to any other
+  // peer registers ghost interest there: when audio on that TG comes in via
+  // the standard owner-relay path, the non-owner peer would relay it back
+  // through gateway prefix routing, creating cross-mesh loops.
+  // isSharedTG(tg) is the same gate used by the audio fanout.
+  auto include = [&](uint32_t tg) {
+    if (tg == 0) return false;
+    if (isBlacklisted(tg) || !isAllowed(tg)) return false;
+    return isSharedTG(tg);
+  };
+
+  for (uint32_t tg : m_local_tg_interest)
+  {
+    if (include(tg)) out.insert(tg);
+  }
+
+  // Re-advertise interest learned from other peers; the Reflector aggregator
+  // already source-excludes and prefix-filters via dest->isSharedTG, but
+  // applying include() again normalises blacklist/allow handling.
+  std::set<uint32_t> from_peers =
+      m_reflector->aggregatePeerInterestsForLink(this);
+  for (uint32_t tg : from_peers)
+  {
+    if (include(tg)) out.insert(tg);
+  }
+
+  return out;
+} /* TrunkLink::buildOutgoingTgInterest */
+
+
+void TrunkLink::sendTgInterest(void)
+{
+  if (!isActive()) return;
+
+  std::set<uint32_t> outgoing = buildOutgoingTgInterest();
+  if (outgoing == m_last_sent_tg_interest)
+  {
+    // Nothing changed since the last advertisement — let the receiver's TTL
+    // ride on the previous send. Keeps the heartbeat refresh from generating
+    // idle traffic when the monitored set is stable.
+    return;
+  }
+
+  // Translate to peer numbering on the wire so the receiver's mapTgIn
+  // brings it back to its local numbering symmetrically.
+  std::vector<uint32_t> wire_tgs;
+  wire_tgs.reserve(outgoing.size());
+  for (uint32_t tg : outgoing)
+  {
+    wire_tgs.push_back(mapTgOut(tg));
+  }
+
+  sendMsg(MsgPeerTgInterest(m_peer_id_config, wire_tgs));
+  m_last_sent_tg_interest = std::move(outgoing);
+
+  geulog::debug("trunk", m_section,
+                ": tx MsgPeerTgInterest count=", wire_tgs.size());
+} /* TrunkLink::sendTgInterest */
 
 
 void TrunkLink::reloadConfig(void)

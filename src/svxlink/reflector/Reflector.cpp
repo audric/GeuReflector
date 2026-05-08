@@ -1111,6 +1111,7 @@ void Reflector::clientDisconnected(Async::FramedTcpConnection *con,
         m_redis->clearLiveClient(client->callsign());
       }
       scheduleNodeListUpdate();
+      scheduleTgInterestUpdate();
   }
   //Application::app().runTask([=]{ delete client; });
   delete client;
@@ -1408,7 +1409,9 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
             broadcastUdpMsg(msg,
                 ReflectorClient::mkAndFilter(
                   ReflectorClient::ExceptFilter(client),
-                  ReflectorClient::TgFilter(tg)));
+                  ReflectorClient::mkOrFilter(
+                    ReflectorClient::TgFilter(tg),
+                    ReflectorClient::TgMonitorFilter(tg))));
             if (m_is_satellite && m_satellite_client != nullptr)
             {
               m_satellite_client->onLocalAudio(tg, msg.audioData());
@@ -1572,7 +1575,9 @@ void Reflector::onTalkerUpdated(uint32_t tg, ReflectorClient* old_talker,
     }
     broadcastUdpMsg(MsgUdpFlushSamples(),
           ReflectorClient::mkAndFilter(
-            ReflectorClient::TgFilter(tg),
+            ReflectorClient::mkOrFilter(
+              ReflectorClient::TgFilter(tg),
+              ReflectorClient::TgMonitorFilter(tg)),
             ReflectorClient::ExceptFilter(old_talker)));
     if (m_mqtt != nullptr)
     {
@@ -2847,7 +2852,9 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
             ReflectorClient::TgFilter(tg),
             ReflectorClient::TgMonitorFilter(tg))));
     broadcastUdpMsg(MsgUdpFlushSamples(),
-        ReflectorClient::TgFilter(tg));
+        ReflectorClient::mkOrFilter(
+          ReflectorClient::TgFilter(tg),
+          ReflectorClient::TgMonitorFilter(tg)));
     if (m_mqtt != nullptr)
     {
       m_mqtt->onPeerTalkerStop(peer_id, tg, old_cs);
@@ -3435,6 +3442,7 @@ void Reflector::onClientAuthenticated(const std::string& callsign,
     m_redis->pushLiveClient(callsign, ip, "", tg);
   }
   scheduleNodeListUpdate();
+  scheduleTgInterestUpdate();
 } /* Reflector::onClientAuthenticated */
 
 
@@ -3459,6 +3467,64 @@ void Reflector::scheduleNodeListUpdate(void)
   m_nodelist_timer.setTimeout(500);
   m_nodelist_timer.setEnable(true);
 } /* Reflector::scheduleNodeListUpdate */
+
+
+void Reflector::scheduleTgInterestUpdate(void)
+{
+  // Union of every connected client's selected TG and monitored TGs. tg=0
+  // is the protocol sentinel "no TG selected" — never of interest. The
+  // per-link debounce in TrunkLink absorbs bursts of edge triggers
+  // (e.g. a client toggling its monitor list one TG at a time).
+  std::set<uint32_t> local_interest;
+  for (const auto& kv : m_client_con_map)
+  {
+    ReflectorClient* c = kv.second;
+    if (c == nullptr || c->callsign().empty()) continue;
+    const uint32_t tg = c->currentTG();
+    if (tg != 0) local_interest.insert(tg);
+    for (uint32_t mt : c->monitoredTGs())
+    {
+      if (mt != 0) local_interest.insert(mt);
+    }
+  }
+
+  for (auto* link : m_trunk_links)
+  {
+    link->scheduleTgInterestRefresh(local_interest);
+  }
+} /* Reflector::scheduleTgInterestUpdate */
+
+
+std::set<uint32_t> Reflector::aggregatePeerInterestsForLink(
+    const TrunkLink* dest) const
+{
+  std::set<uint32_t> out;
+  if (dest == nullptr) return out;
+
+  const time_t now    = std::time(nullptr);
+  const time_t expiry = TrunkLink::PEER_INTEREST_TIMEOUT_S;
+
+  for (const auto* link : m_trunk_links)
+  {
+    // Source-link exclusion: never advertise an interest record back to the
+    // peer we learned it from. Combined with the prefix-match filter below,
+    // this matches the gateway-prefix-routing rule used for audio
+    // (Reflector::shouldRelayInbound + forwardTrunkAudioToOtherTrunks).
+    if (link == dest) continue;
+    for (const auto& kv : link->peerInterestedTGs())
+    {
+      const uint32_t tg = kv.first;
+      const time_t   ts = kv.second;
+      if ((now - ts) >= expiry) continue;
+      // Re-advertise toward dest only if dest's prefix table claims this TG
+      // (longest-prefix-match in dest->m_remote_prefix wins, with no longer
+      // match elsewhere in m_all_prefixes).
+      if (!dest->isSharedTG(tg)) continue;
+      out.insert(tg);
+    }
+  }
+  return out;
+} /* Reflector::aggregatePeerInterestsForLink */
 
 
 void Reflector::sendNodeListToAllPeers(void)

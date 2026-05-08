@@ -374,9 +374,12 @@ void SatelliteLink::handleMsgPeerAudio(std::istream& is)
   if (msg.audio().empty()) return;
   if (m_sat_active_tgs.find(tg) == m_sat_active_tgs.end()) return;
 
-  // Broadcast to local clients on the parent
+  // Broadcast to local clients on the parent — both selected and monitoring.
   MsgUdpAudio udp_msg(msg.audio());
-  m_reflector->broadcastUdpMsg(udp_msg, ReflectorClient::TgFilter(tg));
+  m_reflector->broadcastUdpMsg(udp_msg,
+      ReflectorClient::mkOrFilter(
+        ReflectorClient::TgFilter(tg),
+        ReflectorClient::TgMonitorFilter(tg)));
 
   // Forward to trunk peers
   m_reflector->forwardSatelliteRawAudioToTrunks(tg, msg.audio());
@@ -394,7 +397,9 @@ void SatelliteLink::handleMsgPeerFlush(std::istream& is)
   uint32_t tg = msg.tg();
 
   m_reflector->broadcastUdpMsg(MsgUdpFlushSamples(),
-      ReflectorClient::TgFilter(tg));
+      ReflectorClient::mkOrFilter(
+        ReflectorClient::TgFilter(tg),
+        ReflectorClient::TgMonitorFilter(tg)));
 
   m_reflector->forwardSatelliteFlushToTrunks(tg);
   m_reflector->forwardFlushToSatellitesExcept(this, tg);

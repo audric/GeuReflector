@@ -242,6 +242,61 @@ inactivity on that TG from the peer, and is cleared immediately on trunk
 disconnect.  The interest map is per-link — disconnecting one peer does not
 affect interest tracked for other peers.
 
+#### Bootstrapping interest for passive monitors (`MsgPeerTgInterest`, type 129)
+
+The talker-driven mechanism above only registers interest after a peer has
+actually transmitted on the TG.  A node that has *selected* a TG without
+keying, or marked it in its `monitoredTGs`, would never receive any audio
+until something forced it to PTT first.  To close that gap, each reflector
+periodically advertises its local interest set to its trunk peers.
+
+> The same change makes UDP audio (and `MsgUdpFlushSamples`) on a TG fan
+> out to local clients monitoring it, not just the ones with that TG
+> selected — the local broadcast filter is now
+> `TgFilter ∪ TgMonitorFilter` for both client-originated audio and
+> trunk- / satellite-received audio.  Without that, the protocol-level
+> interest propagation would arrive at the right reflector but stop at
+> its UDP fanout — passive monitors would still hear nothing.
+
+`MsgPeerTgInterest(peer_id, tgs)` carries a list of TGs that this
+reflector's local clients have either selected (`tg`) or are monitoring
+(`monitoredTGs`), with `tg=0` excluded.  The receiver writes each TG into
+its per-link `m_peer_interested_tgs` map, populating peer interest exactly
+as a `MsgPeerTalkerStart` would, but without requiring an actual
+transmission.
+
+Sending is gated by `isSharedTG` for the destination link, so an interest
+record is only advertised to the peer that is the longest-prefix-match
+owner (or next hop toward the owner) for the TG.  This avoids registering
+ghost interest on non-owner peers — without that filter, gateway prefix
+routing would relay an originator's own audio back through cyclic paths.
+
+Send cadence:
+
+- **Edge-triggered** on local-state changes that affect the set: client
+  connect / disconnect, `MsgSelectTG`, `MsgTgMonitor`, and trunk hello
+  completion.  Coalesced with a 500 ms debounce so a client toggling its
+  monitor list one TG at a time sends one update, not many.
+- **Periodic refresh** every 60 s as a safety net against lost deltas.
+  Both timers skip the actual send when the outgoing set is unchanged
+  since the last transmission, so an idle reflector generates no traffic.
+
+Multi-hop propagation: when a reflector receives `MsgPeerTgInterest` from
+a peer P, it triggers a refresh on its other trunk links.  Each other
+link's outgoing set is the union of (a) this reflector's own local
+interest and (b) interest learned from *other* peers (P excluded), with
+both filtered by `isSharedTG` for the destination.  This re-advertises
+interest one prefix-route hop further toward the owner — the same shape
+as the audio gateway path (`Reflector::shouldRelayInbound`).  The source
+peer is excluded so an interest record never echoes back to its
+originator.
+
+Convergence and freshness: a fresh interest record is propagated within
+one debounce per hop (≤ 500 ms × hops); when a monitor stops monitoring,
+the reflector simply omits the TG from subsequent advertisements and the
+receiver-side 600 s TTL takes care of cleanup (worst-case staleness on
+disconnect ≈ 600 s — there is no explicit withdrawal message).
+
 ### Satellite Links — No TG Filtering
 
 Satellite links (`SatelliteClient` / `SatelliteLink`) do **not** apply any TG

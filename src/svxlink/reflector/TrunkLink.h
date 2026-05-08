@@ -118,6 +118,17 @@ class TrunkLink : public sigc::trackable
     {
       return m_remote_prefix;
     }
+    // Read-only view of TGs the peer is interested in (TalkerStart activity
+    // or MsgPeerTgInterest advertisement). Used by Reflector to aggregate
+    // interest for re-advertisement toward the prefix owner.
+    const std::map<uint32_t, time_t>& peerInterestedTGs(void) const
+    {
+      return m_peer_interested_tgs;
+    }
+    // 10 minutes of inactivity expires a peer-interest entry. Public so the
+    // Reflector aggregator can apply the same staleness filter when
+    // composing re-advertisements toward the prefix owner.
+    static const time_t PEER_INTEREST_TIMEOUT_S = 600;
 
     bool isPaired(void) const { return m_paired; }
     bool hasInboundConnection(void) const
@@ -148,6 +159,13 @@ class TrunkLink : public sigc::trackable
     // Send the local node list (callsign + current TG per local client)
     // to the peer. Called from Reflector after debounce.
     void sendNodeList(const std::vector<MsgPeerNodeList::NodeEntry>& nodes);
+
+    // Schedule a debounced advertisement of TG interest to this peer. The
+    // local-interest set (selected tg + monitoredTGs of every connected
+    // client) is supplied by the caller; the link unions it with interest
+    // re-routed from other peers (longest-prefix-match toward the owner)
+    // before sending. Coalesces multiple calls within the debounce window.
+    void scheduleTgInterestRefresh(const std::set<uint32_t>& local_interest);
 
     // PTY-driven controls
     void muteCallsign(const std::string& callsign)
@@ -209,11 +227,22 @@ class TrunkLink : public sigc::trackable
     // Cleared when the link goes fully inactive.
     std::vector<MsgPeerNodeList::NodeEntry> m_partner_nodes;
 
-    // TGs the peer has shown interest in (sent TalkerStart for).
-    // Maps TG number to last activity timestamp.  Entries expire after
-    // PEER_INTEREST_TIMEOUT_S seconds of inactivity.
-    static const time_t PEER_INTEREST_TIMEOUT_S = 600;  // 10 minutes
+    // TGs the peer has shown interest in (sent TalkerStart for, or advertised
+    // via MsgPeerTgInterest).  Maps TG number to last activity timestamp.
+    // Entries expire after PEER_INTEREST_TIMEOUT_S seconds of inactivity.
     std::map<uint32_t, time_t> m_peer_interested_tgs;
+
+    // TG-interest advertisement state. Heartbeat refresh is paced loosely
+    // against PEER_INTEREST_TIMEOUT_S; debounce coalesces edge-triggered
+    // updates so e.g. a client toggling its monitor list does not blast
+    // the wire. Last-sent set lets us skip the heartbeat send when nothing
+    // has changed since the previous transmission.
+    static const unsigned TG_INTEREST_HEARTBEAT_MS = 60 * 1000;
+    static const unsigned TG_INTEREST_DEBOUNCE_MS  = 500;
+    Async::Timer       m_tg_interest_timer;     // periodic refresh
+    Async::Timer       m_tg_interest_debounce;  // one-shot, edge-triggered
+    std::set<uint32_t> m_local_tg_interest;     // last seen local set
+    std::set<uint32_t> m_last_sent_tg_interest; // last set actually sent
 
     // PAIRED mode: one logical peer backed by multiple physical hosts
     bool                                          m_paired = false;
@@ -263,6 +292,15 @@ class TrunkLink : public sigc::trackable
     void handleMsgPeerFlush(std::istream& is);
     void handleMsgPeerHeartbeat(void);
     void handleMsgPeerNodeList(std::istream& is);
+    void handleMsgPeerTgInterest(std::istream& is);
+
+    void sendTgInterest(void);
+    void onTgInterestTimer(Async::Timer* t);
+    void onTgInterestDebounce(Async::Timer* t);
+    // Build the set we should advertise to this peer: local interest, plus
+    // TGs we have learned from other peers whose longest-prefix-match in
+    // m_all_prefixes points at this peer (gateway re-advertisement).
+    std::set<uint32_t> buildOutgoingTgInterest(void) const;
 
     void sendMsg(const ReflectorMsg& msg);
     void sendMsgOnOutbound(const ReflectorMsg& msg);
