@@ -276,10 +276,14 @@ Send cadence:
 - **Edge-triggered** on local-state changes that affect the set: client
   connect / disconnect, `MsgSelectTG`, `MsgTgMonitor`, and trunk hello
   completion.  Coalesced with a 500 ms debounce so a client toggling its
-  monitor list one TG at a time sends one update, not many.
-- **Periodic refresh** every 60 s as a safety net against lost deltas.
-  Both timers skip the actual send when the outgoing set is unchanged
-  since the last transmission, so an idle reflector generates no traffic.
+  monitor list one TG at a time sends one update, not many.  This path
+  skips the actual send when the outgoing set is unchanged.
+- **Periodic refresh** every 60 s — *always sends*, even when the
+  outgoing set is unchanged.  The heartbeat is what keeps the receiver's
+  `m_peer_interested_tgs` entries from expiring at the 600 s TTL: every
+  receipt rewrites the timestamp, so an idle monitor stays known to its
+  peer indefinitely.  Without this the monitor would go deaf 10 minutes
+  after the last edge-triggered change.
 
 Multi-hop propagation: when a reflector receives `MsgPeerTgInterest` from
 a peer P, it triggers a refresh on its other trunk links.  Each other
