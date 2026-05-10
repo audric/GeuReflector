@@ -739,7 +739,7 @@ REMOTE_PREFIX=2
 
 | File | Change |
 |------|--------|
-| `src/svxlink/reflector/ReflectorMsg.h` | Added `MsgPeerHello`–`MsgPeerHeartbeat` (types 115–120); `MsgPeerHello` carries `local_prefix` string instead of TG list. Added `MsgPeerClientConnected`–`MsgPeerClientStatus` (types 125–128). Renamed from `MsgTrunk*` (wire IDs unchanged). |
+| `src/svxlink/reflector/ReflectorMsg.h` | Added `MsgPeerHello`–`MsgPeerHeartbeat` (types 115–120); `MsgPeerHello` carries `local_prefix` string instead of TG list. Added `MsgPeerClientConnected`–`MsgPeerClientStatus` (types 125–128) and `MsgPeerTgInterest` (type 129). Renamed from `MsgTrunk*` (wire IDs unchanged). |
 | `src/svxlink/reflector/TGHandler.h` | Added trunk talker map, 5 methods + snapshot accessor, `trunkTalkerUpdated` signal |
 | `src/svxlink/reflector/TGHandler.cpp` | Implemented trunk talker methods including `clearAllTrunkTalkers` |
 | `src/svxlink/reflector/Reflector.h` | Added `m_trunk_links`, `m_trunk_srv`, `initTrunkLinks()`, `initTrunkServer()`, `onTrunkTalkerUpdated()`, trunk inbound connection handling |
