@@ -294,6 +294,15 @@ class Reflector : public sigc::trackable
     void forwardSatelliteRawAudioToTrunks(uint32_t tg,
                                            const std::vector<uint8_t>& audio);
     void forwardSatelliteFlushToTrunks(uint32_t tg);
+    // Same family, twin destination. Treat the satellite talker as a
+    // local-to-this-reflector talker from the twin partner's perspective
+    // (matches how trunks see it via the ToTrunks family above).
+    void forwardSatelliteAudioToTwin(uint32_t tg,
+                                      const std::string& callsign);
+    void forwardSatelliteStopToTwin(uint32_t tg);
+    void forwardSatelliteRawAudioToTwin(uint32_t tg,
+                                         const std::vector<uint8_t>& audio);
+    void forwardSatelliteFlushToTwin(uint32_t tg);
     void forwardAudioToSatellitesExcept(SatelliteLink* except, uint32_t tg,
                                          const std::vector<uint8_t>& audio);
     void forwardFlushToSatellitesExcept(SatelliteLink* except, uint32_t tg);
