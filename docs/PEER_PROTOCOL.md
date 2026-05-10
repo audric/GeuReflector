@@ -250,13 +250,20 @@ keying, or marked it in its `monitoredTGs`, would never receive any audio
 until something forced it to PTT first.  To close that gap, each reflector
 periodically advertises its local interest set to its trunk peers.
 
-> The same change makes UDP audio (and `MsgUdpFlushSamples`) on a TG fan
-> out to local clients monitoring it, not just the ones with that TG
-> selected — the local broadcast filter is now
-> `TgFilter ∪ TgMonitorFilter` for both client-originated audio and
-> trunk- / satellite-received audio.  Without that, the protocol-level
-> interest propagation would arrive at the right reflector but stop at
-> its UDP fanout — passive monitors would still hear nothing.
+> UDP audio (and `MsgUdpFlushSamples`) on a TG can now fan out to local
+> clients monitoring it, not just the ones with that TG selected.  The
+> local broadcast filter is
+> `TgFilter ∪ (TgMonitorFilter ∩ SelectedTgIdleFilter)` for
+> client-originated audio and trunk- / satellite-received audio, where
+> `SelectedTgIdleFilter` is true iff the receiver's selected TG has no
+> active local or trunk talker (with `currentTG=0` short-circuited to
+> true so passive observers keep receiving).  The gate keeps a busy QSO
+> on the selected TG from being interleaved with monitor-TG UDP frames
+> at a client whose svxlink decoder cannot demultiplex
+> (`MsgUdpAudio` carries no TG field).  Without the OR arm at all, the
+> protocol-level interest propagation would arrive at the right
+> reflector but stop at its UDP fanout — passive monitors would still
+> hear nothing.
 
 `MsgPeerTgInterest(peer_id, tgs)` carries a list of TGs that this
 reflector's local clients have either selected (`tg`) or are monitoring

@@ -161,6 +161,14 @@ but without the `isOwnedTG` gate. The twin does *not* re-forward the
 audio to its own external trunks (that would duplicate — external
 trunks are only held by the primary; see below).
 
+Conversely, traffic originated by a downstream satellite is forwarded
+to the twin partner symmetrically with how it reaches local trunks:
+`SatelliteLink::handleMsgPeer{TalkerStart,TalkerStop,Audio,Flush}`
+calls `Reflector::forwardSatellite{Audio,Stop,RawAudio,Flush}ToTwin`,
+which delegates to the same `TwinLink::onLocal*` methods used by the
+local-client TX path. Without this, the twin partner would be deaf to
+all satellite-originated activity.
+
 ---
 
 ## External-Trunk Ownership (Active/Active)
