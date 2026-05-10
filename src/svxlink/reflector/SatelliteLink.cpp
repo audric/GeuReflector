@@ -345,6 +345,9 @@ void SatelliteLink::handleMsgPeerTalkerStart(std::istream& is)
   // Forward to trunk peers
   m_reflector->forwardSatelliteAudioToTrunks(tg, msg.callsign());
 
+  // Forward to the twin partner (the satellite is downstream-local to us)
+  m_reflector->forwardSatelliteAudioToTwin(tg, msg.callsign());
+
   statusChanged(this);
 } /* SatelliteLink::handleMsgPeerTalkerStart */
 
@@ -360,6 +363,9 @@ void SatelliteLink::handleMsgPeerTalkerStop(std::istream& is)
 
   // Forward stop to trunk peers
   m_reflector->forwardSatelliteStopToTrunks(tg);
+
+  // Forward stop to the twin partner
+  m_reflector->forwardSatelliteStopToTwin(tg);
 
   statusChanged(this);
 } /* SatelliteLink::handleMsgPeerTalkerStop */
@@ -386,6 +392,9 @@ void SatelliteLink::handleMsgPeerAudio(std::istream& is)
   // Forward to trunk peers
   m_reflector->forwardSatelliteRawAudioToTrunks(tg, msg.audio());
 
+  // Forward to the twin partner
+  m_reflector->forwardSatelliteRawAudioToTwin(tg, msg.audio());
+
   // Forward to other satellites (not this one)
   m_reflector->forwardAudioToSatellitesExcept(this, tg, msg.audio());
 } /* SatelliteLink::handleMsgPeerAudio */
@@ -406,6 +415,7 @@ void SatelliteLink::handleMsgPeerFlush(std::istream& is)
           ReflectorClient::SelectedTgIdleFilter())));
 
   m_reflector->forwardSatelliteFlushToTrunks(tg);
+  m_reflector->forwardSatelliteFlushToTwin(tg);
   m_reflector->forwardFlushToSatellitesExcept(this, tg);
 } /* SatelliteLink::handleMsgPeerFlush */
 

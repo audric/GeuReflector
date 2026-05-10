@@ -2813,6 +2813,44 @@ void Reflector::forwardSatelliteFlushToTrunks(uint32_t tg)
 } /* Reflector::forwardSatelliteFlushToTrunks */
 
 
+void Reflector::forwardSatelliteAudioToTwin(uint32_t tg,
+                                            const std::string& callsign)
+{
+  if (m_twin_link != nullptr)
+  {
+    m_twin_link->onLocalTalkerUpdated(tg, callsign);
+  }
+} /* Reflector::forwardSatelliteAudioToTwin */
+
+
+void Reflector::forwardSatelliteStopToTwin(uint32_t tg)
+{
+  if (m_twin_link != nullptr)
+  {
+    m_twin_link->onLocalTalkerUpdated(tg, "");
+  }
+} /* Reflector::forwardSatelliteStopToTwin */
+
+
+void Reflector::forwardSatelliteRawAudioToTwin(uint32_t tg,
+    const std::vector<uint8_t>& audio)
+{
+  if (m_twin_link != nullptr)
+  {
+    m_twin_link->onLocalAudio(tg, audio);
+  }
+} /* Reflector::forwardSatelliteRawAudioToTwin */
+
+
+void Reflector::forwardSatelliteFlushToTwin(uint32_t tg)
+{
+  if (m_twin_link != nullptr)
+  {
+    m_twin_link->onLocalFlush(tg);
+  }
+} /* Reflector::forwardSatelliteFlushToTwin */
+
+
 void Reflector::forwardAudioToSatellitesExcept(SatelliteLink* except,
     uint32_t tg, const std::vector<uint8_t>& audio)
 {
