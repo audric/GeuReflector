@@ -184,6 +184,19 @@ bool ReflectorClient::TgFilter::operator()(ReflectorClient* client) const
 }
 
 
+bool ReflectorClient::SelectedTgIdleFilter::operator()(
+    ReflectorClient* client) const
+{
+  uint32_t tg = client->m_current_tg;
+  if (tg == 0)
+  {
+    return true;
+  }
+  return TGHandler::instance()->talkerForTG(tg) == nullptr
+      && !TGHandler::instance()->hasTrunkTalker(tg);
+} /* ReflectorClient::SelectedTgIdleFilter::operator() */
+
+
 ReflectorClient::ReflectorClient(Reflector *ref, Async::FramedTcpConnection *con,
                                  Async::Config *cfg)
   : m_con(con), m_con_state(STATE_EXPECT_PROTO_VER),

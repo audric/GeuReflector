@@ -365,7 +365,9 @@ void SatelliteClient::handleMsgPeerAudio(std::istream& is)
   m_reflector->broadcastUdpMsg(udp_msg,
       ReflectorClient::mkOrFilter(
         ReflectorClient::TgFilter(msg.tg()),
-        ReflectorClient::TgMonitorFilter(msg.tg())));
+        ReflectorClient::mkAndFilter(
+          ReflectorClient::TgMonitorFilter(msg.tg()),
+          ReflectorClient::SelectedTgIdleFilter())));
 } /* SatelliteClient::handleMsgPeerAudio */
 
 
@@ -377,7 +379,9 @@ void SatelliteClient::handleMsgPeerFlush(std::istream& is)
   m_reflector->broadcastUdpMsg(MsgUdpFlushSamples(),
       ReflectorClient::mkOrFilter(
         ReflectorClient::TgFilter(msg.tg()),
-        ReflectorClient::TgMonitorFilter(msg.tg())));
+        ReflectorClient::mkAndFilter(
+          ReflectorClient::TgMonitorFilter(msg.tg()),
+          ReflectorClient::SelectedTgIdleFilter())));
 } /* SatelliteClient::handleMsgPeerFlush */
 
 

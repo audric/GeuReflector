@@ -203,6 +203,13 @@ class ReflectorClient : public sigc::trackable
         uint32_t m_tg;
     };
 
+    class SelectedTgIdleFilter : public Filter
+    {
+      public:
+        SelectedTgIdleFilter() {}
+        virtual bool operator ()(ReflectorClient *client) const;
+    };
+
     template <class F1, class F2>
     class AndFilter : public Filter
     {

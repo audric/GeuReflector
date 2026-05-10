@@ -2804,6 +2804,112 @@ class TestTrunkIntegration(unittest.TestCase):
             b_client.close()
             c_client.close()
 
+    # ------------------------------------------------------------------
+    # Test 41: priority-driven TG switch via MsgSelectTG resumes audio
+    # ------------------------------------------------------------------
+    def test_41_priority_switch_still_works(self):
+        """When real svxlink sees a higher-priority monitor TG fire while
+        its selected TG is idle, it sends MsgSelectTG to switch. The
+        reflector then routes audio for the new selected TG via TgFilter
+        (the gate is irrelevant on that arm). This test simulates the
+        switch (the Python client can't run svxlink's priority logic) and
+        confirms audio flows after MsgSelectTG.
+
+        Before the simulated switch: A's currentTG=9 idle, monitor=[110],
+        a talker on TG 110. With the new gate AND `currentTG=9 idle`, the
+        monitor arm passes (talkerForTG(9) is null). To make the test
+        independent of that detail and prove the post-switch path, we
+        call select_tg(110), drain any traffic from before the measurement
+        burst, then verify the post-switch audio arrives via TgFilter.
+        """
+        port = T.mapped_client_port(self.PRIMARY)
+
+        a_client = ClientPeer()
+        c_client = ClientPeer()
+        try:
+            a_client.connect(HOST, port)
+            a_client.authenticate(callsign=CLIENT_CALLSIGN, password=CLIENT_PASSWORD)
+            a_client.setup_udp(udp_port=port)
+            a_client.select_tg(9)
+            a_client.monitor_tgs([110])
+
+            c_client.connect(HOST, port)
+            c_client.authenticate(callsign=CLIENT2_CALLSIGN, password=CLIENT2_PASSWORD)
+            c_client.setup_udp(udp_port=port)
+            c_client.select_tg(110)
+
+            time.sleep(0.4)
+
+            # Simulate svxlink's priority-driven switch: A re-selects TG 110.
+            a_client.select_tg(110)
+            time.sleep(0.2)
+            a_client.recv_udp_all(timeout=0.05)
+
+            P_C = b"\xCC\xDD\xCC\xDD"
+            for _ in range(6):
+                c_client.send_udp_audio(P_C * 40)
+                time.sleep(0.02)
+            c_client.send_udp_flush()
+            time.sleep(0.5)
+
+            msgs = a_client.recv_udp_all(timeout=1.0)
+            audio_payloads = [p for t, p in msgs if t == UDP_AUDIO]
+            self.assertGreater(len(audio_payloads), 0,
+                "After simulated priority switch (select_tg(110)), A "
+                "received no TG 110 UDP audio — TgFilter delivery broken")
+            self.assertTrue(any(P_C in p for p in audio_payloads),
+                "Audio arrived but did not carry the TG 110 pattern P_C")
+        finally:
+            a_client.close()
+            c_client.close()
+
+    # ------------------------------------------------------------------
+    # Test 42: passive observer (currentTG=0) still gets monitor UDP
+    # ------------------------------------------------------------------
+    def test_42_passive_observer_unaffected(self):
+        """A client with select_tg(0) and a single monitor TG must still
+        receive UDP audio for that monitor TG. Guards the
+        `tg == 0 → return true` short-circuit in SelectedTgIdleFilter.
+        """
+        port = T.mapped_client_port(self.PRIMARY)
+
+        a_client = ClientPeer()
+        c_client = ClientPeer()
+        try:
+            a_client.connect(HOST, port)
+            a_client.authenticate(callsign=CLIENT_CALLSIGN, password=CLIENT_PASSWORD)
+            a_client.setup_udp(udp_port=port)
+            a_client.select_tg(0)
+            a_client.monitor_tgs([110])
+
+            c_client.connect(HOST, port)
+            c_client.authenticate(callsign=CLIENT2_CALLSIGN, password=CLIENT2_PASSWORD)
+            c_client.setup_udp(udp_port=port)
+            c_client.select_tg(110)
+
+            time.sleep(0.4)
+            a_client.recv_udp_all(timeout=0.05)
+
+            P_C = b"\xCC\xDD\xCC\xDD"
+            for _ in range(6):
+                c_client.send_udp_audio(P_C * 40)
+                time.sleep(0.02)
+            c_client.send_udp_flush()
+            time.sleep(0.5)
+
+            msgs = a_client.recv_udp_all(timeout=1.0)
+            audio_payloads = [p for t, p in msgs if t == UDP_AUDIO]
+            self.assertGreater(len(audio_payloads), 0,
+                "Passive observer (currentTG=0, monitor=[110]) received no "
+                "UDP audio — SelectedTgIdleFilter incorrectly blocking the "
+                "currentTG==0 case")
+            self.assertTrue(any(P_C in p for p in audio_payloads),
+                "Passive observer received audio but no frames carried "
+                "the TG 110 pattern P_C")
+        finally:
+            a_client.close()
+            c_client.close()
+
 
 # ---------------------------------------------------------------------------
 # Custom test runner with clean, readable output
