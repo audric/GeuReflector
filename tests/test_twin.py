@@ -955,6 +955,72 @@ TOPIC_PREFIX=svxreflector/testnode
             f"got:\n{combined[-500:]}",
         )
 
+    # ------------------------------------------------------------------
+    # Test X3: satellite-client TX reaches twin partner
+    # ------------------------------------------------------------------
+    def test_X3_satellite_tx_reaches_twin_partner(self):
+        """A satellite-client transmits through SatelliteLink to ref1; the
+        twin partner ref2 must deliver the audio to its local clients.
+
+        Mirrors test_10 (twin -> satellite) in the opposite direction. The
+        existing local-client TX path already informs the twin via
+        m_twin_link->onLocalAudio (Reflector.cpp), but the SatelliteLink
+        handlers never call m_twin_link at all — so currently ref2 is
+        deaf to satellite-originated traffic. Regression for that gap.
+
+        Path under test:
+          satellite-peer (faking the downstream sat) -> ref1 SatelliteLink
+            -> handleMsgPeerTalkerStart / handleMsgPeerAudio
+            -> (NEW) forwardSatellite*ToTwin -> m_twin_link->onLocal*
+            -> MsgPeer* over [TWIN] -> ref2 TwinLink::handleMsgPeer*
+            -> broadcastUdpMsg on TG -> ref2 client UDP socket
+        """
+        tg = 26201  # prefix 262, owned locally by both twins (same as test_10)
+        parent = T.TWIN_SATELLITE_PARENT          # "ref1"
+        other_twin = T.TWIN_REFLECTORS[parent]["twin_of"]  # "ref2"
+        sat_port = T.twin_mapped_satellite_port(parent)
+        other_client_port = T.twin_mapped_client_port(other_twin)
+
+        sat = SatellitePeer()
+        receiver = ClientPeer()
+        try:
+            # Receiver client on the twin partner first so it's selecting
+            # the TG before the satellite starts transmitting.
+            receiver.connect(HOST, other_client_port)
+            receiver.authenticate(callsign=CLIENT_CALLSIGN,
+                                  password=CLIENT_PASSWORD)
+            receiver.setup_udp(udp_port=other_client_port)
+            receiver.select_tg(tg)
+
+            sat.connect_satellite(port=sat_port)
+            sat.handshake()
+            time.sleep(0.5)  # let satellite hello + twin link settle
+
+            receiver.recv_udp_all(timeout=0.1)  # drain bootstrap
+
+            P = b"\xDE\xAD\xBE\xEF"
+            sat.send_talker_start(tg, "SATCLI")
+            for _ in range(6):
+                sat.send_audio(tg, P * 40)
+                time.sleep(0.02)
+            sat.send_flush(tg)
+            sat.send_talker_stop(tg)
+            time.sleep(0.7)
+
+            msgs = receiver.recv_udp_all(timeout=1.0)
+            audio_payloads = [p for t, p in msgs if t == UDP_AUDIO]
+
+            self.assertGreater(len(audio_payloads), 0,
+                f"ref2 client received no UDP audio for TG {tg} from a "
+                f"satellite-client transmitting on ref1 — the satellite "
+                f"path is not informing the twin partner")
+            self.assertTrue(any(P in p for p in audio_payloads),
+                f"ref2 received UDP frames but none carried the satellite "
+                f"pattern P=DEADBEEF — audio leaked from elsewhere?")
+        finally:
+            sat.close()
+            receiver.close()
+
 
 def docker_compose_output(*args) -> str:
     """Return the stdout+stderr of a docker-compose command as text."""
