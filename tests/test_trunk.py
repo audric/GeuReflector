@@ -2728,6 +2728,82 @@ class TestTrunkIntegration(unittest.TestCase):
             a_client.close()
             d_client.close()
 
+    # ------------------------------------------------------------------
+    # Test 40: monitor TG UDP audio must not mix with selected-TG audio
+    # ------------------------------------------------------------------
+    def test_40_monitor_does_not_mix_with_selected_tg(self):
+        """Regression for the v1.3.10 audio mixing bug (Fabio IZ2BKS report
+        2026-05-10). With SELECT_TG=9 and MONITOR_TGS=[110], a client must
+        receive ONLY TG 9 UDP audio while TG 9 has an active talker, even if
+        TG 110 also has a simultaneous talker. The pre-v1.3.10 invariant.
+
+        Setup (all on PRIMARY reflector):
+          A: select_tg=9, monitor_tgs=[110]   (the listener — Fabio's role)
+          B: select_tg=9, sends audio P_B     (the QSO partner)
+          C: select_tg=110, sends audio P_C   (the cross-TG talker)
+
+        Assertion: every UDP audio payload received by A contains P_B and
+        does NOT contain P_C.
+        """
+        port = T.mapped_client_port(self.PRIMARY)
+
+        a_client = ClientPeer()
+        b_client = ClientPeer()
+        c_client = ClientPeer()
+        try:
+            a_client.connect(HOST, port)
+            a_client.authenticate(callsign=CLIENT_CALLSIGN, password=CLIENT_PASSWORD)
+            a_client.setup_udp(udp_port=port)
+            a_client.select_tg(9)
+            a_client.monitor_tgs([110])
+
+            b_client.connect(HOST, port)
+            b_client.authenticate(callsign=CLIENT2_CALLSIGN, password=CLIENT2_PASSWORD)
+            b_client.setup_udp(udp_port=port)
+            b_client.select_tg(9)
+
+            c_client.connect(HOST, port)
+            c_client.authenticate(callsign=CLIENT3_CALLSIGN, password=CLIENT3_PASSWORD)
+            c_client.setup_udp(udp_port=port)
+            c_client.select_tg(110)
+
+            time.sleep(0.5)
+            a_client.recv_udp_all(timeout=0.05)  # drain bootstrap traffic
+
+            P_B = b"\xAA\xBB\xAA\xBB"
+            P_C = b"\xCC\xDD\xCC\xDD"
+
+            # Send interleaved audio bursts on TG 9 (B) and TG 110 (C) so
+            # their windows overlap on the reflector.
+            for _ in range(8):
+                b_client.send_udp_audio(P_B * 40)
+                c_client.send_udp_audio(P_C * 40)
+                time.sleep(0.02)
+            b_client.send_udp_flush()
+            c_client.send_udp_flush()
+            time.sleep(0.5)
+
+            msgs = a_client.recv_udp_all(timeout=1.0)
+            audio_payloads = [p for t, p in msgs if t == UDP_AUDIO]
+
+            self.assertGreater(len(audio_payloads), 0,
+                "A received no UDP audio at all — selected-TG fanout broken")
+
+            mixed = [p for p in audio_payloads if P_C in p]
+            self.assertEqual(len(mixed), 0,
+                f"A received {len(mixed)} UDP audio frame(s) carrying TG 110 "
+                f"pattern P_C while SELECT_TG=9 had an active talker — the "
+                f"v1.3.10 monitor-TG mixing bug. Total audio frames: "
+                f"{len(audio_payloads)}.")
+
+            self.assertTrue(any(P_B in p for p in audio_payloads),
+                "A received audio but none of it carried the TG 9 pattern P_B "
+                "— selected-TG delivery itself is broken")
+        finally:
+            a_client.close()
+            b_client.close()
+            c_client.close()
+
 
 # ---------------------------------------------------------------------------
 # Custom test runner with clean, readable output
