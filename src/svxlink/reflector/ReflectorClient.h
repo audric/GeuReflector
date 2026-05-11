@@ -210,6 +210,34 @@ class ReflectorClient : public sigc::trackable
         virtual bool operator ()(ReflectorClient *client) const;
     };
 
+    /**
+     * @brief First-talker-wins arbitration for monitor-TG UDP delivery.
+     *
+     * Returns true iff the client is monitoring `m_tg` AND `m_tg` is the
+     * earliest-started TG (local or trunk talker) among this client's
+     * monitored set. Ties broken by smaller TG id.
+     *
+     * At audio fanout time `m_tg` has an active talker by construction.
+     * At flush fanout time `m_tg`'s talker was just cleared but its start
+     * timestamp persists in `TGHandler`, so the freshly-stopped TG is
+     * still considered as a candidate — this delivers the flush to the
+     * listener that was actually decoding it.
+     *
+     * Designed to be ANDed with `TgMonitorFilter(tg)` and
+     * `SelectedTgIdleFilter` at the seven UDP fanout sites added by
+     * `92d9a63`. With those two siblings the predicate evaluates only on
+     * the monitor arm of the OR; the selected-TG arm (`TgFilter(tg)`)
+     * is unaffected.
+     */
+    class EarliestMonitorTalkerFilter : public Filter
+    {
+      public:
+        EarliestMonitorTalkerFilter(uint32_t tg) : m_tg(tg) {}
+        virtual bool operator ()(ReflectorClient *client) const;
+      private:
+        uint32_t m_tg;
+    };
+
     template <class F1, class F2>
     class AndFilter : public Filter
     {

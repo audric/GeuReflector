@@ -162,6 +162,16 @@ class TGHandler : public sigc::trackable
 
     ReflectorClient* talkerForTG(uint32_t tg) const;
 
+    /**
+     * @brief Look up the wall-clock time (gettimeofday) at which the
+     *        current talker — or, if no talker is currently set, the most
+     *        recent talker — took TG `tg`. The value persists across
+     *        talker-clear so the audio-flush fanout filter can still
+     *        identify the freshly-stopped TG.
+     * @return true iff a start time has ever been recorded for `tg`.
+     */
+    bool talkerStartTimeForTG(uint32_t tg, struct timeval& out) const;
+
     uint32_t TGForClient(ReflectorClient* client);
 
     void setTrunkTalkerForTG(uint32_t tg, const std::string& callsign);
@@ -169,6 +179,12 @@ class TGHandler : public sigc::trackable
     void clearAllTrunkTalkers(void);
     std::string trunkTalkerForTG(uint32_t tg) const;
     bool hasTrunkTalker(uint32_t tg) const;
+
+    /**
+     * @brief Same as `talkerStartTimeForTG` but for trunk-sourced talkers.
+     *        Persists across `clearTrunkTalkerForTG` for the same reason.
+     */
+    bool trunkTalkerStartTimeForTG(uint32_t tg, struct timeval& out) const;
     const std::map<uint32_t, std::string>& trunkTalkersSnapshot(void) const
     {
       return m_trunk_talkers;
@@ -227,6 +243,10 @@ class TGHandler : public sigc::trackable
       ClientSet         clients;
       ReflectorClient*  talker;
       struct timeval    last_talker_timestamp;
+      // Wall-clock time at which the current (or most recent) talker took
+      // this TG. Retained across talker-clear so flush fanout can identify
+      // the freshly-stopped TG.
+      struct timeval    talker_start_timestamp;
       unsigned          sql_timeout_cnt;
       time_t            auto_qsy_after_s;
       time_t            auto_qsy_time;
@@ -236,6 +256,7 @@ class TGHandler : public sigc::trackable
           auto_qsy_time(-1)
       {
         timerclear(&last_talker_timestamp);
+        timerclear(&talker_start_timestamp);
       }
     };
     typedef std::map<uint32_t, TGInfo*>               IdMap;
@@ -246,6 +267,9 @@ class TGHandler : public sigc::trackable
     ClientMap                        m_client_map;
     std::map<uint32_t, std::string>  m_trunk_talkers;
     std::map<uint32_t, std::string>  m_trunk_talker_peer_ids;  // tg -> peer_id
+    // Wall-clock start time for the current (or most recent) trunk talker.
+    // Retained across clearTrunkTalkerForTG to support flush filtering.
+    std::map<uint32_t, struct timeval> m_trunk_talker_start_times;
     Async::Timer                     m_timeout_timer;
     unsigned                         m_sql_timeout;
     unsigned                         m_sql_timeout_blocktime;

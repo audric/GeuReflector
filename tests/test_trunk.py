@@ -2910,6 +2910,155 @@ class TestTrunkIntegration(unittest.TestCase):
             a_client.close()
             c_client.close()
 
+    # ------------------------------------------------------------------
+    # Test 43: two monitor TGs simultaneously busy must NOT mix
+    # ------------------------------------------------------------------
+    def test_43_two_monitor_tgs_do_not_mix(self):
+        """Regression for the multi-monitor-TG mixing gap left open by
+        28ebf29. With SELECT_TG=9 idle and MONITOR_TGS=[110, 112], two
+        simultaneous talkers (on 110 and 112) must NOT both reach the
+        listener — only the earliest-started one (first-talker-wins).
+
+        Setup (all on PRIMARY reflector):
+          A: select_tg=9, monitor_tgs=[110, 112]   (the listener)
+          C: select_tg=110, sends audio P_C        (starts first)
+          D: select_tg=112, sends audio P_D        (starts ~150 ms later)
+
+        Assertion: every UDP audio payload received by A contains P_C and
+        none contain P_D. (C started first → C owns the listener's decoder
+        until C stops; D's frames must be suppressed.)
+        """
+        port = T.mapped_client_port(self.PRIMARY)
+
+        a_client = ClientPeer()
+        c_client = ClientPeer()
+        d_client = ClientPeer()
+        try:
+            a_client.connect(HOST, port)
+            a_client.authenticate(callsign=CLIENT_CALLSIGN, password=CLIENT_PASSWORD)
+            a_client.setup_udp(udp_port=port)
+            a_client.select_tg(9)
+            a_client.monitor_tgs([110, 112])
+
+            c_client.connect(HOST, port)
+            c_client.authenticate(callsign=CLIENT2_CALLSIGN, password=CLIENT2_PASSWORD)
+            c_client.setup_udp(udp_port=port)
+            c_client.select_tg(110)
+
+            d_client.connect(HOST, port)
+            d_client.authenticate(callsign=CLIENT3_CALLSIGN, password=CLIENT3_PASSWORD)
+            d_client.setup_udp(udp_port=port)
+            d_client.select_tg(112)
+
+            time.sleep(0.5)
+            a_client.recv_udp_all(timeout=0.05)
+
+            P_C = b"\xCC\xDD\xCC\xDD"
+            P_D = b"\xEE\xFF\xEE\xFF"
+
+            # C starts first.
+            c_client.send_udp_audio(P_C * 40)
+            time.sleep(0.15)
+            # Now D joins; both stream interleaved frames.
+            for _ in range(8):
+                c_client.send_udp_audio(P_C * 40)
+                d_client.send_udp_audio(P_D * 40)
+                time.sleep(0.02)
+            c_client.send_udp_flush()
+            d_client.send_udp_flush()
+            time.sleep(0.5)
+
+            msgs = a_client.recv_udp_all(timeout=1.0)
+            audio_payloads = [p for t, p in msgs if t == UDP_AUDIO]
+
+            self.assertGreater(len(audio_payloads), 0,
+                "A received no UDP audio at all — monitor delivery broken")
+
+            mixed = [p for p in audio_payloads if P_D in p]
+            self.assertEqual(len(mixed), 0,
+                f"A received {len(mixed)} UDP audio frame(s) carrying the "
+                f"TG 112 pattern P_D while TG 110 (started first) was still "
+                f"active — multi-monitor-TG mixing regression. Total audio "
+                f"frames: {len(audio_payloads)}.")
+
+            self.assertTrue(any(P_C in p for p in audio_payloads),
+                "A received audio but none of it carried the TG 110 pattern "
+                "P_C — earliest-talker-wins delivery itself is broken")
+        finally:
+            a_client.close()
+            c_client.close()
+            d_client.close()
+
+    # ------------------------------------------------------------------
+    # Test 44: passive observer with two simultaneous monitor talkers
+    # ------------------------------------------------------------------
+    def test_44_passive_observer_no_monitor_mix(self):
+        """Same first-talker-wins invariant for a passive observer
+        (currentTG=0). The earlier code path short-circuited `tg==0` in
+        SelectedTgIdleFilter, leaving passive observers fully exposed to
+        multi-monitor mixing. EarliestMonitorTalkerFilter must apply
+        uniformly.
+        """
+        port = T.mapped_client_port(self.PRIMARY)
+
+        a_client = ClientPeer()
+        c_client = ClientPeer()
+        d_client = ClientPeer()
+        try:
+            a_client.connect(HOST, port)
+            a_client.authenticate(callsign=CLIENT_CALLSIGN, password=CLIENT_PASSWORD)
+            a_client.setup_udp(udp_port=port)
+            a_client.select_tg(0)
+            a_client.monitor_tgs([110, 112])
+
+            c_client.connect(HOST, port)
+            c_client.authenticate(callsign=CLIENT2_CALLSIGN, password=CLIENT2_PASSWORD)
+            c_client.setup_udp(udp_port=port)
+            c_client.select_tg(110)
+
+            d_client.connect(HOST, port)
+            d_client.authenticate(callsign=CLIENT3_CALLSIGN, password=CLIENT3_PASSWORD)
+            d_client.setup_udp(udp_port=port)
+            d_client.select_tg(112)
+
+            time.sleep(0.5)
+            a_client.recv_udp_all(timeout=0.05)
+
+            P_C = b"\xCC\xDD\xCC\xDD"
+            P_D = b"\xEE\xFF\xEE\xFF"
+
+            c_client.send_udp_audio(P_C * 40)
+            time.sleep(0.15)
+            for _ in range(8):
+                c_client.send_udp_audio(P_C * 40)
+                d_client.send_udp_audio(P_D * 40)
+                time.sleep(0.02)
+            c_client.send_udp_flush()
+            d_client.send_udp_flush()
+            time.sleep(0.5)
+
+            msgs = a_client.recv_udp_all(timeout=1.0)
+            audio_payloads = [p for t, p in msgs if t == UDP_AUDIO]
+
+            self.assertGreater(len(audio_payloads), 0,
+                "Passive observer received no UDP audio — monitor "
+                "delivery broken for currentTG=0")
+
+            mixed = [p for p in audio_payloads if P_D in p]
+            self.assertEqual(len(mixed), 0,
+                f"Passive observer received {len(mixed)} UDP audio frame(s) "
+                f"carrying TG 112 pattern P_D while TG 110 (started first) "
+                f"was still active — multi-monitor-TG mixing regression for "
+                f"passive observers. Total audio frames: {len(audio_payloads)}.")
+
+            self.assertTrue(any(P_C in p for p in audio_payloads),
+                "Passive observer received audio but none carried the TG 110 "
+                "pattern P_C")
+        finally:
+            a_client.close()
+            c_client.close()
+            d_client.close()
+
 
 # ---------------------------------------------------------------------------
 # Custom test runner with clean, readable output

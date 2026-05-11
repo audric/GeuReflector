@@ -367,7 +367,9 @@ void SatelliteClient::handleMsgPeerAudio(std::istream& is)
         ReflectorClient::TgFilter(msg.tg()),
         ReflectorClient::mkAndFilter(
           ReflectorClient::TgMonitorFilter(msg.tg()),
-          ReflectorClient::SelectedTgIdleFilter())));
+          ReflectorClient::mkAndFilter(
+            ReflectorClient::SelectedTgIdleFilter(),
+            ReflectorClient::EarliestMonitorTalkerFilter(msg.tg())))));
 } /* SatelliteClient::handleMsgPeerAudio */
 
 
@@ -381,7 +383,9 @@ void SatelliteClient::handleMsgPeerFlush(std::istream& is)
         ReflectorClient::TgFilter(msg.tg()),
         ReflectorClient::mkAndFilter(
           ReflectorClient::TgMonitorFilter(msg.tg()),
-          ReflectorClient::SelectedTgIdleFilter())));
+          ReflectorClient::mkAndFilter(
+            ReflectorClient::SelectedTgIdleFilter(),
+            ReflectorClient::EarliestMonitorTalkerFilter(msg.tg())))));
 } /* SatelliteClient::handleMsgPeerFlush */
 
 

@@ -1413,7 +1413,9 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
                     ReflectorClient::TgFilter(tg),
                     ReflectorClient::mkAndFilter(
                       ReflectorClient::TgMonitorFilter(tg),
-                      ReflectorClient::SelectedTgIdleFilter()))));
+                      ReflectorClient::mkAndFilter(
+                        ReflectorClient::SelectedTgIdleFilter(),
+                        ReflectorClient::EarliestMonitorTalkerFilter(tg))))));
             if (m_is_satellite && m_satellite_client != nullptr)
             {
               m_satellite_client->onLocalAudio(tg, msg.audioData());
@@ -1581,7 +1583,9 @@ void Reflector::onTalkerUpdated(uint32_t tg, ReflectorClient* old_talker,
               ReflectorClient::TgFilter(tg),
               ReflectorClient::mkAndFilter(
                 ReflectorClient::TgMonitorFilter(tg),
-                ReflectorClient::SelectedTgIdleFilter())),
+                ReflectorClient::mkAndFilter(
+                  ReflectorClient::SelectedTgIdleFilter(),
+                  ReflectorClient::EarliestMonitorTalkerFilter(tg)))),
             ReflectorClient::ExceptFilter(old_talker)));
     if (m_mqtt != nullptr)
     {
@@ -2898,7 +2902,9 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
           ReflectorClient::TgFilter(tg),
           ReflectorClient::mkAndFilter(
             ReflectorClient::TgMonitorFilter(tg),
-            ReflectorClient::SelectedTgIdleFilter())));
+            ReflectorClient::mkAndFilter(
+              ReflectorClient::SelectedTgIdleFilter(),
+              ReflectorClient::EarliestMonitorTalkerFilter(tg)))));
     if (m_mqtt != nullptr)
     {
       m_mqtt->onPeerTalkerStop(peer_id, tg, old_cs);

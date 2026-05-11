@@ -387,7 +387,9 @@ void SatelliteLink::handleMsgPeerAudio(std::istream& is)
         ReflectorClient::TgFilter(tg),
         ReflectorClient::mkAndFilter(
           ReflectorClient::TgMonitorFilter(tg),
-          ReflectorClient::SelectedTgIdleFilter())));
+          ReflectorClient::mkAndFilter(
+            ReflectorClient::SelectedTgIdleFilter(),
+            ReflectorClient::EarliestMonitorTalkerFilter(tg)))));
 
   // Forward to trunk peers
   m_reflector->forwardSatelliteRawAudioToTrunks(tg, msg.audio());
@@ -412,7 +414,9 @@ void SatelliteLink::handleMsgPeerFlush(std::istream& is)
         ReflectorClient::TgFilter(tg),
         ReflectorClient::mkAndFilter(
           ReflectorClient::TgMonitorFilter(tg),
-          ReflectorClient::SelectedTgIdleFilter())));
+          ReflectorClient::mkAndFilter(
+            ReflectorClient::SelectedTgIdleFilter(),
+            ReflectorClient::EarliestMonitorTalkerFilter(tg)))));
 
   m_reflector->forwardSatelliteFlushToTrunks(tg);
   m_reflector->forwardSatelliteFlushToTwin(tg);

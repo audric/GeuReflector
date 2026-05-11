@@ -197,6 +197,86 @@ bool ReflectorClient::SelectedTgIdleFilter::operator()(
 } /* ReflectorClient::SelectedTgIdleFilter::operator() */
 
 
+namespace {
+// Look up the earliest of (local talker start, trunk talker start) for a TG.
+// Returns true iff at least one was set. Used by EarliestMonitorTalkerFilter.
+bool startTimeForTG(uint32_t tg, struct timeval& out)
+{
+  TGHandler* h = TGHandler::instance();
+  struct timeval local_ts, trunk_ts;
+  bool has_local = h->talkerStartTimeForTG(tg, local_ts);
+  bool has_trunk = h->trunkTalkerStartTimeForTG(tg, trunk_ts);
+  if (has_local && has_trunk)
+  {
+    out = timercmp(&local_ts, &trunk_ts, <) ? local_ts : trunk_ts;
+    return true;
+  }
+  if (has_local)
+  {
+    out = local_ts;
+    return true;
+  }
+  if (has_trunk)
+  {
+    out = trunk_ts;
+    return true;
+  }
+  return false;
+}
+} // namespace
+
+bool ReflectorClient::EarliestMonitorTalkerFilter::operator()(
+    ReflectorClient* client) const
+{
+  if (client->m_monitored_tgs.count(m_tg) == 0)
+  {
+    return false;
+  }
+
+  struct timeval m_tg_ts;
+  if (!startTimeForTG(m_tg, m_tg_ts))
+  {
+    // m_tg has never had a talker recorded — nothing to deliver.
+    return false;
+  }
+
+  uint32_t earliest_tg = m_tg;
+  struct timeval earliest_ts = m_tg_ts;
+
+  TGHandler* h = TGHandler::instance();
+  for (uint32_t tg : client->m_monitored_tgs)
+  {
+    if (tg == m_tg)
+    {
+      continue;
+    }
+    bool active = (h->talkerForTG(tg) != nullptr) || h->hasTrunkTalker(tg);
+    if (!active)
+    {
+      continue;
+    }
+
+    struct timeval ts;
+    if (!startTimeForTG(tg, ts))
+    {
+      continue;
+    }
+
+    bool earlier = timercmp(&ts, &earliest_ts, <);
+    bool same = !earlier &&
+                ts.tv_sec  == earliest_ts.tv_sec &&
+                ts.tv_usec == earliest_ts.tv_usec;
+    if (earlier || (same && tg < earliest_tg))
+    {
+      earliest_tg = tg;
+      earliest_ts = ts;
+    }
+  }
+
+  return earliest_tg == m_tg;
+} /* ReflectorClient::EarliestMonitorTalkerFilter::operator() */
+
+
 ReflectorClient::ReflectorClient(Reflector *ref, Async::FramedTcpConnection *con,
                                  Async::Config *cfg)
   : m_con(con), m_con_state(STATE_EXPECT_PROTO_VER),

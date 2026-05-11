@@ -230,6 +230,13 @@ void TGHandler::setTalkerForTG(uint32_t tg, ReflectorClient* new_talker)
   }
   tg_info->sql_timeout_cnt = (new_talker != 0) ? m_sql_timeout : 0;
   id_map_it->second->talker = new_talker;
+  if (new_talker != 0)
+  {
+    // any → new_talker transition: stamp the talker-start time. Retained
+    // across the subsequent clear so EarliestMonitorTalkerFilter can
+    // identify the freshly-stopped TG at flush fanout time.
+    gettimeofday(&tg_info->talker_start_timestamp, NULL);
+  }
   talkerUpdated(tg, old_talker, new_talker);
 
   if (tg_info->auto_qsy_after_s > 0)
@@ -260,6 +267,22 @@ ReflectorClient* TGHandler::talkerForTG(uint32_t tg) const
 } /* TGHandler::talkerForTG */
 
 
+bool TGHandler::talkerStartTimeForTG(uint32_t tg, struct timeval& out) const
+{
+  IdMap::const_iterator id_map_it = m_id_map.find(tg);
+  if (id_map_it == m_id_map.end())
+  {
+    return false;
+  }
+  if (!timerisset(&id_map_it->second->talker_start_timestamp))
+  {
+    return false;
+  }
+  out = id_map_it->second->talker_start_timestamp;
+  return true;
+} /* TGHandler::talkerStartTimeForTG */
+
+
 uint32_t TGHandler::TGForClient(ReflectorClient* client)
 {
   ClientMap::iterator client_map_it = m_client_map.find(client);
@@ -288,6 +311,8 @@ void TGHandler::setTrunkTalkerForTG(uint32_t tg, const std::string& callsign)
   if (callsign.empty())
   {
     m_trunk_talkers.erase(tg);
+    // Retain m_trunk_talker_start_times[tg] so flush fanout filters can
+    // identify this freshly-stopped TG.
   }
   else
   {
@@ -300,6 +325,9 @@ void TGHandler::setTrunkTalkerForTG(uint32_t tg, const std::string& callsign)
       return;
     }
     m_trunk_talkers[tg] = callsign;
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    m_trunk_talker_start_times[tg] = now;
   }
   trunkTalkerUpdated(tg, old, callsign, peer_id);
 } /* TGHandler::setTrunkTalkerForTG */
@@ -386,6 +414,19 @@ bool TGHandler::hasTrunkTalker(uint32_t tg) const
 {
   return m_trunk_talkers.count(tg) > 0;
 } /* TGHandler::hasTrunkTalker */
+
+
+bool TGHandler::trunkTalkerStartTimeForTG(uint32_t tg,
+                                          struct timeval& out) const
+{
+  auto it = m_trunk_talker_start_times.find(tg);
+  if (it == m_trunk_talker_start_times.end())
+  {
+    return false;
+  }
+  out = it->second;
+  return true;
+} /* TGHandler::trunkTalkerStartTimeForTG */
 
 
 bool TGHandler::allowTgSelection(ReflectorClient *client, uint32_t tg)
