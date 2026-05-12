@@ -59,7 +59,6 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include <common.h>
 #include <config.h>
 
-
 /****************************************************************************
  *
  * Local Includes
@@ -74,7 +73,8 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #include "TwinLink.h"
 #include "RedisStore.h"
 #include <version/SVXREFLECTOR.h>
-
+#include "ReflectorTrunkManager.h"
+#include "ExternaConfigFetcher.h"
 
 /****************************************************************************
  *
@@ -177,6 +177,27 @@ namespace {
     }
     return true;
   } /* ensureDirectoryExist */
+
+std::string generateClientId(int length = 8)
+{
+    const char charset[] =
+        "0123456789"
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz";
+
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dist(0, sizeof(charset) - 2);
+
+    std::string id;
+    id.reserve(length);
+    for (int i = 0; i < length; ++i)
+        id += charset[dist(gen)];
+
+    return "client_" + id;  // optional prefix
+}
+
+
 
 
   void startCertRenewTimer(const Async::SslX509& cert, Async::AtTimer& timer)
@@ -335,6 +356,18 @@ Reflector::~Reflector(void)
   m_client_con_map.clear();
   ReflectorClient::cleanup();
   delete TGHandler::instance();
+  
+  
+  
+    delete ReflectorTrunkManager::instance();
+    delete timer_heartbeat_trunk;
+    delete timer_brodcast_trunk;
+    delete timmer_send_intresstedtg;
+    ExternaConfigFetcher::instance()->stop();
+    delete ExternaConfigFetcher::instance();
+      
+  
+
 } /* Reflector::~Reflector */
 
 
@@ -342,6 +375,10 @@ bool Reflector::initialize(Async::Config &cfg)
 {
   m_cfg = &cfg;
   TGHandler::instance()->setConfig(m_cfg);
+  ReflectorTrunkManager::instance()->setConfig(m_cfg);
+  ReflectorTrunkManager::instance()->init();
+
+
 
   std::string listen_port("5300");
   cfg.getValue("GLOBAL", "LISTEN_PORT", listen_port);
@@ -560,6 +597,79 @@ bool Reflector::initialize(Async::Config &cfg)
 
   initTwinServer();
   initSatelliteServer();
+  
+  
+	/* trunk port */
+	uint16_t udp_listen_port_trunk = 0;
+
+	m_cfg->getValue("ReflectorTrunk", "Port", udp_listen_port_trunk);
+
+
+	cout << "Trunk port is on " << udp_listen_port_trunk << "\r\n";
+	trunk_sock = new UdpSocket(udp_listen_port_trunk);
+	trunk_sock->dataReceived.connect(mem_fun(*this, &Reflector::on_trunk_udp_data_recived));
+	m_cfg->getValue("ReflectorTrunk", "GatewayId", reflektor_trunk_id);
+
+    
+
+    timer_heartbeat_trunk = new Timer(5000, Timer::TYPE_PERIODIC);
+    timer_heartbeat_trunk->expired.connect(mem_fun(*this, &Reflector::send_heartbeat_trunk));
+
+    timer_brodcast_trunk = new Timer(10000, Timer::TYPE_PERIODIC);
+    timer_brodcast_trunk->expired.connect(mem_fun(*this, &Reflector::Brodcast_list_to_peer_routing_T));
+
+    ReflectorTrunkManager::instance()->send_hello();
+
+    // Remote config tool
+    std::string config_url = "";
+    m_cfg->getValue("GLOBAL", "REMOTE_CONFIG_URL", config_url);
+    std::string Config_key = "";
+    m_cfg->getValue("GLOBAL", "REMOTE_CONFIG_KEY", Config_key);
+    std::string Config_id = "";
+    m_cfg->getValue("GLOBAL", "REMOTE_CONFIG_ID", Config_id);
+
+
+    if (config_url != "")
+    {
+    
+        ExternaConfigFetcher::initialize(
+            config_url,    // URL
+            Config_key,          // API Key
+            Config_id,                  // Node ID
+            30
+        );
+
+        ExternaConfigFetcher::instance()->setCallback(
+            [this](const Json::Value& config) {
+                this->Process_New_Config_update(config);
+            }
+        );
+        ExternaConfigFetcher::instance()->start();
+
+        try
+        {
+
+            std::ifstream file("config.json");
+
+            Json::Value config;
+            Json::CharReaderBuilder readerBuilder;
+            std::string errs;
+
+            Json::parseFromStream(readerBuilder, file, &config, &errs);
+
+
+            // kör din befintliga funktion
+            Process_New_Config_update(config);
+        }
+        catch (const std::exception& e)
+        {
+        }
+
+
+    }
+    
+
+    
 
   publishMetaToRedis();
   for (auto* link : m_trunk_links) publishTrunkStatusToRedis(link);
@@ -673,6 +783,17 @@ void Reflector::requestQsy(ReflectorClient *client, uint32_t tg)
       ReflectorClient::mkAndFilter(
         ge_v2_client_filter,
         ReflectorClient::TgFilter(current_tg)));
+        
+    MSG_Trunk_Change msg_trunk;
+    msg_trunk.talker_status = 4;
+    msg_trunk.tg = current_tg;
+    msg_trunk.new_tg = tg;
+    msg_trunk.talker = client->callsign();
+
+    ReflectorTrunkManager::instance()->handleOutgoingMessage_width_remap(current_tg, msg_trunk);
+    
+    
+        
 } /* Reflector::requestQsy */
 
 
@@ -1387,15 +1508,24 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
       if (!client->isBlocked())
       {
         MsgUdpAudio msg;
+        MsgUdpAudio_trunk  msg_trunk;
+
         if (!msg.unpack(ss))
         {
           geulog::warn("client", client->callsign(),
                ": Could not unpack incoming MsgUdpAudioV1 message");
           return;
         }
+        msg_trunk.audioData() = msg.audioData();  // vector copy
+
+        
         uint32_t tg = TGHandler::instance()->TGForClient(client);
         if (!msg.audioData().empty() && (tg > 0))
         {
+        
+           msg_trunk.tg = tg;
+
+        
           ReflectorClient* talker = TGHandler::instance()->talkerForTG(tg);
           if ((talker == 0) &&
               !TGHandler::instance()->hasTrunkTalker(tg))
@@ -1416,6 +1546,11 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
                       ReflectorClient::mkAndFilter(
                         ReflectorClient::SelectedTgIdleFilter(),
                         ReflectorClient::EarliestMonitorTalkerFilter(tg))))));
+
+            // Send packet to BLV trunk
+            ReflectorTrunkManager::instance()->handleOutgoingAudio_width_remap(tg, msg_trunk);
+            // GEU Refletor send_to trunks;                        
+                        
             if (m_is_satellite && m_satellite_client != nullptr)
             {
               m_satellite_client->onLocalAudio(tg, msg.audioData());
@@ -1508,6 +1643,17 @@ void Reflector::udpDatagramReceived(const IpAddress& addr, uint16_t port,
         // clients. We therefore acknowledge the flush immediately here to
         // the client who sent the flush request.
       client->sendUdpMsg(MsgUdpAllSamplesFlushed());
+      
+        MSG_Trunk_Change msg_trunk;
+        msg_trunk.talker_status = 5;
+        msg_trunk.tg = tg;
+        msg_trunk.talker = "";
+
+        // create a audio packet to trunk
+        msg_trunk.tg = tg;
+
+        ReflectorTrunkManager::instance()->handleOutgoingMessage_width_remap(tg, msg_trunk);
+      
       break;
     }
 
@@ -1595,6 +1741,16 @@ void Reflector::onTalkerUpdated(uint32_t tg, ReflectorClient* old_talker,
     {
       m_redis->clearLiveTalker(tg);
     }
+      
+        MSG_Trunk_Change msg_trunk1;
+        msg_trunk1.talker_status = 1;
+        msg_trunk1.tg = tg;
+        msg_trunk1.talker = old_talker->callsign();
+
+        // create a audio poaket to trunk
+        msg_trunk1.tg = tg;
+        ReflectorTrunkManager::instance()->handleOutgoingMessage_width_remap(tg, msg_trunk1);
+    
   }
   if (new_talker != 0)
   {
@@ -1606,6 +1762,17 @@ void Reflector::onTalkerUpdated(uint32_t tg, ReflectorClient* old_talker,
           ReflectorClient::mkOrFilter(
             ReflectorClient::TgFilter(tg),
             ReflectorClient::TgMonitorFilter(tg))));
+            
+    MSG_Trunk_Change msg_trunk;
+    msg_trunk.talker_status = 2;
+    msg_trunk.tg = tg;
+    msg_trunk.talker = new_talker->callsign();
+
+        // create a audio packet to trunk
+    msg_trunk.tg = tg;
+    ReflectorTrunkManager::instance()->handleOutgoingMessage_width_remap(tg, msg_trunk);
+            
+            
     if (tg == tgForV1Clients())
     {
       broadcastMsg(MsgTalkerStartV1(new_talker->callsign()), v1_client_filter);
@@ -1722,6 +1889,7 @@ void Reflector::refreshStatus(void)
     trunks[link->section()] = link->statusJson();
   }
   m_status["trunks"] = trunks;
+  m_status["trunks_UDP"] = ReflectorTrunkManager::instance()->JSON_array_staus();
 
   if (m_twin_link != nullptr)
   {
@@ -1731,6 +1899,29 @@ void Reflector::refreshStatus(void)
   {
     m_status.removeMember("twin");
   }
+  
+          Json::Value routing_table(Json::arrayValue);
+
+        node_table.for_each([&](const RoutingEntry& e) {
+            Json::Value entry(Json::objectValue);
+            entry["callsign"] = e.calsing;
+            entry["tg"] = e.tg;
+            entry["trunk"] = e.trunk;
+
+            if (e.tg_monitor) {
+                Json::Value monitor(Json::arrayValue);
+                for (int tg : *e.tg_monitor)
+                    monitor.append(tg);
+                entry["tg_monitor"] = monitor;
+            }
+            else {
+                entry["tg_monitor"] = Json::nullValue;
+            }
+
+            routing_table.append(entry);
+            });
+
+        m_status["Routing_table"] = routing_table;
 
   Json::Value cluster_arr(Json::arrayValue);
   for (uint32_t tg : m_cluster_tgs)
@@ -1886,6 +2077,16 @@ void Reflector::onRequestAutoQsy(uint32_t from_tg)
       ReflectorClient::mkAndFilter(
         ge_v2_client_filter,
         ReflectorClient::TgFilter(from_tg)));
+        
+    MSG_Trunk_Change msg_trunk;
+    msg_trunk.talker_status = 4;
+    msg_trunk.tg = from_tg;
+    msg_trunk.new_tg = tg;
+    msg_trunk.talker = "System";
+
+    ReflectorTrunkManager::instance()->handleOutgoingMessage_width_remap(from_tg, msg_trunk);     
+        
+        
 } /* Reflector::onRequestAutoQsy */
 
 
@@ -2888,6 +3089,9 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
   auto ge_v2_client_filter =
       ReflectorClient::ProtoVerLargerOrEqualFilter(ProtoVer(2, 0));
 
+    MSG_Trunk_Change msg_trunk1;
+
+
   if (!old_cs.empty())
   {
     geulog::info("trunk", old_cs, ": Trunk talker stop on TG #", tg);
@@ -2905,6 +3109,13 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
             ReflectorClient::mkAndFilter(
               ReflectorClient::SelectedTgIdleFilter(),
               ReflectorClient::EarliestMonitorTalkerFilter(tg)))));
+              
+         // Sent to blv ReflectorTrunkManager 
+        msg_trunk1.talker_status = 1;
+        msg_trunk1.tg = tg;
+        msg_trunk1.talker = old_cs;             
+              
+              
     if (m_mqtt != nullptr)
     {
       m_mqtt->onPeerTalkerStop(peer_id, tg, old_cs);
@@ -2923,6 +3134,12 @@ void Reflector::onTrunkTalkerUpdated(uint32_t tg,
           ReflectorClient::mkOrFilter(
             ReflectorClient::TgFilter(tg),
             ReflectorClient::TgMonitorFilter(tg))));
+            
+    msg_trunk1.talker_status = 2;
+    msg_trunk1.tg = tg;
+    msg_trunk1.talker = new_cs;
+    ReflectorTrunkManager::instance()->handleOutgoingMessage_width_remap(tg, msg_trunk1);
+            
     if (m_mqtt != nullptr)
     {
       m_mqtt->onPeerTalkerStart(peer_id, tg, new_cs);
@@ -3537,6 +3754,19 @@ void Reflector::scheduleTgInterestUpdate(void)
       if (mt != 0) local_interest.insert(mt);
     }
   }
+  
+
+  // Add tg_monitor from routing entries
+  node_table.for_each([&](const RoutingEntry& e) {
+    if (e.tg_monitor) {  // Check if optional has a value
+      for (int tg : *e.tg_monitor)  // Dereference to get the vector
+      {
+        if (tg != 0) local_interest.insert(static_cast<uint32_t>(tg));
+      }
+    }
+  });
+
+
 
   for (auto* link : m_trunk_links)
   {
@@ -3612,6 +3842,7 @@ void Reflector::sendNodeListToAllPeers(void)
     }
     local_nodes.push_back(e);
   }
+  
 
   // 2. Combined view = local + every connected satellite's stamped roster.
   // Each sat-supplied entry already carries sat_id == its satelliteId.
@@ -4784,6 +5015,867 @@ void Reflector::twinPendingTimeout(Async::Timer* t)
     }
   }
 } /* Reflector::twinPendingTimeout */
+
+/*  ---------------------- BLV trunk part ----------*/
+
+
+void Reflector::Process_New_Config_update(const Json::Value& config)
+{
+    // Bearbeta alla sektioner (inklusive PTY)
+    for (const auto& sectionName : config.getMemberNames())
+    {
+        const Json::Value& newSection = config[sectionName];
+
+        if (sectionName == "PTY")
+        {
+            if (newSection.isArray()) {
+                for (const auto& cmd : newSection) {
+                    std::string data = cmd.asString();
+                    if (!data.empty()) {
+                        std::cout << "Executing one-time PTY: " << data << std::endl;
+                        ctrlPtyDataReceived(static_cast<const void*>(data.data()), data.size());
+                    }
+                }
+            }
+            continue;
+        }
+
+        if (!newSection.isObject()) continue;
+
+        const Json::Value& oldSection = m_lastConfig[sectionName];
+
+        // Hitta diff för denna sektion
+        DetectAndApplySectionDiff(sectionName, oldSection, newSection);
+    }
+
+    // Spara endast icke-PTY delen
+    Json::Value persistentConfig = config;
+    persistentConfig.removeMember("PTY");
+
+    if (persistentConfig == m_lastConfig)
+    {
+        return;
+    }
+
+    SaveConfigToFile(persistentConfig);
+    m_lastConfig = persistentConfig;
+}
+
+void Reflector::DetectAndApplySectionDiff(
+    const std::string& sectionName,
+    const Json::Value& oldSection,
+    const Json::Value& newSection)
+{
+    for (const auto& keyName : oldSection.getMemberNames())
+    {
+        if (newSection.isMember(keyName))
+        {
+            if (newSection[keyName] != oldSection[keyName])
+            {
+                m_cfg->setValue(sectionName, keyName, newSection[keyName].asString());
+
+                ApplySpecialSectionLogic(sectionName, keyName);
+            }
+        }
+        else
+        {
+            std::cout << "Removed key: " << sectionName << "." << keyName << std::endl;
+
+            if (sectionName == "USERS")
+            {
+                m_cfg->setValue(sectionName, keyName, "Removed");
+            }
+            else if (sectionName == "TALKGROUPS")
+            {
+                m_cfg->setValue(sectionName, keyName, "");
+            }
+        }
+    }
+
+    // Hitta NYA keys i new config
+    for (const auto& keyName : newSection.getMemberNames())
+    {
+        if (!oldSection.isMember(keyName))
+        {
+            // Ny key
+            std::cout << "Added key: " << sectionName << "." << keyName << std::endl;
+            m_cfg->setValue(sectionName, keyName, newSection[keyName].asString());
+        }
+    }
+}
+
+void Reflector::ApplySpecialSectionLogic(
+    const std::string& sectionName,
+    const std::string& keyName)
+{
+    if (sectionName == "USERS")
+    {
+        std::cout << "USERS updated: " << keyName << std::endl;
+    }
+    else if (sectionName == "TALKGROUPS")
+    {
+        std::cout << "TALKGROUPS updated: " << keyName << std::endl;
+    }
+}
+
+void Reflector::SaveConfigToFile(const Json::Value& persistentConfig)
+{
+    std::ofstream file("config.json");
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "  ";
+    std::unique_ptr<Json::StreamWriter> jsonWriter(writer.newStreamWriter());
+    jsonWriter->write(persistentConfig, &file);
+}
+
+void Reflector::trunk_magager_talker_start_stop(int tg, std::string callsign, int start_stop)
+{
+
+    MSG_Trunk_Change msg_trunk1;
+
+    if (start_stop == 1)
+    {
+        msg_trunk1.talker_status = 1;
+
+
+    }
+    else if (start_stop == 5)
+    {
+        msg_trunk1.talker_status = 5;
+
+
+    }
+
+    else
+    {
+        msg_trunk1.talker_status = 2;
+
+    }
+
+    // Sent to blv ReflectorTrunkManager 
+    msg_trunk1.tg = tg;
+    msg_trunk1.talker = callsign;
+
+    ReflectorTrunkManager::instance()->handleOutgoingMessage_width_remap(tg, msg_trunk1);
+
+} /* Reflector::trunk_magager_talker_start_stop */
+
+
+void Reflector::send_heartbeat_trunk(Timer* t)
+{
+    ReflectorTrunkManager::instance()->Heartbeat_send();
+}
+
+void Reflector::on_trunk_udp_data_recived(const IpAddress& addr, uint16_t port, void* buf, int count)
+{
+
+    if (!ReflectorTrunkManager::instance()
+        ->is_ip_allowed(addr.toString())) {
+        return;
+    }
+
+    if (count <= 0) {
+        return;
+    }
+
+    // 🔑 Lookup key for this sender
+    std::string key = ReflectorTrunkManager::instance()->get_key(addr.toString());
+
+    std::vector<unsigned char> decoded;
+
+    if (key.empty()) {
+        // 🔹 No encryption
+        const unsigned char* p =
+            static_cast<const unsigned char*>(buf);
+        decoded.assign(p, p + count);
+    }
+    else {
+        //  Decrypt
+        decoded = ReflectorTrunkManager::instance()->decryptAES(buf, count, key);
+
+        if (decoded.empty()) {
+            std::cerr << "### Decryption failed from "
+                << addr << std::endl;
+            return;
+        }
+    }
+
+    //  Load decoded bytes into stream
+    std::stringstream ss;
+    ss.write(reinterpret_cast<const char*>(decoded.data()),
+        decoded.size());
+
+    // Your existing parsing code continues unchanged
+    ReflectorUdpMsg header;
+    ReflectorUdpMsgV2 header_v2a;
+
+
+
+
+    ss.seekg(0);
+    if (ss.str().find("hello") != std::string::npos) {
+
+
+        cout << "Hello message from trunk " << addr << ":" << port << endl;
+
+        // Send talkgroup message for filter
+        previousTGs_to_message.clear();
+        send_trunk_tg_filter_message();
+
+        return;
+    }
+
+
+
+    ss.seekg(0);
+    if (!header_v2a.unpack(ss))
+    {
+        cout << "*** WARNING: Unpacking message header failed for UDP datagram  131"
+            "from " << addr << ":" << port << endl;
+        return;
+    }
+//    cout << "message_id : " << header_v2a.type() << endl;
+
+    if (header_v2a.type() == 131)
+    {
+
+        MSG_Trunk_tg_subsribe header_v4;
+        if (!header_v4.unpack(ss))
+        {
+                 cerr << "*** WARNING["
+                   << "]: Could not unpack Message_from_filter " << endl;
+
+        }
+        else
+        {
+            if (header_v2a.type() == 131)
+            {
+                // add time to live
+                if (header_v4.ttl == 0)
+                {
+                    return;
+                }
+                else
+                {
+                    header_v4.ttl--;
+                }
+
+                ReflectorTrunkManager::instance()->incomming_filter(header_v4.Talkgroups, header_v4.trunkid);
+
+                 return;
+            }
+        }
+
+
+    }
+    if (header_v2a.type() == 132)
+    {
+        MSG_Trunk_tg_Heart_beat msg;
+        if (!msg.unpack(ss))
+        {
+            //  cerr << "*** WARNING["
+            //       << "]: Could not unpack incoming MsgUdpAudioV1 message" << endl;
+            return;
+        }
+        // add time to live
+        if (msg.ttl == 0)
+        {
+            return;
+        }
+        else
+        {
+            msg.ttl--;
+        }
+
+        ReflectorTrunkManager::instance()->Heartbeat_recive(addr.toString(), msg.nr);
+        return;
+    }
+    if (header_v2a.type() == 101)
+    {
+
+
+        MsgUdpAudio_trunk msg;
+        if (!msg.unpack(ss))
+        {
+            //  cerr << "*** WARNING["
+            //       << "]: Could not unpack incoming MsgUdpAudioV1 message" << endl;
+            return;
+        }
+
+
+
+        if (!msg.audioData().empty())
+        {
+            // Send message to local nodes	
+
+
+            // add time to live
+            if (msg.ttl == 0)
+            {
+                return;
+            }
+            else
+            {
+                msg.ttl--;
+            }
+
+
+        /*
+            if (ReflectorTrunkManager::instance()->getLastTalker(msg.tg) != addr.toString())
+            {
+                return;
+            }
+          */
+
+            ReflectorClient* local_talker = TGHandler::instance()->talkerForTG(msg.tg);
+
+            if (local_talker != nullptr)
+            {
+                std::cout << "Talker conflict on" << msg.tg << "\r\n";
+
+                return;
+            }
+
+
+
+
+            msg.tg = ReflectorTrunkManager::instance()->get_tg_from_dest_table(msg.tg, addr.toString());
+
+            broadcastUdpMsg(msg, ReflectorClient::TgFilter(msg.tg));
+            // Send to other   
+            ReflectorTrunkManager::instance()->handleOutgoingAudio_resend_newmsg(msg.tg, msg, addr.toString());
+
+            std::string trunk_type = ReflectorTrunkManager::instance()->get_trunk_type(addr.toString());
+
+            // GEU Refletor send_to trunks;
+            for (auto* link : m_trunk_links)
+            {
+                std::string trunk_type_link = link->get_trunk_type();
+              //  std::cout << "Packet in " << trunk_type_link << " send " << trunk_type << "\r\n";
+
+                bool should_send = false;
+
+                if (trunk_type.empty() || trunk_type == trunk_type_link)
+                {
+                    should_send = true;
+                }
+                else
+                {
+                    // Parse trunk_type (the CSV one) looking for trunk_type_link
+                    std::string csv = trunk_type + ",";
+                    std::string token;
+                    for (char c : csv)
+                    {
+                        if (c == ',')
+                        {
+                            if (token == trunk_type_link) { should_send = true; break; }
+                            token.clear();
+                        }
+                        else
+                        {
+                            token += c;
+                        }
+                    }
+                }
+
+                if (should_send)
+                {
+                    link->onLocalAudio(msg.tg, msg.audioData());
+                }
+            }
+
+            for (auto& kv : m_satellite_con_map)
+            {
+                kv.second->onParentAudio(msg.tg, msg.audioData());
+            }
+
+
+
+
+            //Audio send
+
+            return;
+        }
+    }
+    if (header_v2a.type() == 140)
+    {
+
+
+
+        MSG_Trunk_Change header_v3;
+        if (!header_v3.unpack(ss))
+        {
+            cerr << "*** WARNING["
+                << "]: Could not unpack Pmsg " << endl;
+            return;
+        }
+        // add time to live
+        if (header_v3.ttl == 0)
+        {
+            return;
+        }
+        else
+        {
+            header_v3.ttl--;
+        }
+
+        if (header_v3.talker_status == 2)
+        {
+
+            header_v3.tg = ReflectorTrunkManager::instance()->get_tg_from_dest_table(header_v3.tg, addr.toString());
+
+
+            broadcastMsg(MsgTalkerStart(header_v3.tg, header_v3.talker),
+                ReflectorClient::mkAndFilter(
+                    ge_v2_client_filter,
+                    ReflectorClient::mkOrFilter(
+                        ReflectorClient::TgFilter(header_v3.tg),
+                        ReflectorClient::TgMonitorFilter(header_v3.tg))));
+
+            cout << header_v3.talker << " -> Trunk "<< addr.toString() <<": Talker start on TG #" << header_v3.tg << endl;
+
+            // PTT talker handler 
+            ReflectorClient* local_talker = TGHandler::instance()->talkerForTG(header_v3.tg);
+
+            if (local_talker != nullptr)
+            {
+                  std::cout << "Talker conflict on" << header_v3.tg << "\r\n";
+
+                return;
+            }
+
+            //TGHandler::instance()->setTrunkTalkerForTG(header_v3.tg, header_v3.talker);
+
+            //ReflectorTrunkManager::instance()->setLastTalker(header_v3.tg,addr.toString());
+
+
+
+
+
+
+
+            ReflectorTrunkManager::instance()->handleOutgoingAudio_resend_status_newmsg(header_v3.tg, header_v3, addr.toString());
+            // GEU Refletor send_to trunks;
+
+            std::string trunk_type = ReflectorTrunkManager::instance()->get_trunk_type(addr.toString());
+            sendNodeListToAllPeers();
+
+
+            // GEU Refletor send_to trunks;
+            for (auto* link : m_trunk_links)
+            {
+                std::string trunk_type_link = link->get_trunk_type();
+              //  std::cout << "Packet in " << trunk_type_link << " send " << trunk_type << "\r\n";
+
+                bool should_send = false;
+
+                if (trunk_type.empty() || trunk_type == trunk_type_link)
+                {
+                    should_send = true;
+                }
+                else
+                {
+                    // Parse trunk_type (the CSV one) looking for trunk_type_link
+                    std::string csv = trunk_type + ",";
+                    std::string token;
+                    for (char c : csv)
+                    {
+                        if (c == ',')
+                        {
+                            if (token == trunk_type_link) { should_send = true; break; }
+                            token.clear();
+                        }
+                        else
+                        {
+                            token += c;
+                        }
+                    }
+                }
+
+                if (should_send)
+                {
+                    link->onLocalTalkerStart(header_v3.tg, header_v3.talker);
+                    
+
+                }
+
+            }
+            for (auto& kv : m_satellite_con_map)
+            {
+                kv.second->onParentTalkerStart(header_v3.tg, header_v3.talker);
+            }
+
+
+
+        }
+        if (header_v3.talker_status == 1)
+        {
+
+            cout << header_v3.talker << " -> Trunk stop " << ReflectorTrunkManager::instance()->getLastTalker(header_v3.tg);
+            cout << header_v3.talker << " -> Trunk d " << addr.toString();
+
+
+            // PTT talker handler 
+            ReflectorClient* local_talker = TGHandler::instance()->talkerForTG(header_v3.tg);
+
+            /*
+            if (local_talker != nullptr || ReflectorTrunkManager::instance()->getLastTalker(header_v3.tg) != addr.toString())
+            {
+                return;
+             
+            }
+   
+
+            TGHandler::instance()->clearTrunkTalkerForTG(header_v3.tg);
+            */
+
+            header_v3.tg = ReflectorTrunkManager::instance()->get_tg_from_dest_table(header_v3.tg, addr.toString());
+
+            broadcastMsg(MsgTalkerStop(header_v3.tg, header_v3.talker),
+                ReflectorClient::mkAndFilter(
+                    ge_v2_client_filter,
+                    ReflectorClient::mkOrFilter(
+                        ReflectorClient::TgFilter(header_v3.tg),
+                        ReflectorClient::TgFilter(header_v3.tg))));
+
+            cout << header_v3.talker << " -> Trunk " << addr.toString() << ": Talker stop on TG #" << header_v3.tg << endl;
+
+            broadcastUdpMsg(MsgUdpFlushSamples(),
+                ReflectorClient::mkAndFilter(
+                    ReflectorClient::TgFilter(header_v3.tg),
+                    ReflectorClient::TgFilter(header_v3.tg)));
+
+
+            ReflectorTrunkManager::instance()->handleOutgoingAudio_resend_status_newmsg(header_v3.tg, header_v3, addr.toString());
+
+            std::string trunk_type = ReflectorTrunkManager::instance()->get_trunk_type(addr.toString());
+            ReflectorTrunkManager::instance()->setLastTalker(header_v3.tg,"");
+
+
+            // GEU Refletor send_to trunks;
+            for (auto* link : m_trunk_links)
+            {
+                std::string trunk_type_link = link->get_trunk_type();
+                //std::cout << "Packet in " << trunk_type_link << " send " << trunk_type << "\r\n";
+
+                bool should_send = false;
+
+                if (trunk_type.empty() || trunk_type == trunk_type_link)
+                {
+                    should_send = true;
+                }
+                else
+                {
+                    // Parse trunk_type (the CSV one) looking for trunk_type_link
+                    std::string csv = trunk_type + ",";
+                    std::string token;
+                    for (char c : csv)
+                    {
+                        if (c == ',')
+                        {
+                            if (token == trunk_type_link) { should_send = true; break; }
+                            token.clear();
+                        }
+                        else
+                        {
+                            token += c;
+                        }
+                    }
+                }
+
+                if (should_send)
+                {
+                    link->onLocalTalkerStop(header_v3.tg);
+
+                }
+            }
+            for (auto& kv : m_satellite_con_map)
+            {
+                kv.second->onParentTalkerStop(header_v3.tg);
+            }
+
+
+
+
+
+
+        }
+
+
+        //Remote QSY STAUTS 
+        if (header_v3.talker_status == 4)
+        {
+
+            cout << header_v3.talker << " -> Trunk " << addr.toString() << ": Request QSY FROM TG #" << header_v3.tg << " to " << header_v3.new_tg << endl;
+
+            broadcastMsg(MsgRequestQsy(header_v3.new_tg),
+                ReflectorClient::mkAndFilter(
+                    ge_v2_client_filter,
+                    ReflectorClient::TgFilter(header_v3.tg)));
+
+            ss.seekg(0);
+
+            ReflectorTrunkManager::instance()->handleOutgoingAudio_resend(header_v3.tg, ss, addr.toString());
+
+        }
+        //Remote flush
+        if (header_v3.talker_status == 5)
+        {
+
+            broadcastUdpMsg(MsgUdpFlushSamples(),
+                ReflectorClient::mkAndFilter(
+                    ReflectorClient::TgFilter(header_v3.tg),
+                    ReflectorClient::TgFilter(header_v3.tg)));
+
+
+            ReflectorTrunkManager::instance()->handleOutgoingAudio_resend_status_newmsg(header_v3.tg, header_v3, addr.toString());
+
+            std::string trunk_type = ReflectorTrunkManager::instance()->get_trunk_type(addr.toString());
+
+
+
+            // GEU Refletor send_to trunks;
+            for (auto* link : m_trunk_links)
+            {
+                std::string trunk_type_link = link->get_trunk_type();
+                //std::cout << "Packet in " << trunk_type_link << " send " << trunk_type << "\r\n";
+
+                bool should_send = false;
+
+                if (trunk_type.empty() || trunk_type == trunk_type_link)
+                {
+                    should_send = true;
+                }
+                else
+                {
+                    // Parse trunk_type (the CSV one) looking for trunk_type_link
+                    std::string csv = trunk_type + ",";
+                    std::string token;
+                    for (char c : csv)
+                    {
+                        if (c == ',')
+                        {
+                            if (token == trunk_type_link) { should_send = true; break; }
+                            token.clear();
+                        }
+                        else
+                        {
+                            token += c;
+                        }
+                    }
+                }
+
+                if (should_send)
+                {
+                    link->onLocalFlush(header_v3.tg);
+
+                }
+            }
+            for (auto& kv : m_satellite_con_map)
+            {
+                kv.second->onParentFlush(header_v3.tg);
+            }
+
+
+        }
+
+    }
+    if (header_v2a.type() == 133)
+    {
+
+        MsgTrunkNodeListBrodcast header_v3;
+        if (!header_v3.unpack(ss))
+        {
+            cerr << "*** WARNING["
+                << "]: Could not unpack Pmsg " << endl;
+            return;
+        }
+        std::vector<MsgTrunkNodeListBrodcast::NodeEntry> m_peer_nodes = header_v3.nodes();
+        node_table.remove_by_trunk(addr.toString());
+        for (const auto& n : m_peer_nodes)
+        {
+            node_table.upsert(RoutingEntry(
+                n.callsign,
+                n.tg,
+                std::vector<int>(n.monitored_tgs.begin(), n.monitored_tgs.end()),
+                addr.toString()
+            ));
+        }
+        // keep remote peer in routing table får 5 minutes
+        node_table.refresh_ttl_by_trunk(addr.toString(), 300s);
+
+      //  ReflectorTrunkManager::instance()->handleOutgoingAudio_resend(0, ss, addr.toString());
+
+
+
+
+    }
+
+
+
+
+    return;
+}
+void Reflector::send_trunk_tg_filter_message()
+{
+
+    /*
+    Json::StreamWriterBuilder builder;
+    std::cout << "Test message\r\n";
+    std::string output = Json::writeString(builder, m_status);
+    std::cout << output << std::endl;
+    */
+
+
+    std::vector<int> result;
+
+    const Json::Value& nodes = m_status["nodes"];
+    if (!nodes.isObject())
+        return;
+
+    // Loop through all nodes
+    for (const auto& nodeName : nodes.getMemberNames())
+    {
+        const Json::Value& node = nodes[nodeName];
+
+        // Add tg
+        if (node.isMember("tg") && node["tg"].isInt())
+        {
+            if (node["tg"].asInt() > 0)
+                result.push_back(node["tg"].asInt());
+        }
+
+        // Add monitoredTGs
+        if (node.isMember("monitoredTGs") && node["monitoredTGs"].isArray())
+        {
+            for (const auto& tg : node["monitoredTGs"])
+            {
+                if (tg.isInt())
+                    result.push_back(tg.asInt());
+            }
+        }
+    }
+
+
+    std::vector<int> trunkTGs = ReflectorTrunkManager::instance()->Get_filter_server();
+
+    // Merge into result
+    result.insert(result.end(), trunkTGs.begin(), trunkTGs.end());
+
+
+    if (previousTGs_to_message != result)
+    {
+        previousTGs_to_message = result;
+
+        std::cout << "Sending message to peer about new talkgroups to filter" << std::endl;
+        /*        for (int tg : result)
+                {
+                    std::cout << tg << std::endl;
+          }
+          */
+        ReflectorTrunkManager::instance()->handleFilter_tunks(result);
+
+    }
+
+
+
+}
+
+void Reflector::Brodcast_list_to_peer_routing_T(Timer* t)
+{
+//    std::cout << "Sending brodcast \r\n";
+    Brodcast_list_to_peer_routing();
+}
+void Reflector::Brodcast_list_to_peer_routing(void)
+{
+
+    std::vector<MsgTrunkNodeListBrodcast::NodeEntry> nodes;
+    // flush timout 
+    node_table.remove_expired();
+    node_table.remove_by_trunk("127.0.0.1");
+    for (const auto& kv : m_client_con_map)
+    {
+        ReflectorClient* c = kv.second;
+        if (c->callsign().empty()) continue;
+
+        MsgTrunkNodeListBrodcast::NodeEntry e;
+        e.callsign = c->callsign();
+        e.tg = c->currentTG();
+        e.monitored_tgs = std::vector<int>(
+            c->monitoredTGs().begin(),
+            c->monitoredTGs().end()
+        );
+        nodes.push_back(e);
+
+        node_table.upsert(
+            RoutingEntry(
+                c->callsign(),
+                c->currentTG(),
+                std::vector<int>(
+                    c->monitoredTGs().begin(),
+                    c->monitoredTGs().end()
+                ),
+                "127.0.0.1"
+            )
+        );
+    }
+    node_table.refresh_ttl_by_trunk("127.0.0.1", 30s);
+    sendNodeListToAllPeers();
+
+
+    /*
+    std::cout << "=== Curent router table ===\n";
+    node_table.for_each([this](const RoutingEntry& e) {
+        print_entry(e);
+        });
+
+    */
+    ReflectorTrunkManager::instance()->sendNodeList(nodes);
+
+
+} /* Reflector::sendNodeListToAllPeers */
+
+void Reflector::print_entry(const RoutingEntry& e) {
+    std::cout << "  [" << e.calsing << "] tg=" << e.tg
+        << "  trunk=" << e.trunk;
+    if (e.tg_monitor) {
+        std::cout << "  monitor=[";
+        for (std::size_t i = 0; i < e.tg_monitor->size(); ++i) {
+            if (i) std::cout << ",";
+            std::cout << (*e.tg_monitor)[i];
+        }
+        std::cout << "]";
+    }
+    std::cout << "\n";
+}
+
+void Reflector::add_to_routing_table(std::string trunk, std::string callsign,int tg)
+{
+
+    node_table.upsert(RoutingEntry(
+        callsign,
+        tg,
+        { {tg} },
+        trunk
+    ));
+    node_table.refresh_ttl_by_trunk(trunk, 120s);
+
+}
+
+void Reflector::broadcastUdpMsg_BLV_TRUNK(const MsgUdpAudio& msg, int tg, std::string tg_send)
+{
+
+
+    MsgUdpAudio_trunk  msg_trunk;
+    msg_trunk.audioData() = msg.audioData();  // vector copy
+    msg_trunk.tg = tg;
+    ReflectorTrunkManager::instance()->handleOutgoingAudio_width_remap_tg_send(tg, msg_trunk, tg_send);
+} /* Reflector::broadcastUdpMsg */
+
+
+
+
+
+
 
 
 /*
