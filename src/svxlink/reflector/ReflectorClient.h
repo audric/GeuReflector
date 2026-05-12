@@ -203,10 +203,23 @@ class ReflectorClient : public sigc::trackable
         uint32_t m_tg;
     };
 
-    class SelectedTgIdleFilter : public Filter
+    /**
+     * @brief Gate monitor-TG UDP delivery on passive-observer state.
+     *
+     * Returns true iff the client has no selected TG (`currentTG == 0`).
+     * svxlink's priority/auto-switch logic for monitor TGs is driven by
+     * the TCP TalkerStart message, not by UDP audio — a client with a
+     * selected TG never needs monitor-TG audio over UDP. Once svxlink
+     * decides to switch, it sends `MsgSelectTG` and from then on the
+     * audio arrives via the selected-TG arm of the fanout
+     * (`TgFilter(tg)`). The monitor arm exists exclusively to serve
+     * passive observers who set `currentTG=0` and rely on `monitor_tgs`
+     * for awareness.
+     */
+    class PassiveObserverFilter : public Filter
     {
       public:
-        SelectedTgIdleFilter() {}
+        PassiveObserverFilter() {}
         virtual bool operator ()(ReflectorClient *client) const;
     };
 
@@ -223,11 +236,9 @@ class ReflectorClient : public sigc::trackable
      * still considered as a candidate — this delivers the flush to the
      * listener that was actually decoding it.
      *
-     * Designed to be ANDed with `TgMonitorFilter(tg)` and
-     * `SelectedTgIdleFilter` at the seven UDP fanout sites added by
-     * `92d9a63`. With those two siblings the predicate evaluates only on
-     * the monitor arm of the OR; the selected-TG arm (`TgFilter(tg)`)
-     * is unaffected.
+     * Designed to be ANDed with `PassiveObserverFilter` and
+     * `TgMonitorFilter(tg)` so it only evaluates on the monitor arm of
+     * the fanout OR for `currentTG=0` clients.
      */
     class EarliestMonitorTalkerFilter : public Filter
     {
