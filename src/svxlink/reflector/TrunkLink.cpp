@@ -1164,7 +1164,7 @@ void TrunkLink::handleMsgPeerAudio(std::istream& is)
         ReflectorClient::mkAndFilter(
           ReflectorClient::TgMonitorFilter(local_tg),
           ReflectorClient::mkAndFilter(
-            ReflectorClient::SelectedTgIdleFilter(),
+            ReflectorClient::PassiveObserverFilter(),
             ReflectorClient::EarliestMonitorTalkerFilter(local_tg)))));
 
   // Forward trunk audio to connected satellites
@@ -1206,7 +1206,7 @@ void TrunkLink::handleMsgPeerFlush(std::istream& is)
         ReflectorClient::mkAndFilter(
           ReflectorClient::TgMonitorFilter(local_tg),
           ReflectorClient::mkAndFilter(
-            ReflectorClient::SelectedTgIdleFilter(),
+            ReflectorClient::PassiveObserverFilter(),
             ReflectorClient::EarliestMonitorTalkerFilter(local_tg)))));
 
   // Forward trunk flush to connected satellites

@@ -79,6 +79,35 @@ Behavior with the feature disabled:
   startup (since Redis-mode auth would not work). Remove the `[REDIS]` section
   before starting.
 
+### Optional: change where the binary looks for its config
+
+By default the binary is built to look for its config under
+`${CMAKE_INSTALL_PREFIX}/etc/svxlink/svxreflector.conf` (typically
+`/usr/local/etc/svxlink/svxreflector.conf`). To make it look under
+`/etc/svxlink/` instead — the usual Debian/Ubuntu location — add
+`-DCMAKE_INSTALL_SYSCONFDIR=/etc` at configure time:
+
+```bash
+cmake -S src -B build -DLOCAL_STATE_DIR=/var -DCMAKE_INSTALL_SYSCONFDIR=/etc
+cmake --build build
+```
+
+Any absolute path works; `/svxlink` is appended automatically. For example
+`-DCMAKE_INSTALL_SYSCONFDIR=/opt/myreflector` makes the binary read
+`/opt/myreflector/svxlink/svxreflector.conf`.
+
+You can also override the location at runtime, without rebuilding, via the
+`--config` flag:
+
+```bash
+svxreflector --config /path/to/svxreflector.conf
+```
+
+For a systemd-managed install, add the flag to the unit's `ExecStart=` line.
+
+The full lookup order at startup is: `--config` argument → 
+`~/.svxlink/svxreflector.conf` → the compiled-in path above.
+
 ---
 
 ## 3. Stop the running service
