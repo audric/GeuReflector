@@ -2911,22 +2911,14 @@ class TestTrunkIntegration(unittest.TestCase):
             c_client.close()
 
     # ------------------------------------------------------------------
-    # Test 43: two monitor TGs simultaneously busy must NOT mix
+    # Test 43: multi-monitor variant of test_45 — both monitor TGs blocked
     # ------------------------------------------------------------------
-    def test_43_two_monitor_tgs_do_not_mix(self):
-        """Regression for the multi-monitor-TG mixing gap left open by
-        28ebf29. With SELECT_TG=9 idle and MONITOR_TGS=[110, 112], two
-        simultaneous talkers (on 110 and 112) must NOT both reach the
-        listener — only the earliest-started one (first-talker-wins).
-
-        Setup (all on PRIMARY reflector):
-          A: select_tg=9, monitor_tgs=[110, 112]   (the listener)
-          C: select_tg=110, sends audio P_C        (starts first)
-          D: select_tg=112, sends audio P_D        (starts ~150 ms later)
-
-        Assertion: every UDP audio payload received by A contains P_C and
-        none contain P_D. (C started first → C owns the listener's decoder
-        until C stops; D's frames must be suppressed.)
+    def test_43_multi_monitor_udp_blocked_when_selected_tg_set(self):
+        """Multi-monitor variant of test_45. With currentTG=9 and two
+        monitor TGs both busy, A must receive zero UDP audio for either.
+        The reflector blocks the monitor arm uniformly regardless of how
+        many monitor TGs are active — `PassiveObserverFilter` only opens
+        the arm when `currentTG == 0`.
         """
         port = T.mapped_client_port(self.PRIMARY)
 
@@ -2956,10 +2948,8 @@ class TestTrunkIntegration(unittest.TestCase):
             P_C = b"\xCC\xDD\xCC\xDD"
             P_D = b"\xEE\xFF\xEE\xFF"
 
-            # C starts first.
             c_client.send_udp_audio(P_C * 40)
             time.sleep(0.15)
-            # Now D joins; both stream interleaved frames.
             for _ in range(8):
                 c_client.send_udp_audio(P_C * 40)
                 d_client.send_udp_audio(P_D * 40)
@@ -2970,20 +2960,17 @@ class TestTrunkIntegration(unittest.TestCase):
 
             msgs = a_client.recv_udp_all(timeout=1.0)
             audio_payloads = [p for t, p in msgs if t == UDP_AUDIO]
+            leaked_c = [p for p in audio_payloads if P_C in p]
+            leaked_d = [p for p in audio_payloads if P_D in p]
 
-            self.assertGreater(len(audio_payloads), 0,
-                "A received no UDP audio at all — monitor delivery broken")
-
-            mixed = [p for p in audio_payloads if P_D in p]
-            self.assertEqual(len(mixed), 0,
-                f"A received {len(mixed)} UDP audio frame(s) carrying the "
-                f"TG 112 pattern P_D while TG 110 (started first) was still "
-                f"active — multi-monitor-TG mixing regression. Total audio "
-                f"frames: {len(audio_payloads)}.")
-
-            self.assertTrue(any(P_C in p for p in audio_payloads),
-                "A received audio but none of it carried the TG 110 pattern "
-                "P_C — earliest-talker-wins delivery itself is broken")
+            self.assertEqual(len(leaked_c) + len(leaked_d), 0,
+                f"A has currentTG=9 (non-zero) and monitor_tgs=[110, 112]. "
+                f"A received {len(leaked_c)} frame(s) carrying TG 110 "
+                f"pattern P_C and {len(leaked_d)} frame(s) carrying TG 112 "
+                f"pattern P_D. Monitor-TG UDP audio must not reach a client "
+                f"whose selected TG is non-zero, regardless of how many "
+                f"monitor TGs are active. Total audio frames: "
+                f"{len(audio_payloads)}.")
         finally:
             a_client.close()
             c_client.close()
@@ -3058,6 +3045,79 @@ class TestTrunkIntegration(unittest.TestCase):
             a_client.close()
             c_client.close()
             d_client.close()
+
+    # ------------------------------------------------------------------
+    # Test 45: monitor-TG UDP audio must NOT reach a client with currentTG != 0
+    # ------------------------------------------------------------------
+    def test_45_monitor_udp_blocked_when_selected_tg_set(self):
+        """Contract test for the reflector's UDP fanout. With a non-zero
+        selected TG, a client must NOT receive UDP audio for any TG in
+        its monitor list — even when the selected TG happens to have no
+        active talker. svxlink's priority/auto-switch logic for monitor
+        TGs is driven by the TCP TalkerStart message; the audio itself
+        only needs to flow once svxlink chooses to switch (via
+        MsgSelectTG), at which point it arrives via the selected-TG arm
+        of the fanout (TgFilter), not the monitor arm.
+
+        Pre-92d9a63 this was the de-facto behavior because the monitor
+        arm did not exist. 92d9a63 added the monitor arm to support
+        passive observers (currentTG=0); the subsequent gates (28ebf29,
+        2c26c8a) narrowed but did not restrict the arm to currentTG=0,
+        which is what this test pins down.
+
+        Setup (all on PRIMARY reflector):
+          A: select_tg=9, monitor_tgs=[110]   (the listener)
+          C: select_tg=110                      (continuous talker)
+
+        Assertion: while A's currentTG=9, A receives zero UDP audio
+        frames carrying the TG 110 pattern P_C, regardless of whether
+        any talker is currently active on TG 9.
+        """
+        port = T.mapped_client_port(self.PRIMARY)
+
+        a_client = ClientPeer()
+        c_client = ClientPeer()
+        try:
+            a_client.connect(HOST, port)
+            a_client.authenticate(callsign=CLIENT_CALLSIGN, password=CLIENT_PASSWORD)
+            a_client.setup_udp(udp_port=port)
+            a_client.select_tg(9)
+            a_client.monitor_tgs([110])
+
+            c_client.connect(HOST, port)
+            c_client.authenticate(callsign=CLIENT2_CALLSIGN, password=CLIENT2_PASSWORD)
+            c_client.setup_udp(udp_port=port)
+            c_client.select_tg(110)
+
+            time.sleep(0.5)
+            a_client.recv_udp_all(timeout=0.05)  # drain bootstrap
+
+            P_C = b"\xCC\xDD\xCC\xDD"
+
+            # C streams TG 110 continuously. A is on TG 9 (idle, no QSO
+            # partner) so SelectedTgIdleFilter passes the monitor arm.
+            burst_start = time.time()
+            while time.time() - burst_start < 1.0:
+                c_client.send_udp_audio(P_C * 40)
+                time.sleep(0.02)
+            c_client.send_udp_flush()
+            time.sleep(0.3)  # let stragglers arrive
+
+            msgs = a_client.recv_udp_all(timeout=0.5)
+            audio_payloads = [p for t, p in msgs if t == UDP_AUDIO]
+            leaked = [p for p in audio_payloads if P_C in p]
+
+            self.assertEqual(len(leaked), 0,
+                f"A has currentTG=9 (non-zero) and monitor_tgs=[110]. C is "
+                f"talking on TG 110. A received {len(leaked)} UDP audio "
+                f"frame(s) carrying TG 110 pattern P_C. Monitor-TG UDP audio "
+                f"must not reach a client whose selected TG is non-zero — "
+                f"svxlink's priority/auto-switch uses TCP TalkerStart, not "
+                f"UDP audio, to handle monitor activity. Total audio frames "
+                f"received: {len(audio_payloads)}.")
+        finally:
+            a_client.close()
+            c_client.close()
 
 
 # ---------------------------------------------------------------------------

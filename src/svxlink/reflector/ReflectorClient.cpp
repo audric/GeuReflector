@@ -184,17 +184,11 @@ bool ReflectorClient::TgFilter::operator()(ReflectorClient* client) const
 }
 
 
-bool ReflectorClient::SelectedTgIdleFilter::operator()(
+bool ReflectorClient::PassiveObserverFilter::operator()(
     ReflectorClient* client) const
 {
-  uint32_t tg = client->m_current_tg;
-  if (tg == 0)
-  {
-    return true;
-  }
-  return TGHandler::instance()->talkerForTG(tg) == nullptr
-      && !TGHandler::instance()->hasTrunkTalker(tg);
-} /* ReflectorClient::SelectedTgIdleFilter::operator() */
+  return client->m_current_tg == 0;
+} /* ReflectorClient::PassiveObserverFilter::operator() */
 
 
 namespace {
