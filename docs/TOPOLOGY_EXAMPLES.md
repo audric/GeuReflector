@@ -360,6 +360,16 @@ both endpoints in their `HOSTS` setting for transparent failover. See
    sticky-selects one per frame, with instant failover on socket failure.
 ```
 
+> **Mandatory: every external reflector trunking to a twin pair MUST use
+> `PAIRED=1` with both twin hostnames in a single section.** Configuring
+> two independent trunk sections (one per twin) is a misconfiguration:
+> the external peer's owner-relay no longer sees the pair as one logical
+> entity, so source-trunk exclusion fails and audio is delivered both via
+> the second trunk *and* via the intra-pair twin-mirror — causing
+> duplicates on the partner twin and an echo back to the original
+> talker. The `PAIRED=1` form is the only way to keep the pair
+> single-logical from outside.
+
 **What's different from trunk and satellite.**
 
 | Property | Trunk | Satellite | Twin |

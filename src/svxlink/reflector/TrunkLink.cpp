@@ -1170,6 +1170,12 @@ void TrunkLink::handleMsgPeerAudio(std::istream& is)
   // Forward trunk audio to connected satellites
   m_reflector->forwardAudioToSatellitesExcept(nullptr, local_tg, msg.audio());
 
+  // Mirror inbound trunk audio to the [TWIN] partner so PAIRED inbound
+  // (sticky on one twin) still reaches the non-sticky twin's local clients
+  // and its satellites. TwinLink::handleMsgPeerAudio does not re-forward to
+  // trunks, so no echo back to the originating peer.
+  m_reflector->forwardTrunkAudioToTwin(local_tg, msg.audio());
+
   // Prefix-routed fanout (mirrors talker-start): only fan out if we have
   // a route. Cluster TGs without a prefix match stay single-hop.
   if (m_reflector->shouldRelayInbound(local_tg))
@@ -1211,6 +1217,9 @@ void TrunkLink::handleMsgPeerFlush(std::istream& is)
 
   // Forward trunk flush to connected satellites
   m_reflector->forwardFlushToSatellitesExcept(nullptr, local_tg);
+
+  // Mirror flush to the [TWIN] partner — pairs with the audio mirror above.
+  m_reflector->forwardTrunkFlushToTwin(local_tg);
 
   // Prefix-routed fanout (mirrors talker-start): only fan out if we have
   // a route. Cluster TGs without a prefix match stay single-hop.

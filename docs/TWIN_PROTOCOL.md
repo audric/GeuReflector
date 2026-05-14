@@ -180,8 +180,8 @@ holdoff.
 ### External peer view
 
 An external peer (e.g. refA) that wants to trunk with a twin pair
-declares a **single** `[TRUNK_x]` section with **multiple candidate
-hosts** — one per twin — and a `PAIRED=1` flag:
+**MUST** declare a **single** `[TRUNK_x]` section with **multiple
+candidate hosts** — one per twin — and a `PAIRED=1` flag:
 
 ```ini
 [TRUNK_IT_DE]
@@ -196,6 +196,15 @@ The external peer opens TCP connections to **both** hosts and maintains
 them in parallel. This requires extending `TrunkLink` to manage a list
 of TCP endpoints instead of a single outbound + inbound pair (see
 §Implementation).
+
+> **Do not configure two separate trunk sections (one per twin).** That
+> form is a misconfiguration: the external peer sees the pair as two
+> independent peers, so its owner-relay (`forwardTrunkAudioToOtherTrunks`)
+> only excludes the source twin and still forwards back to the partner
+> twin — which *also* receives the audio via the intra-pair twin-mirror
+> (`forwardTrunkAudioToTwin`). The result is a duplicate on the partner
+> and an echo back to the original talker. `PAIRED=1` is the only
+> supported topology for "external reflector ↔ twin pair".
 
 ### Sticky per-frame routing
 
@@ -226,6 +235,19 @@ state identically — so local clients on the partner twin are blocked
 from keying up 262xx, just as they would be if they were on the
 receiving twin. Loop suppression: a twin does not re-mirror external
 state it learned *via* the twin link.
+
+### Cross-twin external audio relay
+
+State alone is not enough — the partner twin's local clients must also
+*hear* the inbound audio. `TrunkLink::handleMsgPeerAudio` therefore
+forwards the audio across the twin link via
+`Reflector::forwardTrunkAudioToTwin` (same shape as the existing
+satellite-to-twin mirror), reusing `MsgPeerAudio` on the [TWIN] socket.
+`TrunkLink::handleMsgPeerFlush` mirrors the matching flush. The
+receiving partner's `TwinLink::handleMsgPeerAudio` broadcasts to its
+local clients on the TG and fans the audio out to its own satellites;
+it does *not* re-forward to trunk peers, so there is no echo back to
+refA.
 
 ### refA-side socket selection policy
 

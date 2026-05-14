@@ -284,6 +284,16 @@ class Reflector : public sigc::trackable
     void forwardTrunkTalkerStopToOtherTrunks(const TrunkLink* src,
                                               uint32_t tg);
 
+    // Mirror inbound trunk audio/flush across the [TWIN] link. Without this,
+    // when an external PAIRED peer's sticky socket lands on one twin, only
+    // that twin's local clients hear the audio — partner-twin clients on the
+    // same shared LOCAL_PREFIX would be silent. Parallels the satellite
+    // forwarders just above; loop safety relies on TwinLink::handleMsgPeerAudio
+    // not re-forwarding to trunks.
+    void forwardTrunkAudioToTwin(uint32_t tg,
+                                  const std::vector<uint8_t>& audio);
+    void forwardTrunkFlushToTwin(uint32_t tg);
+
     RedisStore* redisStore(void) const { return m_redis; }
     MqttPublisher* mqtt(void) const { return m_mqtt; }
 

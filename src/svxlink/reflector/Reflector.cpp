@@ -2855,6 +2855,25 @@ void Reflector::forwardSatelliteFlushToTwin(uint32_t tg)
 } /* Reflector::forwardSatelliteFlushToTwin */
 
 
+void Reflector::forwardTrunkAudioToTwin(uint32_t tg,
+    const std::vector<uint8_t>& audio)
+{
+  if (m_twin_link != nullptr)
+  {
+    m_twin_link->onLocalAudio(tg, audio);
+  }
+} /* Reflector::forwardTrunkAudioToTwin */
+
+
+void Reflector::forwardTrunkFlushToTwin(uint32_t tg)
+{
+  if (m_twin_link != nullptr)
+  {
+    m_twin_link->onLocalFlush(tg);
+  }
+} /* Reflector::forwardTrunkFlushToTwin */
+
+
 void Reflector::forwardAudioToSatellitesExcept(SatelliteLink* except,
     uint32_t tg, const std::vector<uint8_t>& audio)
 {

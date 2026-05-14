@@ -184,21 +184,24 @@ class TestTwinIntegration(unittest.TestCase):
     # Test 1: Twin handshake — ref1 and ref2 see each other
     # ------------------------------------------------------------------
     def test_01_twin_handshake(self):
-        """Both twin peers log a successful TWIN hello exchange.
+        """Both twin peers report a completed TWIN hello exchange in /status.
 
-        Verifies that ref1 and ref2 each saw the 'TWIN: hello from partner'
-        log line, confirming the twin handshake completed on both sides.
+        Uses the persistent status field rather than scraping logs, so the
+        test is robust to long-running test meshes where the boot-time
+        'TWIN: hello from partner' line has scrolled past the docker-logs
+        rolling window.
         """
         for name in ("ref1", "ref2"):
-            logs = docker_logs(name, since="120s")
-            # Look for 'TWIN: hello from partner' — emitted by TwinLink.cpp
-            # after successful HMAC verification on inbound or outbound path
-            self.assertIn(
-                "TWIN: hello from partner",
-                logs,
-                f"reflector-{name} logs do not show 'TWIN: hello from "
-                f"partner'. Twin handshake may have failed.\n"
-                f"Relevant log tail:\n{logs[-2000:]}",
+            def hello_done(_n=name):
+                twin = get_status(*_http(_n)).get("twin", {})
+                return bool(twin.get("outbound_hello")
+                            or twin.get("inbound_hello"))
+            wait_until(
+                hello_done,
+                timeout=15.0,
+                interval=0.5,
+                msg=f"reflector-{name} /status.twin shows no completed "
+                    f"hello (outbound_hello=False AND inbound_hello=False)",
             )
 
     # ------------------------------------------------------------------
@@ -265,36 +268,42 @@ class TestTwinIntegration(unittest.TestCase):
             )
 
     # ------------------------------------------------------------------
-    # Test 5: Twin link wiring — no startup errors on ref1/ref2
+    # Test 5: Twin link wiring — server bound + no ERROR[TWIN] lines
     # ------------------------------------------------------------------
     def test_05_twin_wiring_no_errors(self):
-        """ref1 and ref2 startup logs contain no twin-related ERROR lines.
+        """ref1 and ref2 have a listening twin server and no ERROR[TWIN].
 
-        This is a smoke test: if the [TWIN] section is mis-parsed or the
-        listen port fails to bind, an ERROR[TWIN] line will appear.
+        Server-listen evidence comes from /status: if the partner reports
+        inbound_connected=True, *our* twin server bound its port and
+        accepted the partner's outbound connection. Status survives the
+        docker-logs rolling window (unlike the boot-time
+        'TWIN: server listening' log line).
 
-        NOTE: A fuller audio-mirror test (Phase C1 verification) would
-        require sending audio via a mock SvxLink client and verifying the
-        mirrored talker state on the twin partner.  That is out of scope for
-        this log-based integration suite and should be covered by a dedicated
-        E2E audio test when mock clients are available.
+        The ERROR[TWIN] scan is still log-based but uses the full container
+        log (no --since) so startup errors are caught even when the test
+        runs late in a long suite.
         """
         for name in ("ref1", "ref2"):
-            logs = docker_logs(name, since="120s")
-            # Any ERROR[TWIN] line is a fatal wiring problem
+            # Server-bind evidence: partner has us as inbound_connected.
+            def server_listening(_n=name):
+                twin = get_status(*_http(_n)).get("twin", {})
+                return bool(twin.get("inbound_connected"))
+            wait_until(
+                server_listening,
+                timeout=15.0,
+                interval=0.5,
+                msg=f"reflector-{name} /status.twin.inbound_connected is "
+                    f"False — the partner cannot reach our twin server, "
+                    f"so the listen socket probably failed to bind",
+            )
+
+            # Fatal wiring errors: scan the full container log (no since).
+            logs = docker_logs(name, since="24h")
             error_match = re.search(r"\*\*\* ERROR\[TWIN\]", logs)
             self.assertIsNone(
                 error_match,
-                f"reflector-{name} has ERROR[TWIN] in startup logs:\n"
-                f"  {error_match.group(0) if error_match else ''}\n"
-                f"Full log tail:\n{logs[-1500:]}",
-            )
-            # Twin server listen line should be present
-            self.assertIn(
-                "TWIN: server listening on port",
-                logs,
-                f"reflector-{name} does not show 'TWIN: server listening' "
-                f"— the twin TCP server may not have started.",
+                f"reflector-{name} has ERROR[TWIN] in container logs:\n"
+                f"  {error_match.group(0) if error_match else ''}",
             )
 
     # ------------------------------------------------------------------
@@ -1020,6 +1029,107 @@ TOPIC_PREFIX=svxreflector/testnode
         finally:
             sat.close()
             receiver.close()
+
+    # ------------------------------------------------------------------
+    # Test X4: PAIRED inbound trunk audio reaches BOTH twins
+    # ------------------------------------------------------------------
+    def test_X4_paired_inbound_reaches_both_twins(self):
+        """A client on refa transmits on a 262-prefixed TG. Clients on
+        ref1 AND ref2 must both receive UDP audio.
+
+        refa's TRUNK_IT_DE is PAIRED=1, so it picks a single sticky socket
+        (either ref1 or ref2) for every frame of the transmission. Without
+        the trunk->twin mirror, only the sticky-selected twin's clients
+        would hear the audio — the partner twin would be silent on the
+        same shared LOCAL_PREFIX.
+
+        Path under test (sticky lands on twin A; B is partner):
+          refa client UDP -> refa Reflector
+            -> TrunkLink::onLocalAudio (PAIRED sticky pick)
+            -> twinA TrunkLink::handleMsgPeerAudio
+              -> broadcastUdpMsg -> twinA receiver UDP socket
+              -> (NEW) forwardTrunkAudioToTwin
+                -> twinA m_twin_link->onLocalAudio
+                -> MsgPeerAudio over [TWIN]
+                -> twinB TwinLink::handleMsgPeerAudio
+                  -> broadcastUdpMsg -> twinB receiver UDP socket
+        """
+        tg = 26201  # prefix 262, owned by both twins
+        refa_client_port = T.twin_mapped_client_port("refa")
+        ref1_client_port = T.twin_mapped_client_port("ref1")
+        ref2_client_port = T.twin_mapped_client_port("ref2")
+
+        # Wait until the twin handshake is established so the trunk->twin
+        # mirror has somewhere to go. (Previous tests may have just torn
+        # ref2 down and back up.)
+        wait_until(
+            lambda: "TWIN: hello from partner" in docker_compose_output(
+                "logs", "reflector-ref1"),
+            timeout=20.0,
+            msg="twin link not re-established on ref1",
+        )
+
+        sender = ClientPeer()
+        recv1 = ClientPeer()
+        recv2 = ClientPeer()
+        try:
+            sender.connect(HOST, refa_client_port)
+            sender.authenticate(callsign=CLIENT_CALLSIGN,
+                                password=CLIENT_PASSWORD)
+            sender.setup_udp(udp_port=refa_client_port)
+
+            recv1.connect(HOST, ref1_client_port)
+            recv1.authenticate(callsign="N0SEND", password=CLIENT_PASSWORD)
+            recv1.setup_udp(udp_port=ref1_client_port)
+
+            recv2.connect(HOST, ref2_client_port)
+            recv2.authenticate(callsign="N0THRD", password=CLIENT_PASSWORD)
+            recv2.setup_udp(udp_port=ref2_client_port)
+
+            sender.select_tg(tg)
+            recv1.select_tg(tg)
+            recv2.select_tg(tg)
+            time.sleep(0.5)  # let TG selection + interest propagate
+
+            # Drain pre-test UDP noise
+            recv1.recv_udp_all(timeout=0.3)
+            recv2.recv_udp_all(timeout=0.3)
+
+            audio_payload = b"\xCA\xFE" * 80  # 160 bytes, distinctive
+            for _ in range(6):
+                sender.send_udp_audio(audio_payload)
+                time.sleep(0.02)
+            sender.send_udp_flush()
+
+            # Allow trunk -> twin hop a little extra time
+            msgs1 = recv1.recv_udp_all(timeout=3.0)
+            msgs2 = recv2.recv_udp_all(timeout=3.0)
+            audio1 = sum(1 for t, _ in msgs1 if t == UDP_AUDIO)
+            audio2 = sum(1 for t, _ in msgs2 if t == UDP_AUDIO)
+            flush1 = sum(1 for t, _ in msgs1 if t == UDP_FLUSH)
+            flush2 = sum(1 for t, _ in msgs2 if t == UDP_FLUSH)
+
+            self.assertGreater(
+                audio1, 0,
+                "ref1 client did not receive any UDP audio from refa "
+                "(sticky=ref1 broken, or trunk routing failed)")
+            self.assertGreater(
+                audio2, 0,
+                "ref2 client did not receive any UDP audio from refa "
+                "— the trunk->twin audio mirror is missing or broken")
+            # Flush must also reach both twins (forwardTrunkFlushToTwin).
+            self.assertGreater(
+                flush1, 0,
+                "ref1 client did not receive UDP flush from refa")
+            self.assertGreater(
+                flush2, 0,
+                "ref2 client did not receive UDP flush from refa "
+                "— the trunk->twin flush mirror is missing or broken")
+
+        finally:
+            sender.close()
+            recv1.close()
+            recv2.close()
 
 
 def docker_compose_output(*args) -> str:
