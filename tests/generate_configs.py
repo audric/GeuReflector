@@ -98,7 +98,15 @@ def generate_reflector_conf(name: str) -> str:
         lines += [
             "[SATELLITE]",
             f"LISTEN_PORT={T.SATELLITE['listen_port']}",
+            # Default/fallback secret — used by satellites that do not
+            # match any SECRET_<id>= entry below.
             f"SECRET={T.SATELLITE['secret']}",
+            # Per-id secret for SAT_PINNED.
+            f"SECRET_{T.SATELLITE_PINNED_ID}={T.SATELLITE_PINNED_SECRET}",
+            # Intentionally malformed id key — the parent must warn and
+            # ignore this at startup. SAT_BAD_KEY_ID still falls through
+            # to the default SECRET above when it connects.
+            f"{T.SATELLITE_BAD_KEY}={T.SATELLITE_BAD_VALUE}",
             "",
         ]
 
