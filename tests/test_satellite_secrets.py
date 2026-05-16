@@ -21,7 +21,6 @@ import unittest
 import topology as T
 
 from test_trunk import (
-    HOST,
     SAT_SECRET,
     SatellitePeer,
     ROLE_SATELLITE,
