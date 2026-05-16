@@ -2688,22 +2688,73 @@ void Reflector::trunkPendingTimeout(Async::Timer* t)
 void Reflector::initSatelliteServer(void)
 {
   std::string sat_port;
-  std::string sat_secret;
-  if (!m_cfg->getValue("SATELLITE", "LISTEN_PORT", sat_port) ||
-      !m_cfg->getValue("SATELLITE", "SECRET", sat_secret) ||
-      sat_secret.empty())
+  if (!m_cfg->getValue("SATELLITE", "LISTEN_PORT", sat_port))
   {
     return;  // No [SATELLITE] section — not accepting satellites
   }
 
-  m_satellite_secret = sat_secret;
+  // Fallback (optional). Empty/absent means "no fallback".
+  m_satellite_secret.clear();
+  std::string sat_secret;
+  if (m_cfg->getValue("SATELLITE", "SECRET", sat_secret))
+  {
+    m_satellite_secret = sat_secret;
+  }
+
+  // Per-id secrets: enumerate every tag in [SATELLITE] starting with
+  // "SECRET_" and validate the suffix against [A-Za-z0-9-]+. Malformed
+  // entries are logged and ignored.
+  m_satellite_secrets.clear();
+  auto isValidIdChar = [](char c) {
+    return (c >= 'A' && c <= 'Z') ||
+           (c >= 'a' && c <= 'z') ||
+           (c >= '0' && c <= '9') ||
+           c == '-';
+  };
+  for (const std::string& tag : m_cfg->listSection("SATELLITE"))
+  {
+    static const std::string kPrefix = "SECRET_";
+    if (tag.compare(0, kPrefix.size(), kPrefix) != 0) continue;
+    std::string id = tag.substr(kPrefix.size());
+    bool valid = !id.empty();
+    for (char c : id)
+    {
+      if (!isValidIdChar(c)) { valid = false; break; }
+    }
+    if (!valid)
+    {
+      geulog::warn("satellite", "ignoring malformed [SATELLITE] secret "
+                   "key '", tag, "' — id must be [A-Za-z0-9-]+");
+      continue;
+    }
+    std::string value;
+    m_cfg->getValue("SATELLITE", tag, value);
+    if (value.empty())
+    {
+      geulog::warn("satellite", "ignoring empty [SATELLITE] secret value "
+                   "for key '", tag, "'");
+      continue;
+    }
+    m_satellite_secrets[id] = value;
+  }
+
+  if (m_satellite_secret.empty() && m_satellite_secrets.empty())
+  {
+    geulog::warn("satellite",
+                 "[SATELLITE] has neither SECRET= nor any SECRET_<id>= — "
+                 "all satellite connections will be rejected");
+  }
+
   m_sat_srv = new TcpServer<FramedTcpConnection>(sat_port);
   m_sat_srv->clientConnected.connect(
       sigc::mem_fun(*this, &Reflector::satelliteConnected));
   m_sat_srv->clientDisconnected.connect(
       sigc::mem_fun(*this, &Reflector::satelliteDisconnected));
 
-  geulog::info("core", "Satellite server listening on port ", sat_port);
+  geulog::info("core", "Satellite server listening on port ", sat_port,
+               " (per-id secrets: ", m_satellite_secrets.size(),
+               ", fallback: ", (m_satellite_secret.empty() ? "no" : "yes"),
+               ")");
 } /* Reflector::initSatelliteServer */
 
 

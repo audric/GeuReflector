@@ -317,6 +317,26 @@ class Reflector : public sigc::trackable
                                          const std::vector<uint8_t>& audio);
     void forwardFlushToSatellitesExcept(SatelliteLink* except, uint32_t tg);
 
+    /**
+     * Resolve the HMAC secret to verify a satellite's MsgPeerHello.
+     *
+     * Lookup rule:
+     *   1. If [SATELLITE].SECRET_<id> is configured, return that value
+     *      and set pinned=true. Caller MUST reject the connection on
+     *      HMAC mismatch — there is no fallback once an id is pinned.
+     *   2. Otherwise, if [SATELLITE].SECRET is configured, return it
+     *      with pinned=false.
+     *   3. Otherwise return false (no secret available — reject).
+     *
+     * @param  id        SATELLITE_ID from the incoming hello.
+     * @param  out_secret On true return, the secret to verify against.
+     * @param  out_pinned On true return, whether the per-id path was used.
+     * @return true if a secret was resolved.
+     */
+    bool resolveSatelliteSecret(const std::string& id,
+                                std::string& out_secret,
+                                bool& out_pinned) const;
+
     void publishRxUpdate(ReflectorClient* client);
     // Push the rich per-client status blob (rx, monitoredTGs, qth, ...)
     // to Redis. Cheap no-op if Redis is not configured.
@@ -455,7 +475,8 @@ class Reflector : public sigc::trackable
     bool                        m_is_satellite = false;
     SatelliteClient*            m_satellite_client = nullptr;
     FramedTcpServer*            m_sat_srv = nullptr;
-    std::string                 m_satellite_secret;
+    std::string                 m_satellite_secret;          // fallback (optional)
+    std::map<std::string, std::string> m_satellite_secrets;  // per-id (optional)
     std::map<Async::FramedTcpConnection*, SatelliteLink*> m_satellite_con_map;
     std::vector<SatelliteLink*>  m_sat_cleanup_pending;
     Async::Timer                 m_sat_cleanup_timer;
