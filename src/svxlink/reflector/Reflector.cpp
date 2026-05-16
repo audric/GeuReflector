@@ -2758,6 +2758,29 @@ void Reflector::initSatelliteServer(void)
 } /* Reflector::initSatelliteServer */
 
 
+bool Reflector::resolveSatelliteSecret(const std::string& id,
+                                       std::string& out_secret,
+                                       bool& out_pinned) const
+{
+  auto it = m_satellite_secrets.find(id);
+  if (it != m_satellite_secrets.end())
+  {
+    out_secret = it->second;
+    out_pinned = true;
+    return true;
+  }
+  if (!m_satellite_secret.empty())
+  {
+    out_secret = m_satellite_secret;
+    out_pinned = false;
+    return true;
+  }
+  out_secret.clear();
+  out_pinned = false;
+  return false;
+} /* Reflector::resolveSatelliteSecret */
+
+
 void Reflector::satelliteConnected(Async::FramedTcpConnection* con)
 {
   geulog::info("satellite", "SAT: Inbound connection from ",
