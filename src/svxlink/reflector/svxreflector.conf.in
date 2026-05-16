@@ -165,10 +165,29 @@ CERT_CA_HOOK=@SVX_SHARE_INSTALL_DIR@/ca-hook.py
 # reflector instead of joining the trunk mesh. Clients connect to the
 # satellite normally; it relays everything to the parent.
 #
-# Parent side: accept inbound satellite connections
+# Parent side: accept inbound satellite connections.
+#
+# Authentication uses HMAC over a shared secret. There are two ways to
+# configure secrets:
+#
+#   1. A single fallback secret (SECRET=) used by every satellite.
+#   2. Per-id secrets (SECRET_<id>=) where <id> matches the satellite's
+#      SATELLITE_ID value. Allowed id characters: [A-Za-z0-9-]+.
+#
+# Lookup rule when a satellite connects:
+#   - If SECRET_<id>= is set for the satellite's id, verify against
+#     that value. Mismatch rejects the connection (no fallback).
+#   - Otherwise, fall back to SECRET= if set.
+#   - Otherwise, reject.
+#
+# Keeping SECRET= alongside SECRET_<id>= is backward-compatible:
+# existing satellites with no per-id entry continue to use the default.
+#
 #[SATELLITE]
 #LISTEN_PORT=5303
-#SECRET=change_this_satellite_secret
+#SECRET=fallback_satellite_secret
+#SECRET_alpha=secret_for_alpha
+#SECRET_bravo-east=secret_for_bravo_east
 #
 # Satellite side: set these in [GLOBAL] instead of LOCAL_PREFIX/TRUNK_x
 #SATELLITE_OF=reflector-01.example.com
