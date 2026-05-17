@@ -314,6 +314,23 @@ LISTEN_PORT=5303
 SECRET=lazio_satellite_secret
 ```
 
+Per dare a ogni satellite provinciale il proprio segreto (così che una
+fuga in una provincia non possa impersonarne un'altra), usare voci
+per-id — l'id dopo `SECRET_` è confrontato con il `SATELLITE_ID` del
+satellite (caratteri ammessi `[A-Za-z0-9-]+`, niente underscore):
+
+```ini
+[SATELLITE]
+LISTEN_PORT=5303
+SECRET=lazio_satellite_secret           # fallback (opzionale)
+SECRET_sat-roma=secret_for_roma
+SECRET_sat-viterbo=secret_for_viterbo
+```
+
+Il per-id vince e in caso di mismatch HMAC non c'è ricaduta sul
+fallback. Mantenere `SECRET=` è retrocompatibile: ogni satellite senza
+voce per-id lo usa.
+
 **Satellite** (es. provincia di Roma):
 ```ini
 [GLOBAL]

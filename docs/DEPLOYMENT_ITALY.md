@@ -308,6 +308,22 @@ LISTEN_PORT=5303
 SECRET=lazio_satellite_secret
 ```
 
+To give each provincial satellite its own credential (so a leak in one
+province doesn't impersonate another), use per-id entries — the id
+after `SECRET_` is matched against the satellite's `SATELLITE_ID`
+(charset `[A-Za-z0-9-]+`, no underscore):
+
+```ini
+[SATELLITE]
+LISTEN_PORT=5303
+SECRET=lazio_satellite_secret           # fallback (optional)
+SECRET_sat-roma=secret_for_roma
+SECRET_sat-viterbo=secret_for_viterbo
+```
+
+Per-id wins with no fallback on HMAC mismatch. Keeping `SECRET=` is
+backward-compatible: any satellite without a per-id entry uses it.
+
 **Satellite** (e.g. Roma province):
 ```ini
 [GLOBAL]

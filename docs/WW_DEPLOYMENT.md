@@ -380,6 +380,22 @@ LISTEN_PORT=5303
 SECRET=de_satellite_secret
 ```
 
+To give each regional satellite its own credential (so a leak in one
+region doesn't impersonate another), use per-id entries — the id after
+`SECRET_` is matched against the satellite's `SATELLITE_ID` (charset
+`[A-Za-z0-9-]+`, no underscore):
+
+```ini
+[SATELLITE]
+LISTEN_PORT=5303
+SECRET=de_satellite_secret              # fallback (optional)
+SECRET_sat-bayern=secret_for_bayern
+SECRET_sat-nrw=secret_for_nrw
+```
+
+Per-id wins with no fallback on HMAC mismatch. Keeping `SECRET=` is
+backward-compatible: any satellite without a per-id entry uses it.
+
 **Satellite** (e.g. Bavaria):
 ```ini
 [GLOBAL]

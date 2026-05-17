@@ -58,6 +58,14 @@ LISTEN_PORT=5303
 SECRET=regional_satellite_secret
 ```
 
+> The single shared `SECRET=` shown here is the original design. A
+> later change added optional `SECRET_<id>=` entries in the same
+> section so each satellite can be pinned to its own credential
+> (matched against the satellite's `SATELLITE_ID`); the shared
+> `SECRET=` is preserved as a fallback for backward compatibility.
+> See [README §Satellite reflectors](../README.md#satellite-reflectors)
+> for the operator-facing config form.
+
 On the **satellite**:
 
 ```ini

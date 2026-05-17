@@ -194,21 +194,22 @@ section. SE only knows the prefixes it has trunks for: `222` (IT) and `262`
 Pull the Zones off the international mesh entirely. Only IT 222 is a trunk
 peer; the Zones become satellites of IT 222.
 
-> **Trust model — small-deployment / single-operator pattern.**
-> Satellites were originally introduced as a development/check reflector — a
-> small NAT'd instance hanging off a parent for testing. The use case has
-> grown beyond that, but the authentication model has not yet caught up: the
-> parent's `[SATELLITE] SECRET` is **a single shared string** used to
-> validate every inbound satellite (`Reflector.cpp:2675-2701`). If the
-> secret leaks, an attacker can connect as any `sat_id` and present any
-> `SATELLITE_FILTER` of their choosing — there's no per-satellite scoping
-> on the parent side. This makes §3 most appropriate for small deployments
-> under one trusted operator. For multi-operator national meshes, prefer
-> §2 (national trunk mesh) where each `[TRUNK_x]` has its own `SECRET`,
-> or §4 (hybrid) for a single NAT'd downstream site. **Future work**:
-> per-satellite secrets keyed by `sat_id`, mirroring how trunks already
-> work — until then, treat the shared secret as a design constraint of
-> this pattern.
+> **Trust model.** Satellites were originally introduced as a small,
+> single-operator pattern: a NAT'd instance hanging off a parent,
+> authenticated by one shared `[SATELLITE] SECRET=`. Since the
+> per-satellite-secrets feature, the parent can also pin each satellite
+> to its own value via `SECRET_<id>=` entries in the same section
+> (id charset `[A-Za-z0-9-]+`, matched against the satellite's
+> `SATELLITE_ID`). Per-id wins — an HMAC mismatch on a pinned id rejects
+> the connection with no fallback. Keeping `SECRET=` alongside the
+> per-id entries is backward-compatible. Use the per-id form when more
+> than one operator administers satellites under the same parent — e.g.
+> per-Zone satellites in §3 each get `SECRET_<zone>=` so a leaked Zone-1
+> secret cannot impersonate Zone-2. For a single-operator deployment,
+> the shared `SECRET=` is still fine; for multi-operator national meshes
+> consider also §2 (national trunk mesh) where each `[TRUNK_x]` has its
+> own `SECRET`. See [README §Satellite reflectors](../README.md#satellite-reflectors)
+> for the config form.
 
 ```
               INTERNATIONAL MESH  (trunk full mesh, port :5302)
@@ -274,7 +275,7 @@ together:
   Lombardia) lets a sub-group bring up their own reflector with their own
   user accounts and passwords, *without* sharing Z2's `[USERS]` /
   `[PASSWORDS]` database. Z2 admin holds Z2's user DB and the
-  `[SATELLITE] SECRET` that MI presents to attach; MI admin holds MI's
+  `[SATELLITE] SECRET=` (or its own `SECRET_<MI-id>=` entry on Z2) that MI presents to attach; MI admin holds MI's
   own `[USERS]` / `[PASSWORDS]` — only MI's V2 clients authenticate
   against it. Audio federates over the satellite link while authentication
   state stays separated on each side.
