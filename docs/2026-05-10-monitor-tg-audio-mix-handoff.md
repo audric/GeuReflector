@@ -2,7 +2,6 @@
 
 **Date:** 2026-05-10 (updated 2026-05-10 with §4 verification results)
 **Status:** Diagnostic handoff. Verified facts only — no proposed design. §4 open questions now resolved.
-**Source:** drafted by Claude in a session rooted in the SvxReflectorDashboard (rails) repo, with read access to this tree but without the long-term context an engineer working in `geureflector/` daily would have. **Hand off to a session with full GeuReflector context to design and implement the fix.**
 
 ---
 
