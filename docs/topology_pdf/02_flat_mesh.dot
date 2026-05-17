@@ -1,5 +1,7 @@
 // National trunk mesh joined at IT 222 — the country gateway is the only
 // Italian reflector on the international mesh. Two domains sharing one node.
+// International side is a full mesh of 5 countries; national side is a full
+// mesh of IT 222 + 4 Italian Zones.
 graph NationalMesh {
   layout = neato;
   bgcolor = "transparent";
@@ -10,25 +12,33 @@ graph NationalMesh {
   node [shape=box, style="filled,rounded", fontname="Helvetica-Bold",
         fontsize=13, penwidth=2, width=1.0, height=0.65, fixedsize=true];
 
-  // International domain on the left
-  SE [label="SE\n240", fillcolor="#dde8fb", color="#1a4fa3", pos="-2.8, 0.9!"];
-  DE [label="DE\n262", fillcolor="#dde8fb", color="#1a4fa3", pos="-2.8,-0.9!"];
+  // International domain on the left (full mesh of 5)
+  ES [label="ES\n214", fillcolor="#dde8fb", color="#1a4fa3", pos="-5.2, 1.9!"];
+  SE [label="SE\n240", fillcolor="#dde8fb", color="#1a4fa3", pos="-3.0, 1.9!"];
+  DE [label="DE\n262", fillcolor="#dde8fb", color="#1a4fa3", pos="-3.0,-1.9!"];
+  UA [label="UA\n255", fillcolor="#dde8fb", color="#1a4fa3", pos="-5.2,-1.9!"];
 
   // Country gateway in the middle (the hinge)
   IT [label="IT\n222", fillcolor="#fde2d4", color="#c0531c", pos="0,0!"];
 
-  // National domain on the right
-  Z1 [label="IT-Z1\n2221", fillcolor="#dff3e0", color="#1e7d34", pos="2.6, 1.5!"];
-  Z2 [label="IT-Z2\n2222", fillcolor="#dff3e0", color="#1e7d34", pos="3.1, 0.5!"];
-  Z3 [label="IT-Z3\n2223", fillcolor="#dff3e0", color="#1e7d34", pos="3.1,-0.5!"];
-  Z4 [label="IT-Z4\n2224", fillcolor="#dff3e0", color="#1e7d34", pos="2.6,-1.5!"];
+  // National domain on the right (full mesh of IT + Z1..Z4).
+  // Mirrors the international 2x2 block on the left so IT sits as the
+  // shared vertex between two symmetric kites and the 10 national edges
+  // have room to breathe.
+  Z1 [label="IT-Z1\n2221", fillcolor="#dff3e0", color="#1e7d34", pos="3.0, 1.9!"];
+  Z2 [label="IT-Z2\n2222", fillcolor="#dff3e0", color="#1e7d34", pos="5.2, 1.9!"];
+  Z3 [label="IT-Z3\n2223", fillcolor="#dff3e0", color="#1e7d34", pos="5.2,-1.9!"];
+  Z4 [label="IT-Z4\n2224", fillcolor="#dff3e0", color="#1e7d34", pos="3.0,-1.9!"];
 
   edge [color="#5f6368", penwidth=1.2];
 
-  // International domain (3 nodes, 3 edges)
-  SE -- DE; SE -- IT; DE -- IT;
+  // International domain — full mesh of 5 (10 edges)
+  ES -- SE; ES -- DE; ES -- UA; ES -- IT;
+  SE -- DE; SE -- UA; SE -- IT;
+  DE -- UA; DE -- IT;
+  UA -- IT;
 
-  // National domain (5 nodes, 10 edges)
+  // National domain — full mesh of IT + Z1..Z4 (10 edges)
   IT -- Z1; IT -- Z2; IT -- Z3; IT -- Z4;
   Z1 -- Z2; Z1 -- Z3; Z1 -- Z4;
   Z2 -- Z3; Z2 -- Z4;

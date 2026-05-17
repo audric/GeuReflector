@@ -77,13 +77,19 @@ directly to every other country.
 ```
               INTERNATIONAL MESH  (trunk full mesh, port :5302)
 
-                          [IT 222]
-                         ╱       ╲
-                        ╱         ╲
-                  [SE 240]──────[DE 262]
+                            [IT 222]
+                          ╱         ╲
+                  [ES 214]           [UA 255]
+                       │                  │
+                  [SE 240] ────────── [DE 262]
+
+              Diagram shows the pentagon outline; the actual full
+              mesh has 10 edges (every pair trunked). See the PDF
+              for the rendered full-mesh diagram.
 
               every pair = bidirectional TCP trunk + HMAC handshake
-              TG 240xx → SE · 222xx → IT · 262xx → DE
+              TG 214xx → ES · 222xx → IT · 240xx → SE ·
+                  255xx → UA · 262xx → DE
 ```
 
 **Flow.** An SE client keys TG `22299`. SE's prefix table maps `222 → IT`,
@@ -102,21 +108,21 @@ advertised internationally. The country gateway is the **hinge** between the
 international and national meshes.
 
 ```
-                          INTERNATIONAL DOMAIN              NATIONAL DOMAIN
-                          (trunk, port :5302)               (trunk, port :5302)
+                       INTERNATIONAL DOMAIN              NATIONAL DOMAIN
+                       (full mesh, port :5302)           (full mesh, port :5302)
 
-       [SE 240]                                              [IT-Z1 2221]
-           │                                                ╱     │
-           │            ┌──── [IT 222] ────┐             ╱        │
-           │            │   country gateway │              [IT-Z2 2222]
-           │            │   (the hinge)    │                       │
-           │            └──── ........  ───┘             [IT-Z3 2223]
-       [DE 262]                                                    │
+       [ES 214]──┐                                            [IT-Z1 2221]
+                  ╲                                          ╱     │
+       [SE 240]────┤      ┌──── [IT 222] ────┐            ╱        │
+                   ├──────┤   country gateway │             [IT-Z2 2222]
+       [DE 262]────┤      │   (the hinge)    │                    │
+                  ╱       └─────────────────┘            [IT-Z3 2223]
+       [UA 255]──┘                                                │
                                                           [IT-Z4 2224]
-                                                                  ╲ │
-                                                          full mesh
-                                                          inside the
-                                                          national domain
+                                                                 ╲ │
+                       (all four also trunk to            (full mesh
+                        each other — full mesh             inside the
+                        on the international side)         national domain)
 ```
 
 The two domains share a single node — IT 222 — which is the only Italian
