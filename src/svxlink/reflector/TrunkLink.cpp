@@ -1289,6 +1289,10 @@ void TrunkLink::sendMsg(const ReflectorMsg& msg)
 
 void TrunkLink::sendMsgOnOutbound(const ReflectorMsg& msg)
 {
+  // Defense in depth: callers gate on isOutboundReady() (which checks
+  // isConnected()), but never write to a closed socket regardless —
+  // AsyncTcpConnection::write() asserts sock >= 0.
+  if (!m_con.isConnected()) return;
   ostringstream ss;
   ReflectorMsg header(msg.type());
   if (!header.pack(ss) || !msg.pack(ss))
@@ -1304,7 +1308,11 @@ void TrunkLink::sendMsgOnOutbound(const ReflectorMsg& msg)
 
 void TrunkLink::sendMsgOnInbound(const ReflectorMsg& msg)
 {
-  if (m_inbound_con == nullptr) return;
+  // Never write to a closed socket: AsyncTcpConnection::write() asserts
+  // sock >= 0. The pointer can outlive its socket when we disconnect() the
+  // inbound ourselves (heartbeat timeout) — disconnect() closes the fd
+  // without emitting the disconnected signal that clears m_inbound_con.
+  if (m_inbound_con == nullptr || !m_inbound_con->isConnected()) return;
   ostringstream ss;
   ReflectorMsg header(msg.type());
   if (!header.pack(ss) || !msg.pack(ss))
@@ -1432,7 +1440,17 @@ void TrunkLink::heartbeatTick(Async::Timer* t)
     if (--m_ib_hb_rx_cnt == 0)
     {
       geulog::error("trunk", "[", m_section, "] Inbound heartbeat timeout");
-      m_inbound_con->disconnect();
+      // disconnect() closes the socket but does NOT emit the disconnected
+      // signal, so neither the trunk server's onDisconnected nor
+      // onInboundDisconnected runs on its own. Drive the cleanup ourselves so
+      // the link stops advertising a dead inbound (otherwise isInboundReady()
+      // lies and acceptInboundConnection rejects every reconnect), and drop
+      // the now-dead connection from the reflector's inbound map.
+      Async::FramedTcpConnection* dead = m_inbound_con;
+      dead->disconnect();
+      m_reflector->forgetInboundTrunkConnection(dead);
+      onInboundDisconnected(
+          dead, Async::FramedTcpConnection::DR_ORDERED_DISCONNECT);
     }
     else if (m_ib_hb_rx_cnt <= 5)
     {
@@ -1497,7 +1515,8 @@ bool TrunkLink::isInboundReady(void) const
     }
     return false;
   }
-  return m_inbound_con != nullptr && m_ib_hello_received;
+  return m_inbound_con != nullptr && m_ib_hello_received &&
+         m_inbound_con->isConnected();
 } /* TrunkLink::isInboundReady */
 
 

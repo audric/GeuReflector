@@ -2482,6 +2482,12 @@ void Reflector::trunkClientConnected(Async::FramedTcpConnection* con)
 } /* Reflector::trunkClientConnected */
 
 
+void Reflector::forgetInboundTrunkConnection(Async::FramedTcpConnection* con)
+{
+  m_trunk_inbound_map.erase(con);
+} /* Reflector::forgetInboundTrunkConnection */
+
+
 void Reflector::trunkClientDisconnected(Async::FramedTcpConnection* con,
     Async::FramedTcpConnection::DisconnectReason reason)
 {

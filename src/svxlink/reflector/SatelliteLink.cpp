@@ -453,6 +453,10 @@ void SatelliteLink::handleMsgPeerFlush(std::istream& is)
 
 void SatelliteLink::sendMsg(const ReflectorMsg& msg)
 {
+  // Defense in depth: never write to a closed socket — AsyncTcpConnection::
+  // write() asserts sock >= 0. Mirrors the guard on the satellite (client)
+  // side (SatelliteClient gates every sender on isConnected()).
+  if (m_con == nullptr || !m_con->isConnected()) return;
   ostringstream ss;
   ReflectorMsg header(msg.type());
   if (!header.pack(ss) || !msg.pack(ss))
