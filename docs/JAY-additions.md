@@ -25,8 +25,8 @@ material that was not merged here.
 | Per-trunk config | `TG_MAP=peer:local,...` | Bidirectional TG remap; mapped TGs bypass the prefix routing check on this link |
 | Per-trunk config | `PEER_ID` | Stable identifier advertised in the trunk hello (defaults to section name); used as the MQTT topic component on the receiving side |
 | Global config | `MQTT_NAME` (in `[MQTT]`) | Appended to `TOPIC_PREFIX` so each reflector publishes under a unique sub-tree (`<TOPIC_PREFIX>/<MQTT_NAME>/...`) |
-| Wire protocol | `MsgTrunkNodeList` (type **121**) | Periodic node list (callsign + current TG, plus optional lat/lon/QTH) sent peer-to-peer when the local client list changes; receiver re-publishes it via MQTT |
-| Wire protocol | `MsgTrunkFilter` (type **122**) | Optional satellite-side TG-filter advertisement so a satellite can subscribe to only a subset of the parent's TGs |
+| Wire protocol | `MsgPeerNodeList` (type **121**) | Periodic node list (callsign + current TG, plus optional lat/lon/QTH) sent peer-to-peer when the local client list changes; receiver re-publishes it via MQTT |
+| Wire protocol | `MsgPeerFilter` (type **122**) | Optional satellite-side TG-filter advertisement so a satellite can subscribe to only a subset of the parent's TGs |
 | PTY commands | `TRUNK MUTE \| UNMUTE <section> <callsign>` | Live mute of a callsign per trunk link; muted callsigns' inbound audio is dropped |
 | PTY commands | `TRUNK RELOAD [<section>]` | Re-reads `BLACKLIST_TGS`, `ALLOW_TGS`, `TG_MAP` from the live config without restarting |
 | PTY commands | `TRUNK STATUS [<section>]` | Dumps a one-line status summary per trunk link to the PTY |
@@ -77,8 +77,8 @@ linked above and open an issue or PR on this repository.
 | File | What to look for |
 |------|------------------|
 | `src/svxlink/reflector/TgFilter.h` | Filter parser |
-| `src/svxlink/reflector/ReflectorMsg.h` | `MsgTrunkNodeList` (121), `MsgTrunkFilter` (122) |
-| `src/svxlink/reflector/TrunkLink.{h,cpp}` | Per-link filters, mapping, mute, `reloadConfig`, `statusLine`, `sendNodeList`, `handleMsgTrunkNodeList`, `peerId()` |
+| `src/svxlink/reflector/ReflectorMsg.h` | `MsgPeerNodeList` (121), `MsgPeerFilter` (122) |
+| `src/svxlink/reflector/TrunkLink.{h,cpp}` | Per-link filters, mapping, mute, `reloadConfig`, `statusLine`, `sendNodeList`, `handleMsgPeerNodeList`, `peerId()` |
 | `src/svxlink/reflector/Reflector.{h,cpp}` | `scheduleNodeListUpdate`, `sendNodeListToAllPeers`, `onPeerNodeList`, PTY `TRUNK` command branch, `MQTT_NAME` topic prefix |
 | `src/svxlink/reflector/MqttPublisher.{h,cpp}` | `publishLocalNodes`, `publishPeerNodes` |
 | `src/svxlink/reflector/svxreflector.conf.in` | Config-template documentation for every new key |

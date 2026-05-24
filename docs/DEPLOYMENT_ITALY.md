@@ -277,7 +277,7 @@ All reflectors in the mesh must list the same `CLUSTER_TGS` value.
 
 There is **no hardcoded limit** on concurrent QSOs over the trunk. The trunk
 between each pair of reflectors is a single TCP connection that multiplexes all
-active TGs simultaneously — each `MsgTrunkAudio` frame is tagged with the TG
+active TGs simultaneously — each `MsgPeerAudio` frame is tagged with the TG
 number, so any number of TGs can carry audio at the same time.
 
 The only per-TG rule is that **one talker is allowed per TG at a time**

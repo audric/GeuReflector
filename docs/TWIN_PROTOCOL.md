@@ -2,7 +2,7 @@
 
 > **Status:** Implemented in v1.3.x+twin2. See §Implementation for
 > what shipped and `tests/test_twin.py` for integration test coverage
-> (11 tests including end-to-end V2-client audio mirroring and
+> (17 tests including end-to-end V2-client audio mirroring and
 > partner-roster propagation into `/status.twin.nodes`).
 
 ## Motivation
@@ -61,7 +61,7 @@ connect to either physical node.
   failure. This gives zero-holdoff failover at the cost of external
   peers needing to understand "paired hosts" in their trunk config.
 - Cross-twin talker arbitration reuses the existing priority-nonce
-  tie-break: the same 32-bit `priority` field from `MsgTrunkHello`
+  tie-break: the same 32-bit `priority` field from `MsgPeerHello`
   decides who wins when both twins' clients PTT the same TG at the same
   instant.
 - During a twin-link outage both twins keep operating fully and
@@ -91,7 +91,7 @@ symmetric (like a trunk) and strictly 1:1 (unlike either).
 
 ### Handshake
 
-Reuse `MsgTrunkHello` (type 115) with a new role value:
+Reuse `MsgPeerHello` (type 115) with a new role value:
 
 ```cpp
 static const uint8_t ROLE_PEER      = 0;   // existing
@@ -99,7 +99,7 @@ static const uint8_t ROLE_SATELLITE = 1;   // existing
 static const uint8_t ROLE_TWIN      = 2;   // NEW
 ```
 
-Both sides send `MsgTrunkHello` with `role=ROLE_TWIN`, the shared
+Both sides send `MsgPeerHello` with `role=ROLE_TWIN`, the shared
 `[TWIN]` section name as `id`, the common `LOCAL_PREFIX` as
 `local_prefix`, an HMAC over `secret`, and a fresh 32-bit `priority`
 nonce.
@@ -124,14 +124,14 @@ filtering:
 
 | Type | Name                       | Purpose on twin link                              |
 |------|----------------------------|---------------------------------------------------|
-| 115  | `MsgTrunkHello`            | Handshake (role=ROLE_TWIN)                        |
-| 116  | `MsgTrunkTalkerStart`      | Mirror local-client talker start                  |
-| 117  | `MsgTrunkTalkerStop`       | Mirror local-client talker stop                   |
-| 118  | `MsgTrunkAudio`            | Mirror local-client audio                         |
-| 119  | `MsgTrunkFlush`            | Mirror end-of-stream                              |
-| 120  | `MsgTrunkHeartbeat`        | Keepalive (**2s TX / 5s RX** on twin links)       |
-| 121  | `MsgTrunkNodeList`         | Mirror node roster so `/status` is consistent on both twins |
-| 122  | `MsgTrunkFilter`           | **Not used on twin links** — twins mirror every TG unconditionally. Reserved for satellite use. |
+| 115  | `MsgPeerHello`            | Handshake (role=ROLE_TWIN)                        |
+| 116  | `MsgPeerTalkerStart`      | Mirror local-client talker start                  |
+| 117  | `MsgPeerTalkerStop`       | Mirror local-client talker stop                   |
+| 118  | `MsgPeerAudio`            | Mirror local-client audio                         |
+| 119  | `MsgPeerFlush`            | Mirror end-of-stream                              |
+| 120  | `MsgPeerHeartbeat`        | Keepalive (**2s TX / 5s RX** on twin links)       |
+| 121  | `MsgPeerNodeList`         | Mirror node roster so `/status` is consistent on both twins |
+| 122  | `MsgPeerFilter`           | **Not used on twin links** — twins mirror every TG unconditionally. Reserved for satellite use. |
 | 123  | `MsgTwinExtTalkerStart`    | **NEW** — "my external trunk peer `<peer_id>` has claimed TG X with callsign Y"; receiver updates its `TGHandler` trunk-talker map so local clients on the partner twin cannot key up that TG |
 | 124  | `MsgTwinExtTalkerStop`     | **NEW** — clears the corresponding external-talker state |
 
@@ -145,7 +145,7 @@ to the correct external peer on reconnect/cleanup.
 
 ### Cross-twin talker arbitration
 
-When `handleMsgTrunkTalkerStart` fires on a twin link, the receiver
+When `handleMsgPeerTalkerStart` fires on a twin link, the receiver
 treats it like a trunk talker-start **with prefix filtering disabled**:
 any TG is accepted, and `TGHandler::setTrunkTalkerForTG(tg, callsign)`
 is called so local clients on the receiving twin cannot grab the talker
@@ -155,9 +155,14 @@ priority-nonce rule (lower wins, loser yields via the existing
 
 ### Audio replication
 
-`MsgTrunkAudio` on a twin link is broadcast to local clients on the
+`MsgPeerAudio` on a twin link is broadcast to local clients on the
 matching TG via `Reflector::broadcastUdpMsg` — same as the trunk path,
-but without the `isOwnedTG` gate. The twin does *not* re-forward the
+but without the `isOwnedTG` gate. As on the trunk and satellite paths,
+the broadcast reaches both clients with the TG **selected** and passive
+**monitors** of it (the composite selected-OR-monitor filter, preserving
+the passive-observer / earliest-monitor-talker arbitration); a plain
+selected-only filter would silently drop monitor-only listeners on the
+non-sticky twin (see `test_X5`). The twin does *not* re-forward the
 audio to its own external trunks (that would duplicate — external
 trunks are only held by the primary; see below).
 
@@ -223,7 +228,7 @@ only on which twin the local client is physically connected to.
 
 ### Cross-twin external-talker state propagation
 
-When a twin receives `MsgTrunkTalkerStart(tg=262xx, callsign=IW0ABC)`
+When a twin receives `MsgPeerTalkerStart(tg=262xx, callsign=IW0ABC)`
 from refA on its sticky socket, it:
 
 1. Updates its own `TGHandler` trunk-talker state as usual.
@@ -245,9 +250,10 @@ forwards the audio across the twin link via
 satellite-to-twin mirror), reusing `MsgPeerAudio` on the [TWIN] socket.
 `TrunkLink::handleMsgPeerFlush` mirrors the matching flush. The
 receiving partner's `TwinLink::handleMsgPeerAudio` broadcasts to its
-local clients on the TG and fans the audio out to its own satellites;
-it does *not* re-forward to trunk peers, so there is no echo back to
-refA.
+local clients on the TG — both selected and passive-monitoring, using
+the same composite filter as the trunk path (see `test_X5`) — and fans
+the audio out to its own satellites; it does *not* re-forward to trunk
+peers, so there is no echo back to refA.
 
 ### refA-side socket selection policy
 
@@ -371,7 +377,7 @@ Where the pieces live in the source tree:
   the twin link can be cleaned up per-peer on disconnect without
   clobbering other peers' claims.
 - **`ReflectorMsg.h`** adds types 123 / 124 (`MsgTwinExtTalkerStart`
-  / `Stop`) and a new `ROLE_TWIN = 2` value on `MsgTrunkHello`.
+  / `Stop`) and a new `ROLE_TWIN = 2` value on `MsgPeerHello`.
 - **`svxreflector.conf.in`** includes commented-out `[TWIN]` and
   `PAIRED=1` examples.
 - **`tests/test_twin.py`** covers handshake, PAIRED trunk wiring,
@@ -393,19 +399,19 @@ Artifacts that can occur while the twin link is down:
 
 - A German client on ref1 and a different German client on ref2 can
   both PTT TG 262xx at the same time. Each twin is unaware of the
-  other's talker and both forward `MsgTrunkTalkerStart` to refA over
+  other's talker and both forward `MsgPeerTalkerStart` to refA over
   their own external sockets. refA will receive conflicting
   talker-starts on its two endpoints for the same logical trunk.
   Resolution: refA's sticky routing means it accepts whichever it
   sees first and the other twin's forwarded audio lands on the
   non-sticky socket; the non-sticky-side audio is dropped by refA's
   "audio only from the peer that claimed the TG" check (same rule
-  already used inside `handleMsgTrunkAudio` today).
+  already used inside `handleMsgPeerAudio` today).
 - External-talker state set on one twin is not mirrored to the other,
   so the partner twin may accept a local-client PTT that would
   otherwise have been blocked. The resulting audio flows to refA and
   may compete with the existing conversation. Outcome depends on
-  refA's sticky choice and the `handleMsgTrunkAudio` talker check.
+  refA's sticky choice and the `handleMsgPeerAudio` talker check.
 
 These artifacts are bounded to the duration of the twin-link outage
 and heal automatically on reconnection: once the twin link is back,
@@ -435,7 +441,7 @@ Summary of the key design choices and why they were made:
 | External-talker state sync | **Full `TGHandler` state mirrored** via `MsgTwinExtTalkerStart/Stop` | Unified view on both twins so local PTT is blocked when external peer holds a TG |
 | Audio transport twin↔twin | **TCP relay**, same framing as trunk | Works anywhere, no new cipher/auth story, bandwidth fine for 1:1 |
 | Heartbeat cadence on twin link | **2s TX / 5s RX** | Twins LAN-close, fast `/status` convergence |
-| `MsgTrunkNodeList` | Each twin advertises **only its own local clients** externally; twin link mirrors the roster internally for consistent `/status` on both twins | Connection identity on the external peer provides origin; no additive schema change to `MsgTrunkNodeList` needed |
+| `MsgPeerNodeList` | Each twin advertises **only its own local clients** externally; twin link mirrors the roster internally for consistent `/status` on both twins | Connection identity on the external peer provides origin; no additive schema change to `MsgPeerNodeList` needed |
 | Redis config store | **No changes** | Role is runtime state, not config; shared config already syncs via Redis |
 | Naming | **`[TWIN]`** | Short, clear, orthogonal to `[TRUNK_x]` / `[SATELLITE]` |
 

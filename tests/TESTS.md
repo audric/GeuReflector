@@ -5,8 +5,10 @@
 The integration tests verify the trunk protocol, satellite links, twin (HA-pair) protocol, Redis-backed config store, and end-to-end audio routing by spinning up reflector meshes in Docker Compose and connecting fake peers and clients from a Python test harness.
 
 `run_tests.sh` runs in **two phases**:
-1. A 3-reflector trunk mesh + a satellite-mode reflector exercising `test_trunk.py` (35 tests).
-2. A 4-reflector twin topology exercising `test_twin.py` (11 tests).
+1. A 3-reflector trunk mesh + a satellite-mode reflector, exercising
+   `test_trunk.py` (50 tests), `test_mqtt_deltas.py` (7 tests),
+   `test_satellite_secrets.py` (5 tests), and `test_logging.py` (6 tests).
+2. A 4-reflector twin topology exercising `test_twin.py` (17 tests).
 
 A separate harness (`run_redis_tests.sh`) runs `test_redis.py` (13 tests) against a single-reflector + Redis stack. See [Redis Integration Tests](#redis-integration-tests) below.
 
@@ -21,13 +23,11 @@ bash run_tests.sh
 
 This will:
 1. Generate the default configs and `docker-compose.test.yml` from `topology.py`
-2. Build and start the 3-reflector mesh
-3. Run 35 automated trunk/satellite/MQTT tests (`test_trunk.py`)
-4. Enter an interactive prompt to manually test any TG number
-5. Tear down the default mesh
-6. Regenerate with `--topology twin` (4-reflector twin topology)
-7. Rebuild the mesh and run 11 automated twin-protocol tests (`test_twin.py`)
-8. Restore the default topology files and tear everything down
+2. Build and start the 3-reflector mesh (+ a satellite-mode reflector)
+3. Run `test_trunk.py` (50), then `test_mqtt_deltas.py` (7), `test_satellite_secrets.py` (5), and `test_logging.py` (6). When run in a terminal, `test_trunk.py` ends with an interactive TG prompt (see [Interactive Mode](#interactive-mode)) before the other suites run
+4. Tear down the default mesh and regenerate with `--topology twin` (4-reflector twin topology)
+5. Rebuild the mesh and run `test_twin.py` (17 twin-protocol tests)
+6. Restore the default topology files and tear everything down
 
 To regenerate configs without running tests:
 
@@ -55,13 +55,15 @@ Two fake trunk peers connect from the test harness:
 - **TRUNK_TEST** (prefix `9`) — primary sender for most tests
 - **TRUNK_TEST_RX** (prefix `8`) — passive receiver for isolation tests
 
-Three V2 clients are configured on every reflector:
-- **N0TEST** / **N0SEND** / **N0THRD** (group `TestGroup`, password `testpass`)
+Five V2 clients are configured on every reflector:
+- **N0TEST** / **N0SEND** / **N0THRD** / **N0FOUR** / **N0FIVE** (group `TestGroup`, password `testpass`)
 
-Three distinct callsigns are required for the 3-way mesh tests: when two
-non-owner reflectors both forward `MsgTrunkTalkerStart` to the owner with
-the same callsign, the owner's per-TG trunk-talker slot cannot tell them
-apart.
+At least three distinct callsigns are required for the 3-way mesh tests:
+when two non-owner reflectors both forward `MsgPeerTalkerStart` to the
+owner with the same callsign, the owner's per-TG trunk-talker slot cannot
+tell them apart. The twin monitor test (`test_X5`) needs five distinct
+clients — a selecting and a monitoring receiver on each twin, plus a
+sender.
 
 A satellite server is enabled on reflector-a (port 5303, secret `sat_secret`). A real satellite-mode reflector (`reflector-sat`, `SATELLITE_OF=reflector-a`) also runs in the compose so tests can verify satellite-mode behavior end-to-end (e.g. that MQTT publishing still works).
 
@@ -119,8 +121,11 @@ Internal port for `[TWIN]` is always 5304; satellite is 5303.
 |------|---------|
 | `topology.py` | Single source of truth — prefixes, ports, secrets, cluster TGs, test clients. Contains both the default mesh (`REFLECTORS`) and the `TWIN_REFLECTORS` / `TWIN_TRUNKS` definitions. |
 | `generate_configs.py` | Generates `configs/*.conf` and `docker-compose.test.yml` from topology. Supports `--topology default` (implicit) and `--topology twin`. |
-| `test_trunk.py` | Test harness: fake trunk peers, satellite peer, V2 client, 35 test cases, interactive loop. |
-| `test_twin.py` | TWIN-protocol tests (10 cases) using the twin topology. Reuses `ClientPeer` and `SatellitePeer` from `test_trunk.py`. |
+| `test_trunk.py` | Test harness: fake trunk peers, satellite peer, V2 client, 50 test cases, interactive loop. |
+| `test_mqtt_deltas.py` | Peer-client liveness MQTT delta tests (7 cases): per-client connect/disconnect/rx events published as `peer/<peer_id>/client/<call>/<event>`, across the satellite axis and trunk-peer non-propagation. Runs on the default mesh. |
+| `test_satellite_secrets.py` | Per-satellite secret resolver tests (5 cases): `SECRET_<id>` match accepts, mismatch rejects with no fallback, unknown id falls back to `[SATELLITE].SECRET`. Runs on the default mesh. |
+| `test_logging.py` | Logging-facade (`geulog::`) tests (6 cases): `LOG` PTY commands (SHOW/SET/RESET), level filtering, error rejection via the `/dev/shm/reflector_ctrl` PTY. Runs on the default mesh. |
+| `test_twin.py` | TWIN-protocol tests (17 cases) using the twin topology. Reuses `ClientPeer` and `SatellitePeer` from `test_trunk.py`. |
 | `run_tests.sh` | Orchestrator: generate → build → trunk tests → teardown → regenerate twin → build → twin tests → teardown. |
 | `configs/` | Generated reflector config files (do not edit manually) |
 | `docker-compose.test.yml` | Generated compose file (do not edit manually) |
@@ -177,7 +182,7 @@ Simulates a V2 SvxLink client. Performs the full TCP authentication handshake (P
 | 14 | Satellite receives from parent | Trunk talker audio on the parent is forwarded to the satellite |
 | 15 | Satellite audio to trunk peer | Satellite sends audio for a TG owned by another reflector; parent forwards via trunk |
 | 16 | Satellite disconnect cleanup | Abrupt satellite disconnect clears it from `/status` |
-| 16b | Satellite TG filter honored by parent | Satellite sends `MsgTrunkFilter` (type 122) after hello; parent forwards the matching cluster TG but drops the non-matching one |
+| 16b | Satellite TG filter honored by parent | Satellite sends `MsgPeerFilter` (type 122) after hello; parent forwards the matching cluster TG but drops the non-matching one |
 | 16c | Satellite filter visible in `/status` | Active filter surfaces as `satellites[<id>].filter`; key absent when unset, appears after send, clears after empty filter |
 
 ### Bidirectional and Multi-Way Routing
@@ -207,7 +212,7 @@ each filter independently of the other trunk fixtures.
 
 | # | Test | What it verifies |
 |---|------|-----------------|
-| 19 | `PEER_ID` in hello | Reflector advertises the configured `PEER_ID` (not the section name) in `MsgTrunkHello` |
+| 19 | `PEER_ID` in hello | Reflector advertises the configured `PEER_ID` (not the section name) in `MsgPeerHello` |
 | 20 | `BLACKLIST_TGS` drops TG | TalkerStart on a blacklisted TG is dropped (not in `/status` active talkers) |
 | 21 | `ALLOW_TGS` whitelist | TG matching the whitelist passes; TG outside is dropped |
 | 22 | `TG_MAP` remap | TalkerStart on wire TG `7000` is remapped and tracked as local TG `1220` |
@@ -219,8 +224,43 @@ each filter independently of the other trunk fixtures.
 
 | # | Test | What it verifies |
 |---|------|-----------------|
-| 27 | `MsgTrunkNodeList` emission | Connecting a V2 client triggers a debounced node-list send to trunk peers; the harness receives a `MsgTrunkNodeList` (type 121) containing the new client |
+| 27 | `MsgPeerNodeList` emission | Connecting a V2 client triggers a debounced node-list send to trunk peers; the harness receives a `MsgPeerNodeList` (type 121) containing the new client |
 | 27b | Trunk peer roster in `/status` | A client authenticated on the primary reflector appears in a peer's `/status.trunks[SECTION].nodes`; disappears after disconnect |
+
+### Satellite Cross-Visibility
+
+| # | Test | What it verifies |
+|---|------|-----------------|
+| 33 | Sat-attached client on parent `/status` | A V2 client attached to the satellite reflector appears in the parent's `/status.satellites[<sat_id>].nodes` |
+| 34 | Sat-attached client on trunk peer | The same client appears on a far trunk peer's `/status.trunks[<section>].nodes` with the `sat_id` field set, proving sat → parent → trunk roster propagation |
+| 35 | Parent-local client on satellite `/status` | A client on the parent appears on the satellite's `/status.satellite.parent_nodes`, proving the parent → satellite direction |
+| 36 | Multi-satellite cross-visibility | Two satellites on the same parent each see the other's roster contribution, `sat_id`-stamped to identify the originator |
+
+### Prefix Routing and Cluster Fanout
+
+| # | Test | What it verifies |
+|---|------|-----------------|
+| 37 | Gateway prefix routing | Audio crosses two trunk legs via a non-owner gateway with no `CLUSTER_TGS` involved — pure longest-prefix-match (`shouldRelayInbound` → gateway forward) |
+| 38 | Cluster-TG local-client broadcast | A local V2 client keys a cluster TG; a V2 client on another reflector selecting that TG hears it, via `onLocalAudio` cluster fanout regardless of prefix |
+
+### Monitor-TG Audio Fanout
+
+| # | Test | What it verifies |
+|---|------|-----------------|
+| 39 | Passive monitor multi-hop | A passive monitor on reflector-a hears a TG owned by reflector-d through reflector-b as gateway, without ever PTT'ing — interest bootstrapped via `MsgPeerTgInterest` |
+| 40 | Monitor does not mix with selected TG | Regression for the v1.3.10 mixing bug: with `SELECT_TG=9` and `MONITOR_TGS=[110]`, a busy selected TG suppresses the monitor TG's audio |
+| 41 | Priority switch still works | When svxlink switches to a higher-priority monitor TG (`MsgSelectTG`) while the selected TG is idle, the reflector routes the switched TG correctly |
+| 42 | Passive observer unaffected | A client with `select_tg(0)` + one monitor TG still receives that monitor TG's UDP audio (guards the `tg == 0` short-circuit in `SelectedTgIdleFilter`) |
+| 43 | Multi-monitor blocked when selected set | With `currentTG=9` and two busy monitor TGs, the client receives zero UDP audio for either — the monitor arm only opens when `currentTG == 0` |
+| 44 | Passive-observer no monitor mix | First-talker-wins invariant for a passive observer (`currentTG=0`) across multiple monitor talkers |
+| 45 | Monitor blocked when selected set | Contract: with a non-zero selected TG, the client receives no UDP audio for any monitored TG |
+
+### Trunk Resilience
+
+| # | Test | What it verifies |
+|---|------|-----------------|
+| 46 | Inbound heartbeat timeout — no crash | A non-paired trunk link whose inbound socket is closed on heartbeat timeout must not abort the process on the next send (e.g. a `MsgPeerTgInterest`) |
+| 47 | Inbound recovers after timeout | After the reflector times out and drops a silent inbound peer, the same peer can reconnect its inbound leg |
 
 ### Twin Protocol (HA-pair)
 
@@ -228,17 +268,23 @@ Run separately on the twin topology (`test_twin.py`). See `docs/TWIN_PROTOCOL.md
 
 | # | Test | What it verifies |
 |---|------|-----------------|
-| 1 | TWIN handshake | Both ref1 and ref2 log a successful `TWIN: hello from partner` with authentication |
-| 2 | No auth errors | Neither twin emits HMAC or `local_prefix` mismatch errors on startup |
-| 3 | PAIRED trunk on refa | refa's single `[TRUNK_IT_DE]` (PAIRED=1) reports `connected=True` with both hosts reachable |
-| 4 | PAIRED return leg | ref1 and ref2 each see their own `[TRUNK_IT_DE]` back to refa as connected |
-| 5 | No twin-setup errors | Startup logs on both twins contain no `ERROR[TWIN]` lines |
-| 6 | Twin disconnect recovery | Killing ref2 triggers an RX timeout on ref1; restarting ref2 re-handshakes cleanly |
-| 7 | PAIRED trunk failover | Killing ref1 does **not** disconnect refa's `[TRUNK_IT_DE]` — sticky selection fails over to ref2 without holdoff |
-| 8 | Audio mirror end-to-end | A V2 client on ref1 transmits on TG 26201; a V2 client on ref2 receives UDP audio and a flush marker, exercising the full `TGHandler.talkerUpdated` → `TwinLink.onLocalAudio` → `MsgTrunkAudio` → `broadcastUdpMsg` path |
-| 9 | Satellite + twin handshake | A satellite connects to ref1 (the `TWIN_SATELLITE_PARENT`) and is listed in `/status.satellites` after the two-way hello |
-| 10 | Satellite sees twin-mirrored audio | A V2 client on ref2 transmits on TG 26201; the satellite attached to ref1 receives `TalkerStart` and `MsgTrunkAudio` — verifies `TwinLink::handleMsgTrunkAudio` re-forwards to satellites, not just talker state |
-| 11 | Twin partner roster in `/status` | A V2 client authenticated on ref1 appears under ref2's `/status.twin.nodes`; disappears after disconnect. Exercises `MsgTrunkNodeList` over the `[TWIN]` socket and `TwinLink::m_partner_nodes` |
+| 01 | TWIN handshake | Both ref1 and ref2 report a completed `TWIN: hello from partner` exchange in `/status` |
+| 02 | No auth errors | Neither twin emits HMAC or `local_prefix` mismatch errors; `[TWIN]` SECRET and LOCAL_PREFIX are consistent |
+| 03 | PAIRED trunk on refa | refa's single `[TRUNK_IT_DE]` (PAIRED=1, two hosts) reaches `connected=True` |
+| 04 | PAIRED return leg | ref1 and ref2 each see their own `[TRUNK_IT_DE]` back to refa as connected |
+| 05 | No twin-setup errors | Both twins have a listening twin server and no `ERROR[TWIN]` (inbound evidence from `/status`) |
+| 06 | Twin disconnect recovery | Killing ref2 triggers an RX timeout on ref1; restarting ref2 re-handshakes cleanly |
+| 07 | PAIRED trunk failover | Killing ref1 does **not** disconnect refa's `[TRUNK_IT_DE]` — sticky selection fails over to ref2 without holdoff |
+| 08 | Audio mirror between twins | A V2 client on ref1 transmits; a client on ref2 receives UDP audio + flush via `TGHandler.talkerUpdated` → `TwinLink.onLocalAudio` → `MsgPeerAudio` → `broadcastUdpMsg` |
+| 09 | Satellite + twin handshake | A satellite connects to ref1 (the `TWIN_SATELLITE_PARENT`) and is listed in `/status.satellites` after the two-way hello |
+| 10 | Satellite sees twin-mirrored audio | A V2 client on ref2 transmits; the satellite attached to ref1 receives `TalkerStart` + `MsgPeerAudio` — verifies the twin mirror re-forwards to satellites, not just talker state |
+| 11 | Twin partner roster in `/status` | A V2 client on ref1 appears under ref2's `/status.twin.nodes`; disappears after disconnect. Exercises `MsgPeerNodeList` over the `[TWIN]` socket and `TwinLink::m_partner_nodes` |
+| 12 | Twin heartbeat recovery | Pausing ref2 stalls heartbeats but keeps TCP alive; ref1 times out, re-arms its dialer, and reconnects when ref2 resumes |
+| X1 | Per-client visible across twin | A V2 client connecting to ref1 causes ref2's MQTT broker to emit `peer/TWIN/client/<call>/connected` within 2 s |
+| X2 | `MQTT_NAME` required in twin mode | A reflector with `[TWIN]` configured but missing/empty `MQTT_NAME` exits non-zero and logs `MQTT_NAME is required` |
+| X3 | Satellite TX reaches twin partner | A satellite-client transmits via `SatelliteLink` to ref1; the twin partner ref2 delivers the audio to its local clients |
+| X4 | PAIRED inbound reaches both twins | A client on refa transmits on a **262-prefixed** (twin-owned) TG; clients on ref1 **and** ref2 both receive UDP audio — the trunk→twin mirror covers the non-sticky twin |
+| X5 | PAIRED inbound (owner TG) reaches monitoring twin clients | Mirror image of X4: refa transmits on a **refa-owned** (222) TG with the twins as subscribers; selecting **and** monitoring clients on both twins must hear it. Regression guard for the trunk→twin mirror using the composite selected-OR-monitor filter (not selected-only) |
 
 ## Redis Integration Tests
 
@@ -267,7 +313,7 @@ Each test writes directly to Redis via `redis-cli` inside the container, publish
 | 6d | `live:trunk` carries status blob | `live:trunk:<section>.status` is a serialized `TrunkLink::statusJson()` (host, port, connected, local/remote prefix, active_talkers, muted) |
 | 7 | Outage + resync | Stopping Redis keeps existing clients connected; on restart the reflector logs `config.changed: all` and accepts newly-written users |
 | 8 | `--import-conf-to-redis` idempotent | Running the importer twice against the same `.conf` produces identical keyspace dumps |
-| 9 | Peer node list populates + diffs | Inbound `MsgTrunkNodeList` creates `live:peer_node:<section>:<callsign>` hashes; a shrunk follow-up list DELs dropped callsigns and updates mutated fields (e.g. `tg`) |
+| 9 | Peer node list populates + diffs | Inbound `MsgPeerNodeList` creates `live:peer_node:<section>:<callsign>` hashes; a shrunk follow-up list DELs dropped callsigns and updates mutated fields (e.g. `tg`) |
 | 10 | Peer node strings sanitized | Control chars and `:` are stripped from `callsign`/`qth`, oversized callsigns truncated to 32, entries whose callsign becomes empty are dropped, and non-finite / out-of-range lat/lon are cleared while keeping the callsign |
 | 11 | Peer nodes cleared on disconnect | Closing the trunk link with no other direction active DELs all `live:peer_node:<section>:*` keys for that peer |
 | 12 | Dynamic trunk add/remove | Writing a `trunk:<SECTION>:peer` hash + publish logs `Added trunk link: …`; deleting it logs `Removed trunk link: …` |

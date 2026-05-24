@@ -88,7 +88,7 @@ Similar to `TrunkLink` but with different semantics:
 | Aspect | TrunkLink (peer-to-peer) | SatelliteLink |
 |--------|-------------------------|---------------|
 | Topology | Symmetric mesh peers | Asymmetric — parent is authority |
-| TG routing | Prefix-based (`isSharedTG`/`isOwnedTG`) + cluster (`isClusterTG`) | Unfiltered by default; optional `SATELLITE_FILTER` (bidirectional, advertised via `MsgTrunkFilter`) |
+| TG routing | Prefix-based (`isSharedTG`/`isOwnedTG`) + cluster (`isClusterTG`) | Unfiltered by default; optional `SATELLITE_FILTER` (bidirectional, advertised via `MsgPeerFilter`) |
 | Talker arbitration | Nonce tie-break | Parent always wins |
 | Who initiates | Both sides connect to each other | Satellite connects to parent |
 | Audio path | Only prefix-matched + cluster TGs | All TGs active on either side |
@@ -104,7 +104,7 @@ Similar to `TrunkLink` but with different semantics:
    (dynamically on accept, like `ReflectorClient`).
 
 3. **Audio forwarding**: when a local client or trunk peer starts talking on any
-   TG, the parent also sends `MsgTrunkTalkerStart` + `MsgTrunkAudio` to all
+   TG, the parent also sends `MsgPeerTalkerStart` + `MsgPeerAudio` to all
    connected satellites. When a satellite client talks, the parent treats it
    identically to a local client — forwards to trunk peers via `isSharedTG` as
    normal.
@@ -127,10 +127,10 @@ The satellite is a **thin relay**:
 #### Wire protocol
 
 Reuse the existing trunk message types (115-120). The satellite handshake
-(`MsgTrunkHello`) includes a flag field so the parent knows to treat the
+(`MsgPeerHello`) includes a flag field so the parent knows to treat the
 connection as a satellite rather than a mesh peer.
 
-Add one field to `MsgTrunkHello`:
+Add one field to `MsgPeerHello`:
 
 ```cpp
 uint8_t m_role;  // 0 = PEER (default, backward-compatible), 1 = SATELLITE
@@ -143,7 +143,7 @@ uint8_t m_role;  // 0 = PEER (default, backward-compatible), 1 = SATELLITE
 | `Reflector.cpp` | Add satellite TCP server, accept satellite connections |
 | `SatelliteLink.cpp` (new) | Parent-side satellite connection handler |
 | `SatelliteClient.cpp` (new) | Satellite-side parent connection + local relay |
-| `ReflectorMsg.h` | Add `m_role` to `MsgTrunkHello` |
+| `ReflectorMsg.h` | Add `m_role` to `MsgPeerHello` |
 | `TrunkLink.cpp` | No changes — mesh unchanged |
 | `svxreflector.conf.in` | Add `[SATELLITE]`, `SATELLITE_OF` settings |
 
@@ -265,11 +265,11 @@ void TrunkLink::onLocalTalkerStart(uint32_t tg, const std::string& callsign)
   {
     return;
   }
-  sendMsg(MsgTrunkTalkerStart(tg, callsign));
+  sendMsg(MsgPeerTalkerStart(tg, callsign));
 }
 ```
 
-Similarly for inbound: `handleMsgTrunkTalkerStart` and the other receive
+Similarly for inbound: `handleMsgPeerTalkerStart` and the other receive
 handlers use `isOwnedTG` (checks both local and remote prefix) instead of
 `isSharedTG`, combined with `|| isClusterTG`:
 
@@ -306,7 +306,7 @@ The `onTalkerUpdated` callback currently iterates all trunk links and calls
 individually decides whether to forward based on `isSharedTG || isClusterTG`.
 
 Audio forwarding in `Reflector::onTalkerUpdated` already loops all links. Same
-for `handleMsgTrunkAudio` -> `broadcastUdpMsg` on the receiving side.
+for `handleMsgPeerAudio` -> `broadcastUdpMsg` on the receiving side.
 
 #### Cluster TG validation at startup
 
@@ -368,7 +368,7 @@ No new message types. No wire protocol changes. No new classes.
 |---|---|---|
 | **Solves** | Mesh scaling for large deployments | Shared nationwide channels |
 | **Complexity** | New class + new TCP listener | ~50 lines of routing logic changes |
-| **Wire protocol** | 1 new field in MsgTrunkHello | No changes |
+| **Wire protocol** | 1 new field in MsgPeerHello | No changes |
 | **Config** | `[SATELLITE]`, `SATELLITE_OF` | `CLUSTER_TGS=222,91` |
 | **Risk** | Medium — new connection type | Low — additive routing check |
 | **Recommended order** | Second | **First** (simpler, high value) |

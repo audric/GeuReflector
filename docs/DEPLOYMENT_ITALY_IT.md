@@ -284,7 +284,7 @@ Tutti i reflector nella mesh devono avere lo stesso valore di `CLUSTER_TGS`.
 
 Non esiste **nessun limite fisso** al numero di QSO simultanei sul trunk. Il trunk
 tra ogni coppia di reflector è una singola connessione TCP che multiplexa tutti i
-TG attivi contemporaneamente — ogni frame `MsgTrunkAudio` è etichettato con il
+TG attivi contemporaneamente — ogni frame `MsgPeerAudio` è etichettato con il
 numero di TG, quindi qualsiasi numero di TG può trasmettere audio nello stesso momento.
 
 L'unica regola per TG è che **un solo operatore alla volta può trasmettere su un

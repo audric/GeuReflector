@@ -72,7 +72,7 @@ automatically.
   `[TRUNK_x]` section, with a shared filter syntax (exact, `24*` prefix,
   `2427-2438` range). Reloadable at runtime via the PTY admin channel
 - **Node-list broadcasting** — on local client login / logout / TG change the
-  reflector debounces (500 ms) and emits a `MsgTrunkNodeList` to every trunk
+  reflector debounces (500 ms) and emits a `MsgPeerNodeList` to every trunk
   peer (and, when configured, the `[TWIN]` partner) carrying callsign +
   current TG + optional lat/lon/QTH. Inbound lists from trunk peers or twin
   partners are republished via MQTT under `nodes/<peer_id>`, Redis under
@@ -412,7 +412,7 @@ satellite and vice versa, regardless of `CLUSTER_TGS` or prefix configuration.
 **Opt-in TG scope via `SATELLITE_FILTER`.** Setting `SATELLITE_FILTER` on the
 satellite side restricts the link to a chosen set of TGs in both directions:
 the satellite suppresses its own outbound events for non-matching TGs, and
-advertises the filter to the parent (via `MsgTrunkFilter`, type 122) so the
+advertises the filter to the parent (via `MsgPeerFilter`, type 122) so the
 parent also stops forwarding non-matching TGs back. Empty or absent means no
 filtering. The filter uses the shared TG-filter syntax (exact, `24*` prefix,
 `2427-2438` range, comma-separated).
