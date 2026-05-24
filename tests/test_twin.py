@@ -1131,6 +1131,114 @@ TOPIC_PREFIX=svxreflector/testnode
             recv1.close()
             recv2.close()
 
+    def test_X5_paired_inbound_owner_tg_reaches_monitoring_twin_clients(self):
+        """Mirror image of test_X4: refa transmits on a refa-OWNED TG (prefix
+        222) and the twins are mere subscribers. On each twin there is a
+        *selecting* client (currentTG = the TG) and a *passive monitoring*
+        client (currentTG = 0, monitor = [TG]). ALL four must receive UDP
+        audio + flush.
+
+        refa owns the TG, so it fans it out to the PAIRED twin pair on a single
+        sticky socket. The non-sticky twin only gets the audio via the
+        trunk->twin mirror.
+
+        Regression guard for a field report (255/256 twin+single deployment,
+        v1.3.14): TwinLink::handleMsgPeerAudio / handleMsgPeerFlush broadcast
+        with a selected-only TgFilter, whereas the direct TrunkLink path
+        delivers to selected OR (passive-observer) monitoring clients. So a
+        monitor-only listener on the NON-sticky twin is silently dropped, even
+        though the identical listener on the sticky twin hears fine via the
+        direct trunk path. A *selecting* listener hears on both twins (TgFilter
+        matches), which is why ownership/direction appears irrelevant until you
+        monitor instead of select.
+
+        Path under test (sticky lands on twin A; B is partner):
+          refa client UDP -> refa Reflector (owner of 222 TG)
+            -> TrunkLink::onLocalAudio (isPeerInterestedTG, PAIRED sticky pick)
+            -> twinA TrunkLink::handleMsgPeerAudio
+              -> broadcastUdpMsg (selected OR monitor) -> twinA sel + mon hear
+              -> forwardTrunkAudioToTwin -> MsgPeerAudio over [TWIN]
+                -> twinB TwinLink::handleMsgPeerAudio
+                  -> broadcastUdpMsg (selected-only!) -> twinB sel hears,
+                     twinB MONITOR is dropped  <-- the bug
+        """
+        tg = 22201  # prefix 222, owned by refa (NOT cluster TG 222000)
+        refa_port = T.twin_mapped_client_port("refa")
+        ref1_port = T.twin_mapped_client_port("ref1")
+        ref2_port = T.twin_mapped_client_port("ref2")
+
+        # Twin link must be up so the trunk->twin mirror has a destination.
+        wait_until(
+            lambda: "TWIN: hello from partner" in docker_compose_output(
+                "logs", "reflector-ref1"),
+            timeout=20.0,
+            msg="twin link not re-established on ref1",
+        )
+
+        sender = ClientPeer()
+        r1_sel, r1_mon = ClientPeer(), ClientPeer()
+        r2_sel, r2_mon = ClientPeer(), ClientPeer()
+        # (peer, client port, callsign, twin label, mode)
+        receivers = [
+            (r1_sel, ref1_port, "N0SEND", "ref1", "selecting"),
+            (r1_mon, ref1_port, "N0FOUR", "ref1", "monitoring"),
+            (r2_sel, ref2_port, "N0THRD", "ref2", "selecting"),
+            (r2_mon, ref2_port, "N0FIVE", "ref2", "monitoring"),
+        ]
+        try:
+            sender.connect(HOST, refa_port)
+            sender.authenticate(callsign=CLIENT_CALLSIGN,
+                                password=CLIENT_PASSWORD)
+            sender.setup_udp(udp_port=refa_port)
+            sender.select_tg(tg)
+
+            for peer, port, cs, _twin, mode in receivers:
+                peer.connect(HOST, port)
+                peer.authenticate(callsign=cs, password=CLIENT_PASSWORD)
+                peer.setup_udp(udp_port=port)
+                if mode == "selecting":
+                    peer.select_tg(tg)
+                else:
+                    peer.select_tg(0)        # passive observer
+                    peer.monitor_tgs([tg])
+
+            # Let TG selection + MsgPeerTgInterest (500 ms debounce) reach refa
+            # so the owner actually fans the TG out to the twin pair.
+            time.sleep(2.0)
+            for peer, *_ in receivers:
+                peer.recv_udp_all(timeout=0.3)
+
+            audio_payload = b"\xCA\xFE" * 80  # 160 bytes, distinctive
+            for _ in range(10):
+                sender.send_udp_audio(audio_payload)
+                time.sleep(0.02)
+            sender.send_udp_flush()
+
+            results = {}
+            for peer, _port, _cs, twin, mode in receivers:
+                msgs = peer.recv_udp_all(timeout=3.0)
+                audio = sum(1 for t, _ in msgs if t == UDP_AUDIO)
+                flush = sum(1 for t, _ in msgs if t == UDP_FLUSH)
+                results[(twin, mode)] = (audio, flush)
+
+            for (twin, mode), (audio, flush) in results.items():
+                self.assertGreater(
+                    audio, 0,
+                    f"{mode} client on {twin} received no UDP audio for "
+                    f"refa-owned TG {tg}. The non-sticky twin relies on the "
+                    f"trunk->twin audio mirror, which uses a selected-only "
+                    f"TgFilter and drops monitor-only listeners. "
+                    f"results={results}")
+                self.assertGreater(
+                    flush, 0,
+                    f"{mode} client on {twin} received no UDP flush for "
+                    f"refa-owned TG {tg} (trunk->twin flush mirror filter). "
+                    f"results={results}")
+        finally:
+            sender.close()
+            for peer, *_ in receivers:
+                peer.close()
+
 
 def docker_compose_output(*args) -> str:
     """Return the stdout+stderr of a docker-compose command as text."""

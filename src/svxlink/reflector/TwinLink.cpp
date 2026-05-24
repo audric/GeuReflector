@@ -618,9 +618,21 @@ void TwinLink::handleMsgPeerAudio(std::istream& is)
     return;
   }
   if (msg.audio().empty()) return;
+  const uint32_t tg = msg.tg();
   MsgUdpAudio udp_msg(msg.audio());
-  m_reflector->broadcastUdpMsg(udp_msg, ReflectorClient::TgFilter(msg.tg()));
-  m_reflector->forwardAudioToSatellitesExcept(nullptr, msg.tg(), msg.audio());
+  // Deliver to clients with this TG selected AND to passive monitors of it,
+  // matching TrunkLink::handleMsgPeerAudio. A plain selected-only TgFilter
+  // silently dropped monitor-only listeners on the non-sticky twin when the
+  // audio arrived via the trunk->twin mirror (see test_X5).
+  m_reflector->broadcastUdpMsg(udp_msg,
+      ReflectorClient::mkOrFilter(
+        ReflectorClient::TgFilter(tg),
+        ReflectorClient::mkAndFilter(
+          ReflectorClient::TgMonitorFilter(tg),
+          ReflectorClient::mkAndFilter(
+            ReflectorClient::PassiveObserverFilter(),
+            ReflectorClient::EarliestMonitorTalkerFilter(tg)))));
+  m_reflector->forwardAudioToSatellitesExcept(nullptr, tg, msg.audio());
 } /* TwinLink::handleMsgPeerAudio */
 
 
@@ -632,9 +644,18 @@ void TwinLink::handleMsgPeerFlush(std::istream& is)
     geulog::error("twin", "TWIN: Failed to unpack MsgPeerFlush");
     return;
   }
+  const uint32_t tg = msg.tg();
+  // Pairs with the audio mirror above — same selected-OR-monitor filter so a
+  // monitor-only listener on the non-sticky twin also gets the flush.
   m_reflector->broadcastUdpMsg(MsgUdpFlushSamples(),
-      ReflectorClient::TgFilter(msg.tg()));
-  m_reflector->forwardFlushToSatellitesExcept(nullptr, msg.tg());
+      ReflectorClient::mkOrFilter(
+        ReflectorClient::TgFilter(tg),
+        ReflectorClient::mkAndFilter(
+          ReflectorClient::TgMonitorFilter(tg),
+          ReflectorClient::mkAndFilter(
+            ReflectorClient::PassiveObserverFilter(),
+            ReflectorClient::EarliestMonitorTalkerFilter(tg)))));
+  m_reflector->forwardFlushToSatellitesExcept(nullptr, tg);
 } /* TwinLink::handleMsgPeerFlush */
 
 
