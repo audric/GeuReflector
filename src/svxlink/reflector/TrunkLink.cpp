@@ -2073,6 +2073,28 @@ void TrunkLink::handleMsgPeerNodeList(std::istream& is)
     }
     e.status = n.status;
     sanitizeJsonStrings(e.status);
+
+    // Trim non-permitted TGs out of the status blob's monitoredTGs array
+    // with the same per-link gate as the selected TG above. Otherwise a
+    // node kept because its *selected* TG is permitted could still surface
+    // filtered TGs it is only monitoring into /status, MQTT and the Redis
+    // mirror. Values stay in the peer's wire numbering, matching e.tg.
+    if (e.status.isMember("monitoredTGs") && e.status["monitoredTGs"].isArray())
+    {
+      Json::Value kept(Json::arrayValue);
+      for (const auto& mt : e.status["monitoredTGs"])
+      {
+        if (!mt.isUInt()) continue;                // drop malformed entries
+        const uint32_t tg = mt.asUInt();
+        if (isBlacklisted(tg) || isBlacklisted(mapTgIn(tg)) || !isAllowed(tg))
+        {
+          continue;
+        }
+        kept.append(tg);
+      }
+      e.status["monitoredTGs"] = kept;             // may be empty
+    }
+
     // Recipient-relative sat_id from the peer. Pass through as-is after
     // bounded sanitisation: empty = "on the peer itself", non-empty =
     // "on a satellite attached to the peer".

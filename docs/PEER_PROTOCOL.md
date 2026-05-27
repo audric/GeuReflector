@@ -554,7 +554,10 @@ entirely, so it never appears under `/status.trunks[<section>].nodes`, MQTT
 `nodes/<peer_id>`, or the Redis mirror — a filtered TG's roster is trimmed on
 this link just like its audio, even though the full snapshot is sent on the
 wire. (Satellite links filter on the *send* side via `SATELLITE_FILTER`; trunk
-links have no roster filtering on send, so the trim happens on receive.)
+links have no roster filtering on send, so the trim happens on receive.) The
+same gate is then applied to each kept entry's `monitoredTGs` array inside the
+status blob (see below), so a node retained because its *selected* TG is
+permitted cannot surface filtered TGs it is only monitoring.
 
 The optional `status_blobs[i]` field carries the source reflector's
 `m_status["nodes"][callsign]` JSON serialised verbatim — the same rich
