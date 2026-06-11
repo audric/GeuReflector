@@ -17,6 +17,126 @@ def print_error(stdscr, msg):
     stdscr.addstr(0, 0, msg)
     stdscr.refresh()
 
+def fmt_conn(obj):
+    """Summarize the active connection direction(s) of a peer link."""
+    ob = obj.get('outbound_connected')
+    ib = obj.get('inbound_connected')
+    if ob and ib:
+        return 'OUT+IN'
+    if ob:
+        return 'OUT'
+    if ib:
+        return 'IN'
+    return 'DOWN'
+
+def _fit_widths(widths, specs, target):
+    """Shrink the widest shrinkable column one char at a time until the row
+    fits in `target`, never going below each column's configured minimum."""
+    w = list(widths)
+    while sum(w) > target:
+        cand = [j for j, sp in enumerate(specs)
+                if sp.get('shrink') and w[j] > sp.get('min', 1)]
+        if not cand:
+            break
+        w[max(cand, key=lambda j: w[j])] -= 1
+    return w
+
+def _render_table(rows, specs, columns, indent="  "):
+    """Render rows (each (cells, attr)) into width-adaptive (text, attr) lines.
+
+    Columns are sized to their content, then shrinkable columns give back space
+    until the line fits the terminal width."""
+    if not rows:
+        return []
+    ncols = len(specs)
+    natural = [max(len(cells[j]) for cells, _ in rows) for j in range(ncols)]
+    avail = max(1, int(columns) - 1 - len(indent))
+    target = max(ncols, avail - (ncols - 1))   # one space between columns
+    w = _fit_widths(natural, specs, target)
+    out = []
+    for cells, attr in rows:
+        line = indent + " ".join(cells[j][:w[j]].ljust(w[j])
+                                 for j in range(ncols))
+        out.append((line[:avail + len(indent)].rstrip(), attr))
+    return out
+
+def build_links_panel(data, columns):
+    """Build the trunk/twin/satellite status panel as a list of (text, attr),
+    sizing every column to the terminal width given by `columns`."""
+    up = curses.color_pair(2)
+    down = curses.color_pair(1)
+    hdr = curses.color_pair(3) | curses.A_REVERSE | curses.A_BOLD
+    lines = []
+
+    trunks = data.get('trunks') or {}
+    if trunks:
+        lines.append(("TRUNKS", hdr))
+        specs = [
+            {'shrink': True, 'min': 6},    # name
+            {'shrink': True, 'min': 10},   # endpoint
+            {'shrink': False},             # state
+            {'shrink': True, 'min': 4},    # local prefix
+            {'shrink': True, 'min': 4},    # remote prefix
+            {'shrink': True, 'min': 6},    # talkers
+            {'shrink': False},             # nodes/muted
+        ]
+        rows = []
+        for name in sorted(trunks.keys()):
+            t = trunks[name]
+            endpoint = "%s:%s" % (t.get('host', ''), t.get('port', ''))
+            lp = ",".join(str(p) for p in t.get('local_prefix', []))
+            rp = ",".join(str(p) for p in t.get('remote_prefix', []))
+            talkers = t.get('active_talkers') or {}
+            talk = ",".join(sorted(talkers.keys(), key=int)) if talkers else "-"
+            nodes = "nodes:%d" % len(t.get('nodes') or [])
+            muted = len(t.get('muted') or [])
+            if muted:
+                nodes += " muted:%d" % muted
+            cells = [name, endpoint, fmt_conn(t),
+                     "L:" + lp, "R:" + rp, "talk:" + talk, nodes]
+            rows.append((cells, up if t.get('connected') else down))
+        lines += _render_table(rows, specs, columns)
+
+    twin = data.get('twin')
+    if twin:
+        lines.append(("TWIN", hdr))
+        specs = [
+            {'shrink': True, 'min': 10},   # endpoint
+            {'shrink': False},             # state
+            {'shrink': True, 'min': 8},    # priorities
+            {'shrink': False},             # nodes
+        ]
+        endpoint = "%s:%s" % (twin.get('host', ''), twin.get('port', ''))
+        cells = [endpoint, fmt_conn(twin),
+                 "prio:%s/%s" % (twin.get('priority', '?'),
+                                 twin.get('peer_priority', '?')),
+                 "nodes:%d" % len(twin.get('nodes') or [])]
+        rows = [(cells, up if twin.get('connected') else down)]
+        lines += _render_table(rows, specs, columns)
+
+    sats = data.get('satellites') or {}
+    if sats:
+        lines.append(("SATELLITES", hdr))
+        specs = [
+            {'shrink': True, 'min': 6},    # id
+            {'shrink': False},             # auth
+            {'shrink': True, 'min': 8},    # active tgs
+            {'shrink': False},             # nodes
+            {'shrink': True, 'min': 0},    # filter (optional)
+        ]
+        rows = []
+        for sid in sorted(sats.keys()):
+            s = sats[sid]
+            auth = bool(s.get('authenticated'))
+            active = ",".join(str(tg) for tg in (s.get('active_tgs') or [])) or "-"
+            cells = [sid, "AUTH" if auth else "noauth", "active:" + active,
+                     "nodes:%d" % len(s.get('nodes') or []),
+                     "filter:%s" % s['filter'] if s.get('filter') else ""]
+            rows.append((cells, up if auth else down))
+        lines += _render_table(rows, specs, columns)
+
+    return lines
+
 def draw_status(stdscr):
     # Get SvxReflector status
     try:
@@ -54,6 +174,15 @@ def draw_status(stdscr):
         header = header + (' ' * nspaces) + right_txt
     stdscr.addstr(0, 0, header, curses.color_pair(3) | curses.A_REVERSE | curses.A_BOLD)
 
+    # Build the trunk/twin/satellite panel and reserve the bottom rows for it,
+    # capping it so the node table always keeps at least one visible row.
+    panel_lines = build_links_panel(data, columns)
+    max_panel = max(0, rows - 2)
+    if len(panel_lines) > max_panel:
+        panel_lines = panel_lines[:max_panel]
+    panel_h = len(panel_lines)
+    node_bottom = rows - panel_h
+
     # Print all node lines
     def print_node_lines():
         line = 1
@@ -84,11 +213,17 @@ def draw_status(stdscr):
                     attrs = curses.color_pair(1)
                 stdscr.addnstr(line, 0, row_fmt % (callsign, tg, rx_name, siglev, monitored_tgs), int(columns)-1, attrs)
                 stdscr.clrtoeol()
-                if line >= rows-1:
+                if line >= node_bottom-1:
                     return
                 line = line + 1
     print_node_lines()
     stdscr.clrtobot()
+
+    # Draw the trunk/twin/satellite panel anchored to the bottom rows
+    for i, (text, attr) in enumerate(panel_lines):
+        stdscr.addnstr(node_bottom + i, 0, text, int(columns)-1, attr)
+        stdscr.clrtoeol()
+
     stdscr.refresh()
 
 
