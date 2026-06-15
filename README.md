@@ -292,6 +292,10 @@ interest, regardless of `ROUTABLE_PREFIXES`.
 (longest-prefix-match: the more specific routable prefix wins).  Point such a
 prefix at the reflector that actually owns those TGs.
 
+**Runtime note:** the mesh-wide prefix set used for transit is built at startup,
+so changing `ROUTABLE_PREFIXES` takes full effect on reflector restart (as with
+`REMOTE_PREFIX`).
+
 Example — four-node chain where `leaf` (prefix `222100`) needs to reach TG
 `263xx` owned by `far` (prefix `263`), transiting through both `natlit`
 (prefix `222`) and `natlde` (prefix `262`):
@@ -311,8 +315,10 @@ SECRET=secret_natlit_natlde
 REMOTE_PREFIX=262
 ROUTABLE_PREFIXES=263
 
-# On natlde — transit 263 back toward natlit (return path) and onward to far
-[TRUNK_NATLDE_NATLIT]
+# On natlde — transit 263 back toward natlit (return path).
+# The section name MUST be identical on both ends of a link (see section 4),
+# so natlde's trunk to natlit reuses the same [TRUNK_NATLIT_NATLDE] name.
+[TRUNK_NATLIT_NATLDE]
 HOST=natlit.example.com
 SECRET=secret_natlit_natlde
 REMOTE_PREFIX=222

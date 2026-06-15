@@ -221,8 +221,9 @@ participate in longest-prefix-match just like native prefixes:
 lowest-precedence prefix — a real prefix always wins — and is **never** added to
 `m_all_prefixes`.  As a result:
 
-- `isSharedTG` admits any TG via a `*`-configured link for local-client forwarding
-  and interest advertisement.
+- `isSharedTG` admits via a `*`-configured link any TG not claimed by a longer
+  real prefix in `m_all_prefixes`, for local-client forwarding and interest
+  advertisement (a real prefix always wins over the zero-length wildcard).
 - `hasPrefixRoute` is **not** set for `*`-matched TGs, so `shouldRelayInbound` does
   not trigger the gateway arm.  Wildcard-routed frames are delivered locally but
   never transited between trunks.
