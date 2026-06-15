@@ -316,6 +316,23 @@ bool TrunkLink::initialize(void)
     return false;
   }
 
+  // ROUTABLE_PREFIXES — optional additional prefixes (or "*") reachable VIA
+  // this peer beyond what it owns. "*" is a default route (regional leaves);
+  // explicit prefixes enable backbone transit. See docs/PEER_PROTOCOL.md.
+  std::string routable_str;
+  if (m_cfg.getValue(m_section, "ROUTABLE_PREFIXES", routable_str)
+      && !routable_str.empty())
+  {
+    for (const auto& p : splitPrefixes(routable_str))
+    {
+      if (p == "*") m_routable_wildcard = true;
+      else          m_routable_prefixes.push_back(p);
+    }
+    geulog::info("trunk", m_section, ": Routable prefixes: ",
+                 joinPrefixes(m_routable_prefixes),
+                 (m_routable_wildcard ? " *(default route)" : ""));
+  }
+
   // PEER_ID — name we advertise in our hello (defaults to section name).
   // Used by the receiving peer as the MQTT topic component for this link.
   if (!m_cfg.getValue(m_section, "PEER_ID", m_peer_id_config)
@@ -469,6 +486,22 @@ bool TrunkLink::isSharedTG(uint32_t tg) const
 
   return true;
 } /* TrunkLink::isSharedTG */
+
+
+bool TrunkLink::matchesRoutable(uint32_t tg) const
+{
+  if (m_routable_wildcard) return true;
+  const std::string s = std::to_string(tg);
+  for (const auto& prefix : m_routable_prefixes)
+  {
+    if (s.size() >= prefix.size() &&
+        s.compare(0, prefix.size(), prefix) == 0)
+    {
+      return true;
+    }
+  }
+  return false;
+} /* TrunkLink::matchesRoutable */
 
 
 bool TrunkLink::isOwnedTG(uint32_t tg) const
@@ -1951,6 +1984,8 @@ void TrunkLink::reloadConfig(void)
   m_allow_filter     = TgFilter{};
   m_tg_map_in.clear();
   m_tg_map_out.clear();
+  m_routable_prefixes.clear();
+  m_routable_wildcard = false;
 
   RedisStore* rs = m_reflector->redisStore();
 
@@ -1974,6 +2009,20 @@ void TrunkLink::reloadConfig(void)
   if (!allow_str.empty())
   {
     m_allow_filter = TgFilter::parse(allow_str);
+  }
+
+  if (!rs)
+  {
+    std::string routable_str;
+    if (m_cfg.getValue(m_section, "ROUTABLE_PREFIXES", routable_str)
+        && !routable_str.empty())
+    {
+      for (const auto& p : splitPrefixes(routable_str))
+      {
+        if (p == "*") m_routable_wildcard = true;
+        else          m_routable_prefixes.push_back(p);
+      }
+    }
   }
 
   if (rs) {
