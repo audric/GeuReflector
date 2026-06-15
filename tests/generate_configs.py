@@ -64,6 +64,8 @@ def generate_reflector_conf(name: str) -> str:
             f"SECRET={secret}",
             f"REMOTE_PREFIX={T.prefix_str(peer['prefix'])}",
         ]
+        # Optional per-peer routable/blacklist (used only by the ROUTABLE_REFLECTORS
+        # topology; inert for the default mesh).
         routable = r.get("routable", {}).get(peer_name)
         if routable:
             lines.append(f"ROUTABLE_PREFIXES={','.join(routable)}")
@@ -598,6 +600,8 @@ def generate_routable_reflector_conf(name: str) -> str:
             f"SECRET={secret}",
             f"REMOTE_PREFIX={T.prefix_str(peer['prefix'])}",
         ]
+        # Optional per-peer routable/blacklist (used only by the ROUTABLE_REFLECTORS
+        # topology; inert for the default mesh).
         routable = r.get("routable", {}).get(peer_name)
         if routable:
             lines.append(f"ROUTABLE_PREFIXES={','.join(routable)}")

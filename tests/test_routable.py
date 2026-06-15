@@ -33,7 +33,8 @@ from urllib.request import urlopen
 from urllib.error import URLError
 import json
 
-# Reuse the V2 mock client and wire helpers from test_trunk.py
+# Reuse the V2 mock client and wire helpers from test_trunk.py.
+# Also ensures tests/ is on the path for topology import below.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_trunk import (  # noqa: E402
     ClientPeer, UDP_AUDIO, UDP_FLUSH,
@@ -41,8 +42,6 @@ from test_trunk import (  # noqa: E402
     CLIENT2_CALLSIGN, CLIENT2_PASSWORD,
 )
 
-# Ensure tests/ is on the path so topology can be imported
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import topology as T
 
 # ---------------------------------------------------------------------------
@@ -52,9 +51,6 @@ import topology as T
 HOST = "127.0.0.1"
 
 ROUTABLE_NAMES = sorted(T.ROUTABLE_REFLECTORS)
-
-COMPOSE_FILE = "docker-compose.routable.yml"
-TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _http(name: str):
