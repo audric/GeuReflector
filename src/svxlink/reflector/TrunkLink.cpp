@@ -1080,7 +1080,8 @@ void TrunkLink::handleMsgPeerTalkerStart(std::istream& is)
     return;
   }
   bool mapped = m_tg_map_in.count(wire_tg) > 0;
-  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg))
+  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg) &&
+      !m_reflector->hasPrefixRoute(wire_tg) && !matchesRoutable(wire_tg))
   {
     return;
   }
@@ -1144,7 +1145,8 @@ void TrunkLink::handleMsgPeerTalkerStop(std::istream& is)
     return;
   }
   bool mapped = m_tg_map_in.count(wire_tg) > 0;
-  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg))
+  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg) &&
+      !m_reflector->hasPrefixRoute(wire_tg) && !matchesRoutable(wire_tg))
   {
     return;
   }
@@ -1180,7 +1182,8 @@ void TrunkLink::handleMsgPeerAudio(std::istream& is)
     return;
   }
   bool mapped = m_tg_map_in.count(wire_tg) > 0;
-  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg))
+  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg) &&
+      !m_reflector->hasPrefixRoute(wire_tg) && !matchesRoutable(wire_tg))
   {
     return;
   }
@@ -1247,7 +1250,8 @@ void TrunkLink::handleMsgPeerFlush(std::istream& is)
     return;
   }
   bool mapped = m_tg_map_in.count(wire_tg) > 0;
-  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg))
+  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg) &&
+      !m_reflector->hasPrefixRoute(wire_tg) && !matchesRoutable(wire_tg))
   {
     return;
   }
