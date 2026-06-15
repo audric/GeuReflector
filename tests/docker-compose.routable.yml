@@ -1,0 +1,90 @@
+services:
+  reflector-far:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    volumes:
+      - ./configs/reflector-far.conf:/etc/svxlink/svxreflector.conf:ro
+      - pki-routable-far:/var/lib/svxlink/pki
+    ports:
+      - "54300:5300/tcp"
+      - "54300:5300/udp"
+      - "54302:5302/tcp"
+      - "57080:8080/tcp"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/8080) 2>/dev/null'"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    networks:
+      - routable_mesh
+
+  reflector-leaf:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    volumes:
+      - ./configs/reflector-leaf.conf:/etc/svxlink/svxreflector.conf:ro
+      - pki-routable-leaf:/var/lib/svxlink/pki
+    ports:
+      - "51300:5300/tcp"
+      - "51300:5300/udp"
+      - "51302:5302/tcp"
+      - "54080:8080/tcp"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/8080) 2>/dev/null'"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    networks:
+      - routable_mesh
+
+  reflector-natlde:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    volumes:
+      - ./configs/reflector-natlde.conf:/etc/svxlink/svxreflector.conf:ro
+      - pki-routable-natlde:/var/lib/svxlink/pki
+    ports:
+      - "53300:5300/tcp"
+      - "53300:5300/udp"
+      - "53302:5302/tcp"
+      - "56080:8080/tcp"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/8080) 2>/dev/null'"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    networks:
+      - routable_mesh
+
+  reflector-natlit:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    volumes:
+      - ./configs/reflector-natlit.conf:/etc/svxlink/svxreflector.conf:ro
+      - pki-routable-natlit:/var/lib/svxlink/pki
+    ports:
+      - "52300:5300/tcp"
+      - "52300:5300/udp"
+      - "52302:5302/tcp"
+      - "55080:8080/tcp"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/8080) 2>/dev/null'"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    networks:
+      - routable_mesh
+
+volumes:
+  pki-routable-far:
+  pki-routable-leaf:
+  pki-routable-natlde:
+  pki-routable-natlit:
+
+networks:
+  routable_mesh:
+    driver: bridge

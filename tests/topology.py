@@ -303,3 +303,52 @@ def twin_mapped_satellite_port(name: str) -> int:
 def twin_trunks_for(name: str) -> list:
     """Return all TWIN_TRUNKS entries that involve this reflector."""
     return [t for t in TWIN_TRUNKS if name in t["peers"]]
+
+
+# ---------------------------------------------------------------------------
+# Routable-prefix chain (isolated topology, used by test_routable.py only)
+#
+#   leaf  222100*  --trunk-->  natlit 222  --trunk-->  natlde 262  --trunk-->  far 263
+#
+# `263` is a SIBLING of 222/262 (not nested), so it is unreachable without
+# routable prefixes. The leaf uses "*" (default route to its only uplink);
+# each backbone hop declares an explicit ROUTABLE_PREFIXES toward 263.
+#
+# blacklist on leaf's uplink vetoes TG 26307 exactly (test_02) while leaving
+# TG 26305 (test_01) unaffected — the two tests use distinct TG numbers.
+# ---------------------------------------------------------------------------
+ROUTABLE_REFLECTORS = {
+    # name    prefix        trunk_port_base  peers       routable (per-peer additions)
+    "leaf":   {"prefix": ["222100"], "trunk_port_base": 51000,
+               "peers": ["natlit"], "routable": {"natlit": ["*"]},
+               "blacklist": {"natlit": "26307"}},
+    "natlit": {"prefix": ["222"],  "trunk_port_base": 52000,
+               "peers": ["leaf", "natlde"], "routable": {"natlde": ["263"]}},
+    "natlde": {"prefix": ["262"],  "trunk_port_base": 53000,
+               "peers": ["natlit", "far"], "routable": {"natlit": ["263"]}},
+    "far":    {"prefix": ["263"],  "trunk_port_base": 54000,
+               "peers": ["natlde"]},
+}
+ROUTABLE_NAMES = list(ROUTABLE_REFLECTORS.keys())
+
+
+# ---------------------------------------------------------------------------
+# Routable topology helpers
+# ---------------------------------------------------------------------------
+
+def routable_mapped_client_port(name: str) -> int:
+    return ROUTABLE_REFLECTORS[name]["trunk_port_base"] + 300
+
+
+def routable_mapped_trunk_port(name: str) -> int:
+    return ROUTABLE_REFLECTORS[name]["trunk_port_base"] + 302
+
+
+def routable_mapped_http_port(name: str) -> int:
+    return ROUTABLE_REFLECTORS[name]["trunk_port_base"] + 3080
+
+
+def routable_trunk_secret(name_a: str, name_b: str) -> str:
+    """Shared secret for a routable-topology link (sorted pair)."""
+    pair = tuple(sorted([name_a, name_b]))
+    return f"secret_routable_{pair[0]}_{pair[1]}"

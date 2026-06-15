@@ -64,6 +64,12 @@ def generate_reflector_conf(name: str) -> str:
             f"SECRET={secret}",
             f"REMOTE_PREFIX={T.prefix_str(peer['prefix'])}",
         ]
+        routable = r.get("routable", {}).get(peer_name)
+        if routable:
+            lines.append(f"ROUTABLE_PREFIXES={','.join(routable)}")
+        blacklist = r.get("blacklist", {}).get(peer_name)
+        if blacklist:
+            lines.append(f"BLACKLIST_TGS={blacklist}")
 
     # Test harness trunk sections
     lines += [
@@ -546,6 +552,111 @@ networks:
 """
 
 
+def generate_routable_reflector_conf(name: str) -> str:
+    """Generate svxreflector.conf for one reflector in the ROUTABLE chain topology."""
+    r = T.ROUTABLE_REFLECTORS[name]
+
+    lines = [
+        "[GLOBAL]",
+        'TIMESTAMP_FORMAT="%c"',
+        f"LISTEN_PORT={T.INTERNAL_CLIENT_PORT}",
+        "TG_FOR_V1_CLIENTS=999",
+        f"LOCAL_PREFIX={T.prefix_str(r['prefix'])}",
+        f"TRUNK_LISTEN_PORT={T.INTERNAL_TRUNK_PORT}",
+        f"HTTP_SRV_PORT={T.INTERNAL_HTTP_PORT}",
+        "COMMAND_PTY=/dev/shm/reflector_ctrl",
+        "TRUNK_DEBUG=1",
+        "",
+        "[SERVER_CERT]",
+        f"COMMON_NAME={T.service_name(name)}",
+        "",
+        "[USERS]",
+    ]
+    groups_seen = set()
+    for client in T.TEST_CLIENTS:
+        lines.append(f"{client['callsign']}={client['group']}")
+        groups_seen.add(client['group'])
+    lines += [
+        "",
+        "[PASSWORDS]",
+    ]
+    for client in T.TEST_CLIENTS:
+        if client['group'] in groups_seen:
+            lines.append(f"{client['group']}={client['password']}")
+            groups_seen.discard(client['group'])
+
+    # Trunk sections for each peer in the routable chain
+    for peer_name in sorted(r.get("peers", [])):
+        peer = T.ROUTABLE_REFLECTORS[peer_name]
+        section = T.trunk_section_name(name, peer_name)
+        secret = T.routable_trunk_secret(name, peer_name)
+        lines += [
+            "",
+            f"[{section}]",
+            f"HOST={T.service_name(peer_name)}",
+            f"PORT={T.INTERNAL_TRUNK_PORT}",
+            f"SECRET={secret}",
+            f"REMOTE_PREFIX={T.prefix_str(peer['prefix'])}",
+        ]
+        routable = r.get("routable", {}).get(peer_name)
+        if routable:
+            lines.append(f"ROUTABLE_PREFIXES={','.join(routable)}")
+        blacklist = r.get("blacklist", {}).get(peer_name)
+        if blacklist:
+            lines.append(f"BLACKLIST_TGS={blacklist}")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
+def generate_routable_docker_compose() -> str:
+    """Generate docker-compose.routable.yml for the routable chain topology."""
+    services = []
+    volumes = []
+
+    for name in sorted(T.ROUTABLE_REFLECTORS):
+        svc = T.service_name(name)
+        client_port = T.routable_mapped_client_port(name)
+        trunk_port = T.routable_mapped_trunk_port(name)
+        http_port = T.routable_mapped_http_port(name)
+        vol = f"pki-routable-{name}"
+        volumes.append(vol)
+
+        services.append(f"""  {svc}:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    volumes:
+      - ./configs/{svc}.conf:/etc/svxlink/svxreflector.conf:ro
+      - {vol}:/var/lib/svxlink/pki
+    ports:
+      - "{client_port}:{T.INTERNAL_CLIENT_PORT}/tcp"
+      - "{client_port}:{T.INTERNAL_CLIENT_PORT}/udp"
+      - "{trunk_port}:{T.INTERNAL_TRUNK_PORT}/tcp"
+      - "{http_port}:{T.INTERNAL_HTTP_PORT}/tcp"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/{T.INTERNAL_HTTP_PORT}) 2>/dev/null'"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    networks:
+      - routable_mesh""")
+
+    services_block = "\n\n".join(services)
+    volumes_block = "\n".join(f"  {v}:" for v in volumes)
+
+    return f"""services:
+{services_block}
+
+volumes:
+{volumes_block}
+
+networks:
+  routable_mesh:
+    driver: bridge
+"""
+
+
 def main():
     # Topology selection: --topology twin  or  TOPOLOGY=twin env var
     topology = os.environ.get("TOPOLOGY", "default")
@@ -574,6 +685,23 @@ def main():
             f.write(generate_twin_docker_compose())
         print(f"  wrote docker-compose.test.yml")
 
+    elif topology == "routable":
+        configs_dir = os.path.join(script_dir, "configs")
+        os.makedirs(configs_dir, exist_ok=True)
+
+        print("Generating ROUTABLE topology configs...")
+        for name in sorted(T.ROUTABLE_REFLECTORS):
+            path = os.path.join(configs_dir, f"{T.service_name(name)}.conf")
+            content = generate_routable_reflector_conf(name)
+            with open(path, "w") as f:
+                f.write(content)
+            print(f"  wrote {os.path.relpath(path, script_dir)}")
+
+        compose_path = os.path.join(script_dir, "docker-compose.routable.yml")
+        with open(compose_path, "w") as f:
+            f.write(generate_routable_docker_compose())
+        print(f"  wrote docker-compose.routable.yml")
+
     else:
         configs_dir = os.path.join(script_dir, "configs")
         os.makedirs(configs_dir, exist_ok=True)
@@ -598,6 +726,21 @@ def main():
         with open(compose_path, "w") as f:
             f.write(generate_docker_compose())
         print(f"  wrote docker-compose.test.yml")
+
+        # Always regenerate the routable chain topology (separate compose file,
+        # no conflict with the default mesh).
+        print("Generating ROUTABLE topology configs...")
+        for name in sorted(T.ROUTABLE_REFLECTORS):
+            path = os.path.join(configs_dir, f"{T.service_name(name)}.conf")
+            content = generate_routable_reflector_conf(name)
+            with open(path, "w") as f:
+                f.write(content)
+            print(f"  wrote {os.path.relpath(path, script_dir)}")
+
+        routable_compose_path = os.path.join(script_dir, "docker-compose.routable.yml")
+        with open(routable_compose_path, "w") as f:
+            f.write(generate_routable_docker_compose())
+        print(f"  wrote docker-compose.routable.yml")
 
 
 if __name__ == "__main__":
