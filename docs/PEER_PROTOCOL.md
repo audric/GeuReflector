@@ -229,7 +229,10 @@ lowest-precedence prefix — a real prefix always wins — and is **never** adde
 - The **return leg** to a `*`-leaf relies on peer interest: because `*` matches every
   TG in the send/interest gate, the leaf advertises interest in the TG toward the
   parent (`MsgPeerTgInterest`), and the parent's `isPeerInterestedTG` carries the
-  return audio back without needing any routable entry on the parent side.
+  return audio back.  The leaf also accepts the returning audio via the wildcard match
+  (`matchesRoutable`) on its inbound-accept gate — because `*` is never added to
+  `m_all_prefixes`, `hasPrefixRoute` cannot serve this role, so the wildcard accept
+  is the mechanism that lets the leaf receive the return audio.
 
 A startup `WARNING` is emitted when `*` is set on a reflector with more than one
 trunk, as that is outside the intended single-uplink leaf pattern and may produce
@@ -239,10 +242,10 @@ unexpected fanout behaviour.
 logic.  A blacklisted TG is dropped before `isSharedTG`, `hasPrefixRoute`, or
 interest advertisement are consulted.
 
-**Ownership caveat.** A routable prefix must not be a longer decimal-string match
-of a TG the local reflector owns: `isSharedTG` (and `hasPrefixRoute`) would then
-route that TG away from the local owner.  Keep routable prefixes pointed at TGs
-owned by other reflectors — the same discipline that governs `REMOTE_PREFIX`.
+**Delegation note.** A routable prefix more specific than this reflector's own
+`LOCAL_PREFIX` intentionally delegates that sub-range elsewhere: longest-prefix-match
+honors it and the more specific routable prefix wins.  Point such a prefix at the
+reflector that actually owns those TGs.
 
 ### Cluster TGs
 

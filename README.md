@@ -287,36 +287,49 @@ pattern.
 logic — a blacklisted TG is never forwarded, accepted, or advertised as
 interest, regardless of `ROUTABLE_PREFIXES`.
 
-**Ownership caveat:** do not set a routable prefix that is a longer
-decimal-string match of a TG this reflector itself owns — the
-longest-prefix-match ownership check would then incorrectly route that TG
-away from the local owner.  Keep routable prefixes pointed at TGs owned by
-other reflectors (the same discipline that already applies to `REMOTE_PREFIX`).
+**Delegation note:** a routable prefix more specific than this reflector's own
+`LOCAL_PREFIX` intentionally delegates that sub-range elsewhere
+(longest-prefix-match: the more specific routable prefix wins).  Point such a
+prefix at the reflector that actually owns those TGs.
 
-Example — three-hop chain where `leaf` (prefix `240`) needs to reach TG `2630xx`
-owned by `far` (prefix `263`), transiting through `natl` (prefix `262`):
+Example — four-node chain where `leaf` (prefix `222100`) needs to reach TG
+`263xx` owned by `far` (prefix `263`), transiting through both `natlit`
+(prefix `222`) and `natlde` (prefix `262`):
 
 ```ini
-# On leaf — default route via the only uplink
-[TRUNK_LEAF_NATL]
-HOST=natl.example.com
-SECRET=secret_leaf_natl
-REMOTE_PREFIX=262
+# On leaf — default route via the only uplink toward natlit
+[TRUNK_LEAF_NATLIT]
+HOST=natlit.example.com
+SECRET=secret_leaf_natlit
+REMOTE_PREFIX=222
 ROUTABLE_PREFIXES=*
 
-# On natl — explicit transit toward 263 via the natlde link
-[TRUNK_NATL_NATLDE]
+# On natlit — explicit transit toward 263 via the natlde link
+[TRUNK_NATLIT_NATLDE]
 HOST=natlde.example.com
-SECRET=secret_natl_natlde
+SECRET=secret_natlit_natlde
 REMOTE_PREFIX=262
 ROUTABLE_PREFIXES=263
 
-# On natlde — native REMOTE_PREFIX=263 already covers the last hop
+# On natlde — transit 263 back toward natlit (return path) and onward to far
+[TRUNK_NATLDE_NATLIT]
+HOST=natlit.example.com
+SECRET=secret_natlit_natlde
+REMOTE_PREFIX=222
+ROUTABLE_PREFIXES=263
+
 [TRUNK_NATLDE_FAR]
 HOST=far.example.com
 SECRET=secret_natlde_far
 REMOTE_PREFIX=263
+# far owns 263 natively — no ROUTABLE_PREFIXES needed on this last hop
 ```
+
+The `*` wildcard on leaf's uplink also handles the return leg: leaf advertises
+interest in `263xx` toward natlit via `MsgPeerTgInterest`, and — on top of that
+— accepts the returning audio via the wildcard match (`matchesRoutable`) on its
+inbound-accept gate, since `*` is excluded from the mesh prefix set and
+`hasPrefixRoute` alone cannot serve this role.
 
 ### Network requirements
 

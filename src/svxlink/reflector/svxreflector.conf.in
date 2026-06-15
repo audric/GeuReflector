@@ -135,9 +135,9 @@ CERT_CA_HOOK=@SVX_SHARE_INSTALL_DIR@/ca-hook.py
 # sibling reflector (e.g. reach 263 via the 262 peer). "*" is never relayed
 # between trunks (loop-safe) and only affects this node's local clients;
 # explicit prefixes transit toward the owner and must be declared on each hop.
-# Keep routable prefixes pointed at TGs owned by OTHER reflectors (do not let a
-# routable prefix be a longer match of a TG this reflector owns).
-# BLACKLIST_TGS still vetoes regardless of routable settings.
+# A more specific routable prefix intentionally delegates that sub-range to the
+# declared peer (longest-prefix-match honors it); point it at the reflector
+# that actually owns those TGs. BLACKLIST_TGS still vetoes regardless.
 #ROUTABLE_PREFIXES=263        # backbone transit toward 263
 #ROUTABLE_PREFIXES=*          # regional leaf default route via this uplink
 
