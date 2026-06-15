@@ -2407,6 +2407,24 @@ void Reflector::initTrunkLinks(void)
     }
   }
 
+  // A "*" routable route on a node with >1 trunk is outside the intended
+  // regional-leaf pattern: "*" only affects this node's own local clients and
+  // is never transited (loop guard, spec section 5). Warn so it reads as
+  // likely misconfig.
+  if (m_trunk_links.size() > 1)
+  {
+    for (auto* l : m_trunk_links)
+    {
+      if (l->hasRoutableWildcard())
+      {
+        geulog::warn("trunk", l->section(),
+            ": ROUTABLE_PREFIXES contains '*' on a multi-trunk reflector — "
+            "'*' affects only local clients and is never relayed between "
+            "trunks. Intended for single-uplink regional leaves.");
+      }
+    }
+  }
+
   // Validate cluster TGs don't overlap with any prefix
   for (uint32_t tg : m_cluster_tgs)
   {

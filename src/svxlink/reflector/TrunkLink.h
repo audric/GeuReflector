@@ -138,6 +138,7 @@ class TrunkLink : public sigc::trackable
     static const time_t PEER_INTEREST_TIMEOUT_S = 600;
 
     bool isPaired(void) const { return m_paired; }
+    bool hasRoutableWildcard(void) const { return m_routable_wildcard; }
     bool hasInboundConnection(void) const
     {
       return m_paired ? !m_ib_cons.empty() : (m_inbound_con != nullptr);
