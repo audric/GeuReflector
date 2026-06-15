@@ -12,6 +12,8 @@ The integration tests verify the trunk protocol, satellite links, twin (HA-pair)
 
 A separate harness (`run_redis_tests.sh`) runs `test_redis.py` (13 tests) against a single-reflector + Redis stack. See [Redis Integration Tests](#redis-integration-tests) below.
 
+A separate harness runs `test_routable.py` (2 tests) against a dedicated routable-prefix topology. See [Routable Prefixes](#routable-prefixes) below.
+
 **Requirements:** Docker, Docker Compose, Python 3.7+ (stdlib only, no pip packages).
 
 ## Running
@@ -131,6 +133,7 @@ Internal port for `[TWIN]` is always 5304; satellite is 5303.
 | `docker-compose.test.yml` | Generated compose file (do not edit manually) |
 | `topology_redis.py` | Topology for the Redis test harness (single reflector + Redis). |
 | `generate_redis_configs.py` | Generates `configs-redis/*.conf` and `docker-compose.redis.yml`. |
+| `test_routable.py` | Routable-prefix tests (2 cases): explicit multi-hop transit (forward + return) and `*` wildcard with blacklist veto. Runs on a dedicated compose stack generated from `topology_routable.py`. |
 | `test_redis.py` | Redis-backed config-store tests (13 cases): users, trunk filters, live-state hashes, outage/resync, import idempotence, peer-node mirroring + sanitization, dynamic trunk add/remove. |
 | `run_redis_tests.sh` | Redis test orchestrator with `up`/`test`/`down`/`all` subcommands. |
 | `configs-redis/` | Generated Redis-harness configs (do not edit manually) |
@@ -263,6 +266,15 @@ each filter independently of the other trunk fixtures.
 |---|------|-----------------|
 | 46 | Inbound heartbeat timeout — no crash | A non-paired trunk link whose inbound socket is closed on heartbeat timeout must not abort the process on the next send (e.g. a `MsgPeerTgInterest`) |
 | 47 | Inbound recovers after timeout | After the reflector times out and drops a silent inbound peer, the same peer can reconnect its inbound leg |
+
+### Routable Prefixes
+
+Run separately via `test_routable.py` against a dedicated topology.
+
+| # | Test | What it verifies |
+|---|------|-----------------|
+| R1 | Explicit transit forward + return | A client on a leaf reflector activates a TG owned by a far reflector two hops away; audio traverses both transit hops (explicit `ROUTABLE_PREFIXES` on each intermediate trunk) and the return audio reaches the leaf via peer interest |
+| R2 | `*` wildcard + blacklist veto | A client on a `*`-configured leaf reaches a remote TG via its single uplink; a TG listed in `BLACKLIST_TGS` on the same link is dropped regardless of the wildcard, confirming blacklist-before-routable evaluation order |
 
 ### Twin Protocol (HA-pair)
 

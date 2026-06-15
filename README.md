@@ -253,6 +253,71 @@ link. For example, if reflectors A and B want to link, both configs must use the
 same name (e.g. `[TRUNK_AB]`). A connection from a peer whose section name does
 not match any local section will be rejected.
 
+### 5. Routable prefixes — hierarchical and non-full-mesh topologies (optional)
+
+In a standard full mesh every pair of reflectors has a direct trunk link, so
+each reflector can reach any TG via `REMOTE_PREFIX` alone.  Some deployments
+cannot or should not use a full mesh:
+
+- A **regional leaf** with a single uplink to a national backbone has no
+  direct path to sibling regions — it needs a default route via the parent.
+- A **transit backbone** node between two meshes may carry traffic for prefix
+  groups it does not own and that are not adjacent in `REMOTE_PREFIX`.
+
+`ROUTABLE_PREFIXES` (per `[TRUNK_x]` section, comma-separated) declares
+additional TG prefixes that are reachable *via* this peer beyond what
+`REMOTE_PREFIX` already covers.
+
+**Explicit prefixes** (e.g. `263`) extend the mesh-wide prefix set so the
+reflector will accept those TGs inbound and transit them onward toward the
+owner via the existing gateway fanout (`shouldRelayInbound`).  Each intermediate
+hop along a chain must declare the same routable prefix on the appropriate trunk
+— there is no automatic propagation.
+
+**`*` wildcard** acts as a default route for a single-uplink regional leaf: local
+clients can reach any TG via that uplink, and the return audio is accepted back.
+`*` is never relayed between trunks (loop-safe) and is not added to the
+mesh-wide prefix set, so it is invisible to gateway forwarding.  A `*` is a
+zero-length, lowest-precedence match — it never overrides a real prefix.  A
+startup `WARNING` is logged when `*` is set on a reflector that has more than
+one trunk, since that topology is outside the intended single-uplink leaf
+pattern.
+
+**Blacklist precedence:** `BLACKLIST_TGS` is evaluated before any routable
+logic — a blacklisted TG is never forwarded, accepted, or advertised as
+interest, regardless of `ROUTABLE_PREFIXES`.
+
+**Ownership caveat:** do not set a routable prefix that is a longer
+decimal-string match of a TG this reflector itself owns — the
+longest-prefix-match ownership check would then incorrectly route that TG
+away from the local owner.  Keep routable prefixes pointed at TGs owned by
+other reflectors (the same discipline that already applies to `REMOTE_PREFIX`).
+
+Example — three-hop chain where `leaf` (prefix `240`) needs to reach TG `2630xx`
+owned by `far` (prefix `263`), transiting through `natl` (prefix `262`):
+
+```ini
+# On leaf — default route via the only uplink
+[TRUNK_LEAF_NATL]
+HOST=natl.example.com
+SECRET=secret_leaf_natl
+REMOTE_PREFIX=262
+ROUTABLE_PREFIXES=*
+
+# On natl — explicit transit toward 263 via the natlde link
+[TRUNK_NATL_NATLDE]
+HOST=natlde.example.com
+SECRET=secret_natl_natlde
+REMOTE_PREFIX=262
+ROUTABLE_PREFIXES=263
+
+# On natlde — native REMOTE_PREFIX=263 already covers the last hop
+[TRUNK_NATLDE_FAR]
+HOST=far.example.com
+SECRET=secret_natlde_far
+REMOTE_PREFIX=263
+```
+
 ### Network requirements
 
 **Trunk links** require **mutual reachability**: each reflector both listens for

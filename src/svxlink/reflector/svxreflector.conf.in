@@ -129,6 +129,17 @@ CERT_CA_HOOK=@SVX_SHARE_INSTALL_DIR@/ca-hook.py
 # Optional bidirectional TG remap (peer_tg:local_tg, comma-separated).
 # Mapped TGs bypass the prefix routing check on this link.
 #TG_MAP=1:2624123,2:2624124
+# Optional additional prefixes routable VIA this peer, on top of REMOTE_PREFIX.
+# Use on a regional leaf's single uplink as "*" (default route to the parent),
+# or on a backbone trunk as explicit prefixes to enable multi-hop transit to a
+# sibling reflector (e.g. reach 263 via the 262 peer). "*" is never relayed
+# between trunks (loop-safe) and only affects this node's local clients;
+# explicit prefixes transit toward the owner and must be declared on each hop.
+# Keep routable prefixes pointed at TGs owned by OTHER reflectors (do not let a
+# routable prefix be a longer match of a TG this reflector owns).
+# BLACKLIST_TGS still vetoes regardless of routable settings.
+#ROUTABLE_PREFIXES=263        # backbone transit toward 263
+#ROUTABLE_PREFIXES=*          # regional leaf default route via this uplink
 
 ###############################################################################
 # Twin (HA-pair) link — see docs/TWIN_PROTOCOL.md

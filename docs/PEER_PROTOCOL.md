@@ -188,6 +188,62 @@ active QSO the fanout stays live indefinitely; on a TG that has been
 silent for ~10 minutes, the first PTT from a non-owner's client re-arms
 the fanout before the owner starts forwarding that TG back out.
 
+### Routable Prefixes (`ROUTABLE_PREFIXES`)
+
+Standard prefix routing requires either a direct `REMOTE_PREFIX` match or full-mesh
+connectivity.  `ROUTABLE_PREFIXES` (per `[TRUNK_x]` section, comma-separated) adds
+two complementary capabilities for hierarchical and non-full-mesh topologies.
+
+**Explicit prefixes** (e.g. `263`) are injected into `m_all_prefixes` at startup
+alongside `LOCAL_PREFIX` and all `REMOTE_PREFIX` values.  From that point they
+participate in longest-prefix-match just like native prefixes:
+
+- **Send / interest gate (`isSharedTG`).** When evaluating whether to forward a local
+  talker event or audio frame on a given trunk link, `isSharedTG` performs a
+  longest-prefix-match against the remote peer's combined prefix set (its
+  `REMOTE_PREFIX` plus its `ROUTABLE_PREFIXES`).  A TG that matches a routable
+  prefix on that link is forwarded toward the peer as if it matched `REMOTE_PREFIX`.
+- **Interest advertisement (`MsgPeerTgInterest`, type 129).** The same `isSharedTG`
+  gate controls which TGs are advertised in interest messages, so a routable TG's
+  interest reaches the next hop toward the owner without a PTT.
+- **Inbound accept gate.** On the receive side, `hasPrefixRoute(tg)` is true whenever
+  `m_all_prefixes` holds a prefix that matches the TG — including routable prefixes.
+  Combined with `isOwnedTG`, this covers accepting transit traffic for TGs this
+  reflector neither owns nor has as a direct `REMOTE_PREFIX`.
+- **Transit (`shouldRelayInbound` / `hasPrefixRoute`).** Because the routable prefix
+  is in `m_all_prefixes`, `hasPrefixRoute(tg)` returns true and
+  `shouldRelayInbound` triggers the gateway fanout arm, re-forwarding the frame via
+  `onLocal*` toward the actual owner.  Each intermediate hop in a chain must
+  declare the same routable prefix on its appropriate trunk; the declaration does
+  not propagate automatically.
+
+**`*` wildcard** is a zero-length default-route match.  It is treated as the
+lowest-precedence prefix — a real prefix always wins — and is **never** added to
+`m_all_prefixes`.  As a result:
+
+- `isSharedTG` admits any TG via a `*`-configured link for local-client forwarding
+  and interest advertisement.
+- `hasPrefixRoute` is **not** set for `*`-matched TGs, so `shouldRelayInbound` does
+  not trigger the gateway arm.  Wildcard-routed frames are delivered locally but
+  never transited between trunks.
+- The **return leg** to a `*`-leaf relies on peer interest: because `*` matches every
+  TG in the send/interest gate, the leaf advertises interest in the TG toward the
+  parent (`MsgPeerTgInterest`), and the parent's `isPeerInterestedTG` carries the
+  return audio back without needing any routable entry on the parent side.
+
+A startup `WARNING` is emitted when `*` is set on a reflector with more than one
+trunk, as that is outside the intended single-uplink leaf pattern and may produce
+unexpected fanout behaviour.
+
+**Blacklist precedence.** `BLACKLIST_TGS` is evaluated before any routable prefix
+logic.  A blacklisted TG is dropped before `isSharedTG`, `hasPrefixRoute`, or
+interest advertisement are consulted.
+
+**Ownership caveat.** A routable prefix must not be a longer decimal-string match
+of a TG the local reflector owns: `isSharedTG` (and `hasPrefixRoute`) would then
+route that TG away from the local owner.  Keep routable prefixes pointed at TGs
+owned by other reflectors — the same discipline that governs `REMOTE_PREFIX`.
+
 ### Cluster TGs
 
 Cluster TGs bypass prefix routing entirely.  A TG listed in `CLUSTER_TGS` is
