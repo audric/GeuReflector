@@ -121,6 +121,10 @@ class TrunkLink : public sigc::trackable
     {
       return m_remote_prefix;
     }
+    const std::vector<std::string>& routablePrefixes(void) const
+    {
+      return m_routable_prefixes;
+    }
     // Read-only view of TGs the peer is interested in (TalkerStart activity
     // or MsgPeerTgInterest advertisement). Used by Reflector to aggregate
     // interest for re-advertisement toward the prefix owner.
