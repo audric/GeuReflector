@@ -10,6 +10,20 @@ Trunk extension by IW1GEU.
 
 ---
 
+## Contents
+
+- [New to SvxLink reflectors? Start here](#new-to-svxlink-reflectors-start-here)
+- [Quick start — one standalone reflector](#quick-start--one-standalone-reflector)
+- [Which setup fits my deployment?](#which-setup-fits-my-deployment)
+- [Why trunking?](#why-trunking)
+- [What it adds over SvxReflector](#what-it-adds-over-svxreflector)
+- [How TG ownership works](#how-tg-ownership-works)
+- [Build](#build) · [Testing](#testing) · [Configuration](#configuration)
+- [HTTP Status](#http-status) · [Live user/password reload](#live-userpassword-reload)
+- [Documentation](#documentation) · [License](#license)
+
+---
+
 ## New to SvxLink reflectors? Start here
 
 If you already run SvxReflector, skip to [What it adds](#what-it-adds-over-svxreflector).
@@ -83,6 +97,22 @@ source.)
 
 Once one reflector works, [add trunk links](#4-add-a-trunk-section-per-peer) to
 connect it to others.
+
+---
+
+## Which setup fits my deployment?
+
+| Your situation | Setup | Where to look |
+|----------------|-------|---------------|
+| One reflector for a club or single site | Standalone (no trunks) | [Quick start](#quick-start--one-standalone-reflector) above |
+| Several regions in one country | Full trunk mesh | [Full-mesh example](#full-mesh-example--three-reflectors), [`docs/DEPLOYMENT_ITALY.md`](docs/DEPLOYMENT_ITALY.md) |
+| Many countries / a backbone | Full mesh + gateways + routable prefixes | [`docs/WW_DEPLOYMENT.md`](docs/WW_DEPLOYMENT.md), [Routable prefixes](#5-routable-prefixes--hierarchical-and-non-full-mesh-topologies-optional) |
+| Members behind NAT / no static IP | Satellites under a parent | [Satellite reflectors](#satellite-reflectors) |
+| Failover for a single reflector | Twin (HA) pair | [`docs/TWIN_PROTOCOL.md`](docs/TWIN_PROTOCOL.md) |
+
+For diagrams of each shape and a fuller decision guide, see
+[`docs/TOPOLOGY_EXAMPLES.md`](docs/TOPOLOGY_EXAMPLES.md). For *why* these pieces
+work the way they do, read [`docs/CONCEPTS.md`](docs/CONCEPTS.md).
 
 ---
 
@@ -716,6 +746,9 @@ The PTY path is set by `COMMAND_PTY` in `[GLOBAL]` (default
 
 ## Documentation
 
+- [`docs/CONCEPTS.md`](docs/CONCEPTS.md) — **start here after the glossary**: how
+  TG ownership, owner-relay, peer interest, cluster TGs, and talker arbitration
+  fit together, with a worked three-way-QSO example
 - [`docs/INSTALL.md`](docs/INSTALL.md) — how to build and install GeuReflector
   as a drop-in replacement for an existing SvxReflector installation
 - [`docs/DOCKER.md`](docs/DOCKER.md) — running GeuReflector in a Docker container
@@ -747,6 +780,9 @@ The PTY path is set by `COMMAND_PTY` in `[GLOBAL]` (default
 - [`docs/LOGGING.md`](docs/LOGGING.md) — leveled, per-subsystem,
   live-reloadable logger: `LOG=` config, PTY commands, Docker vs.
   `--logfile` deployments, migration from `TRUNK_DEBUG`
+- [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — symptom-first checklists
+  for trunks that won't connect, audio that won't cross, satellite/twin issues,
+  and flapping links
 - [`docs/MESSAGING_IDEAS.md`](docs/MESSAGING_IDEAS.md) — ideas for consuming
   MQTT events via Telegram, SMS, Discord, webhooks, dashboards, and more
 - [`docs/DESIGN_SATELLITE_AND_CLUSTER.md`](docs/DESIGN_SATELLITE_AND_CLUSTER.md) — design
