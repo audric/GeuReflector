@@ -253,6 +253,90 @@ link. For example, if reflectors A and B want to link, both configs must use the
 same name (e.g. `[TRUNK_AB]`). A connection from a peer whose section name does
 not match any local section will be rejected.
 
+### 5. Routable prefixes — hierarchical and non-full-mesh topologies (optional)
+
+In a standard full mesh every pair of reflectors has a direct trunk link, so
+each reflector can reach any TG via `REMOTE_PREFIX` alone.  Some deployments
+cannot or should not use a full mesh:
+
+- A **regional leaf** with a single uplink to a national backbone has no
+  direct path to sibling regions — it needs a default route via the parent.
+- A **transit backbone** node between two meshes may carry traffic for prefix
+  groups it does not own and that are not adjacent in `REMOTE_PREFIX`.
+
+`ROUTABLE_PREFIXES` (per `[TRUNK_x]` section, comma-separated) declares
+additional TG prefixes that are reachable *via* this peer beyond what
+`REMOTE_PREFIX` already covers.
+
+**Explicit prefixes** (e.g. `263`) extend the mesh-wide prefix set so the
+reflector will accept those TGs inbound and transit them onward toward the
+owner via the existing gateway fanout (`shouldRelayInbound`).  Each intermediate
+hop along a chain must declare the same routable prefix on the appropriate trunk
+— there is no automatic propagation.
+
+**`*` wildcard** acts as a default route for a single-uplink regional leaf: local
+clients can reach any TG via that uplink, and the return audio is accepted back.
+`*` is never relayed between trunks (loop-safe) and is not added to the
+mesh-wide prefix set, so it is invisible to gateway forwarding.  A `*` is a
+zero-length, lowest-precedence match — it never overrides a real prefix.  A
+startup `WARNING` is logged when `*` is set on a reflector that has more than
+one trunk, since that topology is outside the intended single-uplink leaf
+pattern.
+
+**Blacklist precedence:** `BLACKLIST_TGS` is evaluated before any routable
+logic — a blacklisted TG is never forwarded, accepted, or advertised as
+interest, regardless of `ROUTABLE_PREFIXES`.
+
+**Delegation note:** a routable prefix more specific than this reflector's own
+`LOCAL_PREFIX` intentionally delegates that sub-range elsewhere
+(longest-prefix-match: the more specific routable prefix wins).  Point such a
+prefix at the reflector that actually owns those TGs.
+
+**Runtime note:** the mesh-wide prefix set used for transit is built at startup,
+so changing `ROUTABLE_PREFIXES` takes full effect on reflector restart (as with
+`REMOTE_PREFIX`).
+
+Example — four-node chain where `leaf` (prefix `222100`) needs to reach TG
+`263xx` owned by `far` (prefix `263`), transiting through both `natlit`
+(prefix `222`) and `natlde` (prefix `262`):
+
+```ini
+# On leaf — default route via the only uplink toward natlit
+[TRUNK_LEAF_NATLIT]
+HOST=natlit.example.com
+SECRET=secret_leaf_natlit
+REMOTE_PREFIX=222
+ROUTABLE_PREFIXES=*
+
+# On natlit — explicit transit toward 263 via the natlde link
+[TRUNK_NATLIT_NATLDE]
+HOST=natlde.example.com
+SECRET=secret_natlit_natlde
+REMOTE_PREFIX=262
+ROUTABLE_PREFIXES=263
+
+# On natlde — transit 263 back toward natlit (return path).
+# The section name MUST be identical on both ends of a link (see section 4),
+# so natlde's trunk to natlit reuses the same [TRUNK_NATLIT_NATLDE] name.
+[TRUNK_NATLIT_NATLDE]
+HOST=natlit.example.com
+SECRET=secret_natlit_natlde
+REMOTE_PREFIX=222
+ROUTABLE_PREFIXES=263
+
+[TRUNK_NATLDE_FAR]
+HOST=far.example.com
+SECRET=secret_natlde_far
+REMOTE_PREFIX=263
+# far owns 263 natively — no ROUTABLE_PREFIXES needed on this last hop
+```
+
+The `*` wildcard on leaf's uplink also handles the return leg: leaf advertises
+interest in `263xx` toward natlit via `MsgPeerTgInterest`, and — on top of that
+— accepts the returning audio via the wildcard match (`matchesRoutable`) on its
+inbound-accept gate, since `*` is excluded from the mesh prefix set and
+`hasPrefixRoute` alone cannot serve this role.
+
 ### Network requirements
 
 **Trunk links** require **mutual reachability**: each reflector both listens for

@@ -316,6 +316,23 @@ bool TrunkLink::initialize(void)
     return false;
   }
 
+  // ROUTABLE_PREFIXES — optional additional prefixes (or "*") reachable VIA
+  // this peer beyond what it owns. "*" is a default route (regional leaves);
+  // explicit prefixes enable backbone transit. See docs/PEER_PROTOCOL.md.
+  std::string routable_str;
+  if (m_cfg.getValue(m_section, "ROUTABLE_PREFIXES", routable_str)
+      && !routable_str.empty())
+  {
+    for (const auto& p : splitPrefixes(routable_str))
+    {
+      if (p == "*") m_routable_wildcard = true;
+      else          m_routable_prefixes.push_back(p);
+    }
+    geulog::info("trunk", m_section, ": Routable prefixes: ",
+                 joinPrefixes(m_routable_prefixes),
+                 (m_routable_wildcard ? " *(default route)" : ""));
+  }
+
   // PEER_ID — name we advertise in our hello (defaults to section name).
   // Used by the receiving peer as the MQTT topic component for this link.
   if (!m_cfg.getValue(m_section, "PEER_ID", m_peer_id_config)
@@ -439,36 +456,65 @@ bool TrunkLink::isSharedTG(uint32_t tg) const
 {
   const std::string s = std::to_string(tg);
 
-  // Find the best (longest) matching remote prefix for this peer
-  size_t best_remote_len = 0;
+  // Best (longest) prefix THIS link claims: an owned remote prefix or an
+  // explicit routable prefix. The "*" wildcard is a zero-length candidate
+  // (lowest precedence), considered only when no real prefix matches.
+  size_t best_link_len = 0;
+  bool   matched       = false;
   for (const auto& prefix : m_remote_prefix)
   {
     if (s.size() >= prefix.size() &&
         s.compare(0, prefix.size(), prefix) == 0 &&
-        prefix.size() > best_remote_len)
+        prefix.size() > best_link_len)
     {
-      best_remote_len = prefix.size();
+      best_link_len = prefix.size();
+      matched = true;
     }
   }
-  if (best_remote_len == 0)
+  for (const auto& prefix : m_routable_prefixes)
   {
-    return false;  // no remote prefix matches at all
+    if (s.size() >= prefix.size() &&
+        s.compare(0, prefix.size(), prefix) == 0 &&
+        prefix.size() > best_link_len)
+    {
+      best_link_len = prefix.size();
+      matched = true;
+    }
+  }
+  if (!matched)
+  {
+    if (!m_routable_wildcard) return false;
+    best_link_len = 0;  // wildcard: zero-length, any real prefix beats it
   }
 
-  // Check if any prefix in the mesh is a longer match — if so, that other
-  // reflector is more specific and this TG doesn't belong to this peer.
+  // A longer prefix anywhere in the mesh is more specific — not ours.
   for (const auto& prefix : m_all_prefixes)
   {
-    if (prefix.size() > best_remote_len &&
+    if (prefix.size() > best_link_len &&
         s.size() >= prefix.size() &&
         s.compare(0, prefix.size(), prefix) == 0)
     {
-      return false;  // a longer prefix claims this TG
+      return false;
     }
   }
-
   return true;
 } /* TrunkLink::isSharedTG */
+
+
+bool TrunkLink::matchesRoutable(uint32_t tg) const
+{
+  if (m_routable_wildcard) return true;
+  const std::string s = std::to_string(tg);
+  for (const auto& prefix : m_routable_prefixes)
+  {
+    if (s.size() >= prefix.size() &&
+        s.compare(0, prefix.size(), prefix) == 0)
+    {
+      return true;
+    }
+  }
+  return false;
+} /* TrunkLink::matchesRoutable */
 
 
 bool TrunkLink::isOwnedTG(uint32_t tg) const
@@ -1034,7 +1080,8 @@ void TrunkLink::handleMsgPeerTalkerStart(std::istream& is)
     return;
   }
   bool mapped = m_tg_map_in.count(wire_tg) > 0;
-  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg))
+  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg) &&
+      !m_reflector->hasPrefixRoute(wire_tg) && !matchesRoutable(wire_tg))
   {
     return;
   }
@@ -1098,7 +1145,8 @@ void TrunkLink::handleMsgPeerTalkerStop(std::istream& is)
     return;
   }
   bool mapped = m_tg_map_in.count(wire_tg) > 0;
-  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg))
+  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg) &&
+      !m_reflector->hasPrefixRoute(wire_tg) && !matchesRoutable(wire_tg))
   {
     return;
   }
@@ -1134,7 +1182,8 @@ void TrunkLink::handleMsgPeerAudio(std::istream& is)
     return;
   }
   bool mapped = m_tg_map_in.count(wire_tg) > 0;
-  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg))
+  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg) &&
+      !m_reflector->hasPrefixRoute(wire_tg) && !matchesRoutable(wire_tg))
   {
     return;
   }
@@ -1201,7 +1250,8 @@ void TrunkLink::handleMsgPeerFlush(std::istream& is)
     return;
   }
   bool mapped = m_tg_map_in.count(wire_tg) > 0;
-  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg))
+  if (!mapped && !isOwnedTG(wire_tg) && !m_reflector->isClusterTG(wire_tg) &&
+      !m_reflector->hasPrefixRoute(wire_tg) && !matchesRoutable(wire_tg))
   {
     return;
   }
@@ -1951,6 +2001,8 @@ void TrunkLink::reloadConfig(void)
   m_allow_filter     = TgFilter{};
   m_tg_map_in.clear();
   m_tg_map_out.clear();
+  m_routable_prefixes.clear();
+  m_routable_wildcard = false;
 
   RedisStore* rs = m_reflector->redisStore();
 
@@ -1974,6 +2026,20 @@ void TrunkLink::reloadConfig(void)
   if (!allow_str.empty())
   {
     m_allow_filter = TgFilter::parse(allow_str);
+  }
+
+  if (!rs)
+  {
+    std::string routable_str;
+    if (m_cfg.getValue(m_section, "ROUTABLE_PREFIXES", routable_str)
+        && !routable_str.empty())
+    {
+      for (const auto& p : splitPrefixes(routable_str))
+      {
+        if (p == "*") m_routable_wildcard = true;
+        else          m_routable_prefixes.push_back(p);
+      }
+    }
   }
 
   if (rs) {

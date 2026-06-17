@@ -101,6 +101,9 @@ class TrunkLink : public sigc::trackable
     bool initialize(void);
 
     bool isSharedTG(uint32_t tg) const;
+    // True if tg matches an explicit ROUTABLE_PREFIXES entry on this link,
+    // or the "*" wildcard is set. Per-link; used by the inbound-accept gate.
+    bool matchesRoutable(uint32_t tg) const;
     void setAllPrefixes(const std::vector<std::string>& all_prefixes)
     {
       m_all_prefixes = all_prefixes;
@@ -118,6 +121,10 @@ class TrunkLink : public sigc::trackable
     {
       return m_remote_prefix;
     }
+    const std::vector<std::string>& routablePrefixes(void) const
+    {
+      return m_routable_prefixes;
+    }
     // Read-only view of TGs the peer is interested in (TalkerStart activity
     // or MsgPeerTgInterest advertisement). Used by Reflector to aggregate
     // interest for re-advertisement toward the prefix owner.
@@ -131,6 +138,7 @@ class TrunkLink : public sigc::trackable
     static const time_t PEER_INTEREST_TIMEOUT_S = 600;
 
     bool isPaired(void) const { return m_paired; }
+    bool hasRoutableWildcard(void) const { return m_routable_wildcard; }
     bool hasInboundConnection(void) const
     {
       return m_paired ? !m_ib_cons.empty() : (m_inbound_con != nullptr);
@@ -206,6 +214,8 @@ class TrunkLink : public sigc::trackable
     std::string         m_peer_id_received;  // peer's hello id (set on hello rx)
     std::vector<std::string> m_local_prefix;   // our authoritative TG prefixes
     std::vector<std::string> m_remote_prefix;  // peer's authoritative TG prefixes
+    std::vector<std::string> m_routable_prefixes;  // explicit ROUTABLE_PREFIXES (non-"*")
+    bool                     m_routable_wildcard = false;  // "*" present
     uint32_t            m_priority;       // our tie-break nonce (random, set once)
     uint32_t            m_peer_priority;  // peer's nonce, from MsgPeerHello
     FramedTcpClient     m_con;            // outbound client connection

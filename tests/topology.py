@@ -303,3 +303,69 @@ def twin_mapped_satellite_port(name: str) -> int:
 def twin_trunks_for(name: str) -> list:
     """Return all TWIN_TRUNKS entries that involve this reflector."""
     return [t for t in TWIN_TRUNKS if name in t["peers"]]
+
+
+# ---------------------------------------------------------------------------
+# Routable-prefix chain (isolated topology, used by test_routable.py only)
+#
+#   leaf  222100  --trunk-->  natlit 222  --trunk-->  natlde 262  --trunk-->  far 263
+#
+# `263` is a SIBLING prefix to 222/262 (not nested), so it is unreachable
+# from leaf without explicit routable-prefix declarations.
+#
+# Forward path (leaf → far):
+#   leaf uses ROUTABLE_PREFIXES=* toward natlit — default-route all non-local
+#   TGs up the only uplink.
+#   natlit uses ROUTABLE_PREFIXES=263 toward natlde — transits 263xx onward.
+#   natlde→far is native: far owns 263, so no routable entry is needed.
+#
+# Return path (far → leaf):
+#   far→natlde is native (far originates, natlde accepts as trunk owner relay).
+#   natlde uses ROUTABLE_PREFIXES=263 toward natlit — transits 263xx back up.
+#     (This is the return-path hop; the entry points upstream, not downstream.)
+#   natlit→leaf final hop is carried by PEER-INTEREST: leaf's ROUTABLE_PREFIXES=*
+#   caused it to advertise interest in 263xx up to natlit via MsgPeerTgInterest,
+#   so natlit forwards via isPeerInterestedTG — no routable entry on natlit
+#   toward leaf is needed or correct.
+#   leaf ACCEPTS the return audio because its uplink has the `*` wildcard
+#   (matchesRoutable), not because leaf has a routable entry pointing at itself.
+#
+# blacklist on leaf's uplink vetoes TG 26307 exactly (test_02) while leaving
+# TG 26305 (test_01) unaffected — the two tests use distinct TG numbers.
+# ---------------------------------------------------------------------------
+ROUTABLE_REFLECTORS = {
+    # name    prefix        trunk_port_base  peers       routable (per-peer additions)
+    "leaf":   {"prefix": ["222100"], "trunk_port_base": 51000,
+               "peers": ["natlit"], "routable": {"natlit": ["*"]},
+               "blacklist": {"natlit": "26307"}},
+    "natlit": {"prefix": ["222"],  "trunk_port_base": 52000,
+               "peers": ["leaf", "natlde"], "routable": {"natlde": ["263"]}},
+    # return-path hop: ROUTABLE_PREFIXES=263 toward natlit transits 263xx back
+    # up the chain (far→natlde native; natlit→leaf via peer-interest, not routable)
+    "natlde": {"prefix": ["262"],  "trunk_port_base": 53000,
+               "peers": ["natlit", "far"], "routable": {"natlit": ["263"]}},
+    "far":    {"prefix": ["263"],  "trunk_port_base": 54000,
+               "peers": ["natlde"]},
+}
+
+
+# ---------------------------------------------------------------------------
+# Routable topology helpers
+# ---------------------------------------------------------------------------
+
+def routable_mapped_client_port(name: str) -> int:
+    return ROUTABLE_REFLECTORS[name]["trunk_port_base"] + 300
+
+
+def routable_mapped_trunk_port(name: str) -> int:
+    return ROUTABLE_REFLECTORS[name]["trunk_port_base"] + 302
+
+
+def routable_mapped_http_port(name: str) -> int:
+    return ROUTABLE_REFLECTORS[name]["trunk_port_base"] + 3080
+
+
+def routable_trunk_secret(name_a: str, name_b: str) -> str:
+    """Shared secret for a routable-topology link (sorted pair)."""
+    pair = tuple(sorted([name_a, name_b]))
+    return f"secret_routable_{pair[0]}_{pair[1]}"

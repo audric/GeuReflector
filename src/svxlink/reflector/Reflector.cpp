@@ -2368,6 +2368,23 @@ void Reflector::initTrunkLinks(void)
         if (!token.empty()) all_prefixes.push_back(token);
       }
     }
+
+    // Explicit routable prefixes are reachable via this peer and must
+    // participate in mesh-wide longest-prefix-match + hasPrefixRoute so
+    // transit fanout fires for them. "*" is intentionally NOT added — a
+    // wildcard route never transits (loop guard, spec section 5).
+    std::string routable_str;
+    m_cfg->getValue(section, "ROUTABLE_PREFIXES", routable_str);
+    {
+      std::istringstream rs(routable_str);
+      std::string token;
+      while (std::getline(rs, token, ','))
+      {
+        token.erase(0, token.find_first_not_of(" \t"));
+        token.erase(token.find_last_not_of(" \t") + 1);
+        if (!token.empty() && token != "*") all_prefixes.push_back(token);
+      }
+    }
   }
 
   // Cache the mesh-wide prefix set for owner-relay decisions.
@@ -2387,6 +2404,24 @@ void Reflector::initTrunkLinks(void)
       geulog::error("core", "Failed to initialize trunk link '",
                     section, "'");
       delete link;
+    }
+  }
+
+  // A "*" routable route on a node with >1 trunk is outside the intended
+  // regional-leaf pattern: "*" only affects this node's own local clients and
+  // is never transited (loop guard, spec section 5). Warn so it reads as
+  // likely misconfig.
+  if (m_trunk_links.size() > 1)
+  {
+    for (auto* l : m_trunk_links)
+    {
+      if (l->hasRoutableWildcard())
+      {
+        geulog::warn("trunk", l->section(),
+            ": ROUTABLE_PREFIXES contains '*' on a multi-trunk reflector — "
+            "'*' affects only local clients and is never relayed between "
+            "trunks. Intended for single-uplink regional leaves.");
+      }
     }
   }
 
@@ -3099,6 +3134,10 @@ std::vector<std::string> Reflector::collectAllTrunkPrefixes(void) const
   std::vector<std::string> all;
   for (const auto* link : m_trunk_links) {
     for (const std::string& p : link->remotePrefix()) all.push_back(p);
+    // Explicit routable prefixes (never "*" — m_routable_prefixes excludes it)
+    // must also join the mesh-wide set so hasPrefixRoute / shouldRelayInbound
+    // fire correctly for transit on reload.
+    for (const std::string& p : link->routablePrefixes()) all.push_back(p);
   }
   return all;
 }
