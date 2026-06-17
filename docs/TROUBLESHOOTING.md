@@ -79,10 +79,15 @@ Usually an asymmetry between the two ends:
 - **Interest is one-sided.** If only one side has a client selecting the TG, only
   that side has advertised interest. The other direction starts flowing once a
   client there selects/keys the TG.
-- **Multi-hop transit:** each intermediate hop must declare the same
-  `ROUTABLE_PREFIXES` for the forward path; the return path relies on interest
-  (and, for a single-uplink leaf, the `*` wildcard). Re-check every hop in the
-  chain — there is no automatic propagation.
+- **Multi-hop transit:** `ROUTABLE_PREFIXES` is configured **per link and per
+  direction** — it is *not* exchanged with the peer and need *not* match on both
+  ends of a link (only the section *name* and `SECRET` must match). For audio to
+  cross a chain, every hop that must carry a prefix declares it on the trunk
+  facing the *next hop toward the owner*; there is no automatic propagation. The
+  return leg needs the downstream hop either to list that prefix in its own
+  `ROUTABLE_PREFIXES` toward you, or to have live peer interest in the TG (a
+  single-uplink `*` leaf relies on interest plus its wildcard accept). Re-check
+  every hop in the chain, in both directions.
 
 ---
 
