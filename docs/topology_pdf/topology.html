@@ -656,6 +656,14 @@ the <code>100–199</code> / <code>800–999</code> rule.</p>
 <h3 style="page-break-after: avoid;">Properties that hold across all variants</h3>
 <ul style="page-break-inside: avoid;">
   <li>Longest-prefix-match decides the owner of any given TG.</li>
+  <li>Routing follows the <strong>number, not its length</strong>: a TG goes to
+      the owner of its longest matching prefix that exists in the mesh (e.g.
+      <code>22210</code>&rarr;<code>222</code>, <code>26201</code>&rarr;<code>262</code>,
+      when those country prefixes are owned). A TG matching <strong>no</strong>
+      configured prefix has no owner and stays <strong>local-only</strong> —
+      it relays among the originating reflector's own nodes but is never trunked.
+      Local TG numbering is the operator's choice; only numbers under the agreed
+      prefix scheme are reachable across the mesh.</li>
   <li>Trunk relay is single-hop. Satellite mirror is independent of that
       rule.</li>
   <li>Owner fanout is gated by <strong>peer interest</strong> with a

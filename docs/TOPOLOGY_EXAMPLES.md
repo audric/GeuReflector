@@ -487,6 +487,14 @@ recommendation; new cluster-TG assignments should follow the `100–199` /
 - Longest-prefix-match decides the owner of any given TG, but only against
   the prefixes a reflector has been explicitly configured to trunk to —
   prefixes are not gossiped.
+- Routing follows the **number, not its length**: a TG goes to the owner of
+  its longest matching prefix *that exists in the mesh* (e.g. `22210`→`222`,
+  `26201`→`262`, when those country prefixes are owned), while a TG that
+  matches **no** configured prefix has no owner and stays **local-only** —
+  it works among the originating reflector's own nodes but is never trunked.
+  Local TG numbering is thus the operator's choice; only numbers under the
+  agreed prefix scheme are reachable across the mesh (and a "local" number
+  that happens to match a prefix *will* be routed to that owner).
 - Trunk relay is single-hop. Satellite mirror is independent of that rule.
 - Owner fanout is gated by **peer interest** with a 10-minute idle window.
   Interest is registered the first time a peer transmits on a TG.

@@ -223,6 +223,28 @@ When a client on Reflector 1 joins TG 25, Reflector 1 forwards the conversation
 over its trunk to Reflector 2 (which owns the "2" prefix). Clients on both
 reflectors hear the same audio on TG 25 with no extra configuration.
 
+**Local numbering is the operator's choice — but routing follows the number.** A
+reflector does not force its nodes onto the prefix scheme; nodes may select *any*
+TG number. Routing is then decided **solely by longest-prefix-match on the number
+itself, regardless of its length**:
+
+- A number whose leading digits match a prefix **that some reflector in the
+  mesh actually owns** is routed to that owner — short or long, and even if the
+  match was unintended. If a reflector owns Italy's prefix `222`, then `22210`
+  routes to it; if another owns Germany's `262`, then `26201` routes there.
+- A number that matches **no** prefix has no owner: it works locally among that
+  reflector's own nodes (exactly like stock SvxReflector) but is **never sent
+  over a trunk** — it is invisible to the mesh and unreachable by international
+  traffic.
+
+So to keep a talk group **local**, pick a number that matches no mesh prefix
+(in a typical MCC scheme, countries occupy `200`–`799`, so short numbers like
+`1`–`199` usually stay local — but only because nothing owns that prefix). To be
+**reachable** internationally, use a TG under the agreed prefix scheme (your
+country's MCC — see [`docs/MCC_COUNTRY_CODES.md`](docs/MCC_COUNTRY_CODES.md)).
+Conversely, beware that a "local" number that happens to match a configured
+prefix *will* be sent to that owner.
+
 ---
 
 ## Build

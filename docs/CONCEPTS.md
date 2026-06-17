@@ -41,7 +41,7 @@ for declaring such delegated routes.)
 
 ## 2. What happens when a client keys up
 
-A client (an SvxLink node) selects a TG and presses PTT. Two cases:
+A client (an SvxLink node) selects a TG and presses PTT. Three cases:
 
 - **The TG is owned locally.** The reflector behaves exactly like stock
   SvxReflector: it relays the audio to every other local client on that TG. If
@@ -50,9 +50,33 @@ A client (an SvxLink node) selects a TG and presses PTT. Two cases:
 - **The TG is owned by a peer.** The reflector forwards the audio over the trunk
   to the owning peer (selected by longest-prefix-match). The owner then relays
   it — see below.
+- **The TG matches no prefix in the mesh.** It has no owner, so it is **never
+  sent over any trunk** (`isSharedTG` finds no link to forward on). It still
+  relays locally among that reflector's own clients, exactly like stock
+  SvxReflector — it is simply a **local-only** talk group.
 
 The client never knows or cares which reflector owns the TG. That is the whole
 point: nodes stay unmodified.
+
+### Local numbering is opt-in — but the number decides routing
+
+A reflector does **not** impose the prefix convention on its nodes; a node may
+pick any TG number. What matters is that routing is decided **solely by
+longest-prefix-match on the number, regardless of its length**:
+
+- Conforming numbers are routable — wherever their prefix points, provided that
+  prefix is owned by a reflector in the mesh. This is length-independent: if
+  Italy's `222` is owned, `22210` routes to its owner just as surely as `222`
+  itself does; likewise `26201` routes to the owner of Germany's `262`.
+- A number that matches no mesh prefix has no owner and stays **local-only**
+  (e.g. a short `1`–`199` TG in a typical MCC scheme, where countries live in
+  `200`–`799` — it stays local only because nothing owns that prefix).
+
+So: **obey the convention to be reachable; use a non-matching number to stay
+local.** This lets a reflector keep private local TGs alongside its routable,
+mesh-facing ones — with one caveat: a number you *intended* as local but that
+happens to match a configured prefix **will** be sent to that owner. The number
+is the routing key; there is no separate "make this local" switch.
 
 ---
 
