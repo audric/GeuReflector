@@ -361,6 +361,24 @@ link. For example, if reflectors A and B want to link, both configs must use the
 same name (e.g. `[TRUNK_AB]`). A connection from a peer whose section name does
 not match any local section will be rejected.
 
+**International naming standard.** For links between countries, name the section
+`TRUNK_<ISO>_<ISO>` using each country's ISO 3166-1 alpha-2 code, with the two
+codes in **alphabetical order**:
+
+```ini
+# Germany (DE) <-> France (FR): "DE" sorts before "FR"
+[TRUNK_DE_FR]
+
+# Italy (IT) <-> Germany (DE): alphabetical -> DE before IT
+[TRUNK_DE_IT]
+```
+
+Alphabetical order makes the name deterministic, so both sysops independently
+arrive at the *same* section name with no "my country goes first" dispute. (For
+sub-national links, any agreed-upon shared name works — see
+[`docs/WW_DEPLOYMENT.md`](docs/WW_DEPLOYMENT.md) for the full international
+convention.)
+
 ### 5. Routable prefixes — hierarchical and non-full-mesh topologies (optional)
 
 In a standard full mesh every pair of reflectors has a direct trunk link, so

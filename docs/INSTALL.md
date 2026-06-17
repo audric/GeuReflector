@@ -188,9 +188,11 @@ REMOTE_PREFIX=240
 ```
 
 - **The section name must be identical on both sides.** Both sysops must agree
-  on a shared name (e.g. `TRUNK_DE_SE` for the link between Germany (`262`)
-  and Sweden (`240`); ISO 3166-1 alpha-2 codes in alphabetical order is a
-  readable convention).
+  on a shared name. For international links the standard is
+  `TRUNK_<ISO>_<ISO>` using each country's ISO 3166-1 alpha-2 code, with the two
+  codes in **alphabetical order** — e.g. `TRUNK_DE_SE` for Germany (`262`) and
+  Sweden (`240`). Sorting alphabetically makes the name deterministic, so both
+  sysops reach the same name independently with no "my country first" dispute.
 - `PORT` defaults to `5302` if omitted.
 - Both sides must use the same `SECRET`.
 - `REMOTE_PREFIX` also accepts a comma-separated list.
