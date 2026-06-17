@@ -280,6 +280,54 @@ Tutti i reflector nella mesh devono avere lo stesso valore di `CLUSTER_TGS`.
 
 ---
 
+## Raggiungere i TG internazionali (opzionale)
+
+La mesh sopra descritta è **puramente nazionale**: ogni regione raggiunge
+direttamente ogni altra regione italiana, quindi non serve alcun instradamento
+aggiuntivo *all'interno* dell'Italia. Ma la tabella dei prefissi di una regione
+contiene solo prefissi italiani `222…`, perciò un TG di proprietà **estera**
+(lo spazio MCC di un altro paese, es. Germania `262`) non corrisponde a nulla e
+resta locale. Per consentire ai client italiani di raggiungere TG esteri servono
+due elementi:
+
+1. **Designare un gateway internazionale.** Si sceglie un reflector che entra
+   nella mesh internazionale collegandosi in trunk ai paesi esteri. Questi link
+   vanno nominati con lo standard internazionale `TRUNK_<ISO>_<ISO>`, codici ISO
+   in ordine alfabetico — es. `TRUNK_DE_IT` verso la Germania, `TRUNK_FR_IT`
+   verso la Francia (vedi il README, sezione 4).
+
+2. **Puntare ogni regione al gateway con `ROUTABLE_PREFIXES`.** Nella sezione
+   trunk di ogni regione *rivolta al gateway*, si dichiarano i prefissi esteri
+   come raggiungibili tramite esso:
+
+   ```ini
+   # Su ogni regione, nella sezione trunk rivolta al gateway internazionale:
+   ROUTABLE_PREFIXES=262,208      # DE, FR, … raggiungibili tramite il gateway
+   ```
+
+Ora un client regionale che trasmette ad es. su `26201` (un TG tedesco)
+corrisponde al routable `262` sul trunk verso il gateway: la regione lo inoltra
+al gateway, che lo rilancia nella mesh internazionale verso la Germania. L'audio
+di ritorno torna indietro tramite il peer interest.
+
+Note:
+
+- Ogni prefisso che si vuole raggiungere va elencato esplicitamente — **non**
+  c'è propagazione automatica. Una regione che **non** fa parte della mesh
+  nazionale (un reflector il cui unico trunk è il gateway) può invece impostare
+  `ROUTABLE_PREFIXES=*`, una rotta di default verso tutto tramite quell'unico
+  uplink. **Non** usare `*` su una regione con più trunk (genera un avviso
+  all'avvio).
+- `BLACKLIST_TGS` viene valutato per primo: un TG in blacklist non viene mai
+  inoltrato, indipendentemente da `ROUTABLE_PREFIXES`.
+
+Vedi la sezione
+[Routable prefixes](../README.md#5-routable-prefixes--hierarchical-and-non-full-mesh-topologies-optional)
+del README e [`TOPOLOGY_EXAMPLES.md`](TOPOLOGY_EXAMPLES.md) §2 per il meccanismo
+completo e i diagrammi.
+
+---
+
 ## Conversazioni simultanee
 
 Non esiste **nessun limite fisso** al numero di QSO simultanei sul trunk. Il trunk

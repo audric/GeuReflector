@@ -16,19 +16,35 @@ minimal `debian:bookworm-slim` image.
 
 ## Quick start
 
-### 1. Prepare the config directory
+### 1. Create the config file *first*
+
+`docker-compose.yml` bind-mounts `./config/svxreflector.conf` into the container
+as a file. **You must create that file before the first `docker compose up`.**
+
+> **Gotcha:** if `./config/svxreflector.conf` does not exist when the container
+> starts, Docker silently creates it as an **empty directory**, and the
+> reflector then fails to start. If that happens, stop the stack, delete the
+> stray directory (`rm -rf config/svxreflector.conf`), create the file as below,
+> and start again.
+
+The repository does not ship a ready-to-run config — it ships the template
+`src/svxlink/reflector/svxreflector.conf.in`. Start from that:
 
 ```bash
-mkdir config
-cp /path/to/your/svxreflector.conf config/svxreflector.conf
+mkdir -p config
+cp src/svxlink/reflector/svxreflector.conf.in config/svxreflector.conf
+# then edit config/svxreflector.conf
 ```
 
-The config file is mounted read-only into the container. Edit it on the host;
-restart the container to apply changes (or use the PTY interface for live
-user/password reloads — see below).
+At minimum set `LISTEN_PORT`, add a `[USERS]`/`[PASSWORDS]` entry for your node,
+and (for trunking) `LOCAL_PREFIX` plus the `[TRUNK_x]` sections. See the
+[README quick start](../README.md#quick-start--one-standalone-reflector) for a
+minimal standalone config and [`docs/INSTALL.md`](INSTALL.md) for the trunking
+additions.
 
-At minimum, add `LOCAL_PREFIX` and any `[TRUNK_x]` sections you need. See
-[`docs/INSTALL.md`](INSTALL.md) for the config additions required for trunking.
+The file is mounted read-only; edit it on the host and restart the container to
+apply changes (or use the PTY interface for live user/password reloads — see
+below).
 
 ### 2. Build and start
 

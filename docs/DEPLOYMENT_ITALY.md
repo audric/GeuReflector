@@ -273,6 +273,51 @@ All reflectors in the mesh must list the same `CLUSTER_TGS` value.
 
 ---
 
+## Reaching international TGs (optional)
+
+The mesh above is **purely national** — every region reaches every other Italian
+region directly, so no extra routing is needed *inside* Italy. But a region's
+prefix table only contains Italian `222…` prefixes, so a TG owned **abroad**
+(another country's MCC space, e.g. Germany `262`) matches nothing and stays
+local. To let Italian clients reach foreign TGs, two pieces are needed:
+
+1. **Designate an international gateway.** Pick one reflector to join the
+   international mesh by trunking to foreign countries. Name those links with the
+   international standard `TRUNK_<ISO>_<ISO>`, ISO codes alphabetical — e.g.
+   `TRUNK_DE_IT` to Germany, `TRUNK_FR_IT` to France (see the README, section 4).
+
+2. **Point each region at the gateway with `ROUTABLE_PREFIXES`.** On every
+   region's trunk section *facing the gateway*, declare the foreign prefixes as
+   reachable via it:
+
+   ```ini
+   # On each region, in the trunk section facing the international gateway:
+   ROUTABLE_PREFIXES=262,208      # DE, FR, … reachable via the gateway
+   ```
+
+Now a regional client keying e.g. `26201` (a German TG) matches the routable
+`262` on the gateway trunk, so the region forwards it to the gateway, which
+relays it into the international mesh toward Germany. The return audio comes back
+via peer interest.
+
+Notes:
+
+- Each prefix you want reachable must be named — there is **no** automatic
+  propagation. A region that is **not** in the national full mesh (a single
+  reflector whose only trunk is the gateway) can instead set
+  `ROUTABLE_PREFIXES=*`, a default route to everything via that one uplink. Do
+  **not** use `*` on a region that has multiple trunks (it logs a startup
+  warning).
+- `BLACKLIST_TGS` is evaluated first: a blacklisted TG is never forwarded,
+  regardless of `ROUTABLE_PREFIXES`.
+
+See the README
+[Routable prefixes](../README.md#5-routable-prefixes--hierarchical-and-non-full-mesh-topologies-optional)
+section and [`TOPOLOGY_EXAMPLES.md`](TOPOLOGY_EXAMPLES.md) §2 for the full
+mechanism and diagrams.
+
+---
+
 ## Concurrent conversations
 
 There is **no hardcoded limit** on concurrent QSOs over the trunk. The trunk

@@ -59,13 +59,13 @@ Otherwise, here is the whole idea:
 
 You do **not** need trunking to run GeuReflector. With no `[TRUNK_x]` sections it
 behaves exactly like stock SvxReflector, so the fastest way to see it working is
-a single server. (Docker is easiest; see [`docs/DOCKER.md`](docs/DOCKER.md) for
-the full container guide, or [`docs/INSTALL.md`](docs/INSTALL.md) to build from
-source.)
+a single server.
 
-1. **Start from the sample config.** The shipped `svxreflector.conf` already has
-   the `[GLOBAL]`, certificate, `[USERS]`, and `[PASSWORDS]` sections you need.
-   Copy it and edit two things:
+1. **Write a config.** Start from the template
+   `src/svxlink/reflector/svxreflector.conf.in` — it has the `[GLOBAL]`,
+   certificate, `[USERS]`, and `[PASSWORDS]` sections. For a standalone server
+   the only GeuReflector-specific addition is `LOCAL_PREFIX`; leave trunking out
+   entirely:
 
    ```ini
    [GLOBAL]
@@ -79,16 +79,9 @@ source.)
    MyNodes="change-this-secret"
    ```
 
-   That is the only GeuReflector-specific addition for a standalone server —
-   everything else is stock SvxReflector configuration.
-
-2. **Run it** (Docker):
-
-   ```bash
-   mkdir config && cp /path/to/svxreflector.conf config/svxreflector.conf
-   docker compose up -d
-   docker compose logs -f
-   ```
+2. **Build and run it.** See [`docs/INSTALL.md`](docs/INSTALL.md) to build from
+   source and run it as a service, or [`docs/DOCKER.md`](docs/DOCKER.md) to run
+   it in a container.
 
 3. **Connect a node.** Point an SvxLink node at this server (host + port 5300,
    the callsign/password above), key up on a talk group, and watch the talker
@@ -416,10 +409,10 @@ cannot or should not use a full mesh:
 additional TG prefixes that are reachable *via* this peer beyond what
 `REMOTE_PREFIX` already covers.
 
-**Explicit prefixes** (e.g. `263`) extend the mesh-wide prefix set so the
+**Explicit prefixes** (e.g. `208`) extend the mesh-wide prefix set so the
 reflector will accept those TGs inbound and transit them onward toward the
 owner via the existing gateway fanout (`shouldRelayInbound`).  Each intermediate
-hop along a chain must declare the same routable prefix on the appropriate trunk
+hop along a chain must declare the routable prefix on the appropriate trunk
 — there is no automatic propagation.
 
 **`*` wildcard** acts as a default route for a single-uplink regional leaf: local
@@ -444,45 +437,51 @@ prefix at the reflector that actually owns those TGs.
 so changing `ROUTABLE_PREFIXES` takes full effect on reflector restart (as with
 `REMOTE_PREFIX`).
 
-Example — four-node chain where `leaf` (prefix `222100`) needs to reach TG
-`263xx` owned by `far` (prefix `263`), transiting through both `natlit`
-(prefix `222`) and `natlde` (prefix `262`):
+Example — a chain where an Italian regional leaf (prefix `222100`) needs to
+reach a French TG `208xx` (owned by **FR**, prefix `208`), transiting through
+**IT** national (`222`) and **DE** national (`262`). IT is not directly meshed
+with FR; it reaches FR over its DE trunk. Section names follow the
+[international standard](#4-add-a-trunk-section-per-peer): `TRUNK_<ISO>_<ISO>`,
+ISO codes alphabetical.
 
 ```ini
-# On leaf — default route via the only uplink toward natlit
-[TRUNK_LEAF_NATLIT]
-HOST=natlit.example.com
-SECRET=secret_leaf_natlit
+# On the Italian regional leaf (prefix 222100) — single uplink to IT national.
+# Sub-national link, so any agreed shared name works (section 4). The leaf uses
+# '*' as a default route to reach everything via its one uplink.
+[TRUNK_IT_NORDOVEST]
+HOST=it.example.org
+SECRET=secret_it_nordovest
 REMOTE_PREFIX=222
 ROUTABLE_PREFIXES=*
 
-# On natlit — explicit transit toward 263 via the natlde link
-[TRUNK_NATLIT_NATLDE]
-HOST=natlde.example.com
-SECRET=secret_natlit_natlde
+# On IT national (prefix 222) — reach FR (208) via the link to DE.
+# International link → TRUNK_<ISO>_<ISO>, alphabetical: DE before IT.
+[TRUNK_DE_IT]
+HOST=de.example.org
+SECRET=secret_de_it
 REMOTE_PREFIX=262
-ROUTABLE_PREFIXES=263
+ROUTABLE_PREFIXES=208
 
-# On natlde — transit 263 back toward natlit (return path).
-# The section name MUST be identical on both ends of a link (see section 4),
-# so natlde's trunk to natlit reuses the same [TRUNK_NATLIT_NATLDE] name.
-[TRUNK_NATLIT_NATLDE]
-HOST=natlit.example.com
-SECRET=secret_natlit_natlde
+# On DE national (prefix 262) — the SAME [TRUNK_DE_IT] link, return path for 208.
+# The section name MUST be identical on both ends of a link (section 4).
+[TRUNK_DE_IT]
+HOST=it.example.org
+SECRET=secret_de_it
 REMOTE_PREFIX=222
-ROUTABLE_PREFIXES=263
+ROUTABLE_PREFIXES=208
 
-[TRUNK_NATLDE_FAR]
-HOST=far.example.com
-SECRET=secret_natlde_far
-REMOTE_PREFIX=263
-# far owns 263 natively — no ROUTABLE_PREFIXES needed on this last hop
+# On DE national — trunk to FR national.
+[TRUNK_DE_FR]
+HOST=fr.example.org
+SECRET=secret_de_fr
+REMOTE_PREFIX=208
+# FR owns 208 natively — no ROUTABLE_PREFIXES needed on this last hop
 ```
 
-The `*` wildcard on leaf's uplink also handles the return leg: leaf advertises
-interest in `263xx` toward natlit via `MsgPeerTgInterest`, and — on top of that
-— accepts the returning audio via the wildcard match (`matchesRoutable`) on its
-inbound-accept gate, since `*` is excluded from the mesh prefix set and
+The `*` wildcard on the leaf's uplink also handles the return leg: the leaf
+advertises interest in `208xx` toward IT via `MsgPeerTgInterest`, and — on top
+of that — accepts the returning audio via the wildcard match (`matchesRoutable`)
+on its inbound-accept gate, since `*` is excluded from the mesh prefix set and
 `hasPrefixRoute` alone cannot serve this role.
 
 ### Network requirements
