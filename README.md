@@ -723,6 +723,9 @@ The PTY path is set by `COMMAND_PTY` in `[GLOBAL]` (default
 - [`docs/PEER_PROTOCOL.md`](docs/PEER_PROTOCOL.md) — full wire protocol
   specification: message format, handshake sequence, talker arbitration
   tie-breaking, heartbeat, and the complete message type table
+- [`docs/TWIN_PROTOCOL.md`](docs/TWIN_PROTOCOL.md) — twin (HA-pair) protocol:
+  shared-prefix pairing, sticky per-transmission socket selection, failover,
+  cross-twin arbitration, and the external-peer `PAIRED=1` requirement
 - [`docs/TOPOLOGY_EXAMPLES.md`](docs/TOPOLOGY_EXAMPLES.md) — visual
   cookbook of the five supported topology shapes (international
   full-mesh, national mesh joined at gateway, satellite tree, hybrid,
@@ -734,6 +737,9 @@ The PTY path is set by `COMMAND_PTY` in `[GLOBAL]` (default
   in Italian
 - [`docs/WW_DEPLOYMENT.md`](docs/WW_DEPLOYMENT.md) — worldwide deployment
   example (25 countries, full mesh, DMR MCC-based TG numbering)
+- [`docs/MCC_COUNTRY_CODES.md`](docs/MCC_COUNTRY_CODES.md) — reference table of
+  3-digit Mobile Country Codes (ITU E.212) for anchoring `LOCAL_PREFIX` on your
+  country's MCC
 - [`docs/MQTT.md`](docs/MQTT.md) — MQTT publishing: topic structure, payload
   format, configuration reference, and TLS setup
 - [`docs/REDIS.md`](docs/REDIS.md) — Redis-backed config store: schema,
