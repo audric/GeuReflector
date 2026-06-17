@@ -10,6 +10,82 @@ Trunk extension by IW1GEU.
 
 ---
 
+## New to SvxLink reflectors? Start here
+
+If you already run SvxReflector, skip to [What it adds](#what-it-adds-over-svxreflector).
+Otherwise, here is the whole idea:
+
+- **SvxLink nodes** are radios (repeaters, hotspots, simplex links) connected to
+  the internet instead of to each other over RF.
+- A **reflector** is the central server those nodes connect to — it relays voice
+  between every node that is listening to the same channel, like a conference
+  bridge for radios.
+- A **talk group (TG)** is one of those channels, identified by a number. A node
+  picks a TG and hears everyone else on that TG.
+- Normally one reflector serves everyone. **GeuReflector lets you run several
+  reflectors and link them together** ("trunking"), so a talk group can span
+  multiple servers while each server stays independent.
+
+### Glossary
+
+| Term | Meaning |
+|------|---------|
+| **Node** | An SvxLink instance (a radio gateway). Connects to a reflector as a client. Unmodified by this fork. |
+| **Reflector** | The server that relays audio between nodes on the same talk group. |
+| **Talk group (TG)** | A numbered voice channel. One talker at a time per TG. |
+| **Trunk** | A persistent server-to-server link between two reflectors that carries shared TGs. |
+| **Prefix** | The leading digits of a TG number that decide which reflector *owns* it (e.g. prefix `262` owns TGs `262`, `2620`, `26299`…). |
+| **Cluster TG** | A TG broadcast to every trunked reflector regardless of prefix — like a nationwide channel. |
+| **Satellite** | A lightweight reflector that hangs off a parent instead of joining the full mesh (NAT-friendly). |
+| **Twin** | Two reflectors sharing one prefix as a high-availability pair, appearing as one peer to the mesh. |
+
+---
+
+## Quick start — one standalone reflector
+
+You do **not** need trunking to run GeuReflector. With no `[TRUNK_x]` sections it
+behaves exactly like stock SvxReflector, so the fastest way to see it working is
+a single server. (Docker is easiest; see [`docs/DOCKER.md`](docs/DOCKER.md) for
+the full container guide, or [`docs/INSTALL.md`](docs/INSTALL.md) to build from
+source.)
+
+1. **Start from the sample config.** The shipped `svxreflector.conf` already has
+   the `[GLOBAL]`, certificate, `[USERS]`, and `[PASSWORDS]` sections you need.
+   Copy it and edit two things:
+
+   ```ini
+   [GLOBAL]
+   LISTEN_PORT=5300
+   LOCAL_PREFIX=262          # optional for a single server; sets which TGs it "owns"
+
+   [USERS]
+   MYNODE-1=MyNodes          # the callsign your SvxLink node logs in with
+
+   [PASSWORDS]
+   MyNodes="change-this-secret"
+   ```
+
+   That is the only GeuReflector-specific addition for a standalone server —
+   everything else is stock SvxReflector configuration.
+
+2. **Run it** (Docker):
+
+   ```bash
+   mkdir config && cp /path/to/svxreflector.conf config/svxreflector.conf
+   docker compose up -d
+   docker compose logs -f
+   ```
+
+3. **Connect a node.** Point an SvxLink node at this server (host + port 5300,
+   the callsign/password above), key up on a talk group, and watch the talker
+   appear in the logs. Enable `HTTP_SRV_PORT=8080` to see live state at
+   `http://<host>:8080/status`.
+
+Once one reflector works, [add trunk links](#4-add-a-trunk-section-per-peer) to
+connect it to others.
+
+---
+
 ## Why trunking?
 
 A standard SvxReflector is a single centralized server. Without trunking, a
@@ -146,17 +222,19 @@ See [`docs/INSTALL.md`](docs/INSTALL.md) for the full step-by-step.
 
 ## Testing
 
-Integration tests spin up a 3-reflector Docker mesh and verify trunk routing,
-audio delivery, and protocol behavior:
+Integration tests spin up Docker reflector meshes and verify trunk routing,
+audio delivery, twin failover, and protocol behavior:
 
 ```bash
 cd tests && bash run_tests.sh
 ```
 
-Requires Docker and Python 3.7+. The script builds the images, starts the mesh,
-runs 18 automated tests, then drops into an interactive prompt where you can
-enter any TG number and see which reflector it routes to (verified via container
-logs).
+Requires Docker and Python 3.7+. The script builds the images, starts the
+meshes, and runs 89 automated tests across six suites (trunk, MQTT deltas,
+satellite secrets, logging, twin, and routable prefixes). When run in a
+terminal, the trunk suite ends with an interactive prompt where you can enter
+any TG number and see which reflector it routes to (verified via container
+logs). See [`tests/TESTS.md`](tests/TESTS.md) for the full breakdown.
 
 The mesh topology is defined in `tests/topology.py` — edit prefixes, cluster
 TGs, or add reflectors there, and `run_tests.sh` regenerates all configs
@@ -543,7 +621,7 @@ static configuration in a single response:
 
 ```json
 {
-  "version": "1.0.0",
+  "version": "1.3.99.13+trunk.twin2",
   "mode": "reflector",
   "local_prefix": ["1"],
   "listen_port": "5300",
