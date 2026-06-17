@@ -169,6 +169,40 @@ section. SE only knows the prefixes it has trunks for: `222` (IT) and `262`
   monitored) `22221` on their SvxLink node, via `MsgPeerTgInterest`
   (type 129).
 
+**Reaching international TGs *from* a Zone — `ROUTABLE_PREFIXES`.**
+The gateway routing above carries a *foreign* talker *into* a Zone. The
+opposite direction — a **Zone client calling an international TG** (say DE
+`2629`, or any TG owned out in the international mesh) — does **not** work by
+default. A Zone's prefix table contains only `222` (IT) and the other Zone
+prefixes, so `2629` matches nothing, has no owner, and stays local; the Zone
+never forwards it to IT 222. To open that path, declare the foreign prefixes
+as **routable via the gateway** on the Zone's uplink to IT 222:
+
+```ini
+# On IT-Z2 (prefix 2222) — its trunk section shared with the gateway IT 222:
+[TRUNK_222_2222]
+HOST=it222.example.org
+SECRET=...
+REMOTE_PREFIX=222            # IT 222 owns 222
+ROUTABLE_PREFIXES=262,240    # DE, SE, … reachable *via* IT 222
+```
+
+Now `2629` matches the routable `262` on the Zone→IT 222 link, so the Zone
+forwards it to IT 222, which — being in the international mesh with a `262`
+trunk to DE — relays it onward to Germany. The return audio comes back via
+peer interest. Two patterns:
+
+- **Multi-trunk Zone (in the national mesh):** list the foreign prefixes
+  explicitly, as above. Each prefix you want reachable must be named — there
+  is no automatic propagation.
+- **Single-uplink leaf:** a region trunked *only* to IT 222 (not part of the
+  national mesh) can instead set `ROUTABLE_PREFIXES=*` — a default route that
+  reaches any TG through its one uplink. Do **not** use `*` on a multi-trunk
+  Zone (it logs a startup warning and is ambiguous about which leg to use).
+
+See the [README routable-prefixes section](../README.md#5-routable-prefixes--hierarchical-and-non-full-mesh-topologies-optional)
+and [`CONCEPTS.md`](CONCEPTS.md) for the full mechanism.
+
 > **Cluster TGs are for unowned TGs, not for cross-mesh routing.**
 > Gateway prefix routing handles foreign-to-regional reach automatically
 > as long as IT 222 has a `[TRUNK_x]` section pointing at the regional

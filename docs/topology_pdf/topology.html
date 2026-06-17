@@ -312,6 +312,29 @@ works the same way: audio from a Z3 client reaches SE because IT's
 <code>isPeerInterestedTG</code> for <code>22221</code> was registered on
 the SE side when SE's PTT first arrived.</p>
 
+<p><strong>Reaching international TGs <em>from</em> a Zone &mdash;
+<code>ROUTABLE_PREFIXES</code>.</strong> The gateway routing above carries a
+<em>foreign</em> talker <em>into</em> a Zone. The opposite direction &mdash; a
+<strong>Zone client calling an international TG</strong> (say DE
+<code>2629</code>, or any TG owned out in the international mesh) &mdash; does
+<strong>not</strong> work by default: a Zone's prefix table holds only
+<code>222</code> and the other Zone prefixes, so <code>2629</code> matches
+nothing, has no owner, and stays local. To open that path, declare the foreign
+prefixes as routable via the gateway on the Zone's uplink to IT 222 &mdash; e.g.
+set <code>ROUTABLE_PREFIXES=262,240</code> (DE, SE, &hellip;) alongside
+<code>REMOTE_PREFIX=222</code> in the Zone's <code>[TRUNK_x]</code> section
+facing IT 222. Now <code>2629</code> matches the routable <code>262</code>, so
+the Zone forwards it to IT 222, which &mdash; in the international mesh with a
+<code>262</code> trunk to DE &mdash; relays it onward; the return audio comes
+back via peer interest.</p>
+
+<p>A multi-trunk Zone (inside the national mesh) must name each foreign prefix
+explicitly &mdash; there is no automatic propagation. A region trunked
+<em>only</em> to IT 222 (a single-uplink leaf) can instead use
+<code>ROUTABLE_PREFIXES=*</code>, a default route reaching any TG via its one
+uplink; do <strong>not</strong> use <code>*</code> on a multi-trunk Zone (it
+logs a startup warning and is ambiguous about which leg to use).</p>
+
 <div class="note">
   <span class="label">Cluster TGs are for unowned TGs, not cross-mesh routing</span>
   Gateway prefix routing handles foreign-to-regional reach automatically
