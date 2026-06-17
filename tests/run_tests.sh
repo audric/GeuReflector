@@ -5,6 +5,7 @@ cd "$(dirname "$0")"
 cleanup() {
   echo "=== Tearing down test environment ==="
   docker compose -f docker-compose.test.yml down -v --remove-orphans 2>/dev/null
+  docker compose -f docker-compose.routable.yml down -v --remove-orphans 2>/dev/null
 }
 trap cleanup EXIT
 
@@ -42,6 +43,26 @@ docker compose -f docker-compose.test.yml up -d --build --wait
 
 echo "=== Running TWIN integration tests ==="
 python3 test_twin.py
+
+echo ""
+echo "=================================="
+echo "Running ROUTABLE prefix tests"
+echo "=================================="
+
+echo "=== Generating ROUTABLE topology configs ==="
+python3 generate_configs.py --topology routable
+
+echo "=== Tearing down TWIN mesh ==="
+docker compose -f docker-compose.test.yml down -v --remove-orphans
+
+echo "=== Building and starting ROUTABLE mesh ==="
+docker compose -f docker-compose.routable.yml up -d --build --wait
+
+echo "=== Running ROUTABLE integration tests ==="
+python3 test_routable.py
+
+echo "=== Tearing down ROUTABLE mesh ==="
+docker compose -f docker-compose.routable.yml down -v --remove-orphans
 
 echo "=== Restoring default topology ==="
 python3 generate_configs.py
