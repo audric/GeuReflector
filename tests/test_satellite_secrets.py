@@ -1,8 +1,7 @@
 """
 Per-satellite secrets — integration tests.
 
-These verify the resolver rule from
-docs/superpowers/specs/2026-05-16-per-satellite-secrets-design.md §4:
+These verify the per-satellite secret resolver rule:
 
   1. SECRET_<id> match accepts.
   2. SECRET_<id> mismatch rejects (no fallback on mismatch).
