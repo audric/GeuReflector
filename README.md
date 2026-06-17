@@ -63,14 +63,16 @@ a single server.
 
 1. **Write a config.** Start from the template
    `src/svxlink/reflector/svxreflector.conf.in` — it has the `[GLOBAL]`,
-   certificate, `[USERS]`, and `[PASSWORDS]` sections. For a standalone server
-   the only GeuReflector-specific addition is `LOCAL_PREFIX`; leave trunking out
-   entirely:
+   certificate, `[USERS]`, and `[PASSWORDS]` sections. A minimal standalone
+   config (no trunking) looks like this:
 
    ```ini
    [GLOBAL]
    LISTEN_PORT=5300
    LOCAL_PREFIX=262          # optional for a single server; sets which TGs it "owns"
+
+   [SERVER_CERT]
+   COMMON_NAME=reflector.example.org   # REQUIRED — host name for the auto-generated TLS cert
 
    [USERS]
    MYNODE-1=MyNodes          # the callsign your SvxLink node logs in with
@@ -78,6 +80,11 @@ a single server.
    [PASSWORDS]
    MyNodes="change-this-secret"
    ```
+
+   `LOCAL_PREFIX` is the only GeuReflector-specific line; the rest is stock
+   SvxReflector. **`[SERVER_CERT] COMMON_NAME` is required** — without it the
+   reflector aborts at startup (*"SERVER_CERT/COMMON_NAME is unset"*). The
+   reflector auto-generates its own CA and server certificate on first run.
 
 2. **Build and run it.** See [`docs/INSTALL.md`](docs/INSTALL.md) to build from
    source and run it as a service, or [`docs/DOCKER.md`](docs/DOCKER.md) to run

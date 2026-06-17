@@ -36,11 +36,14 @@ cp src/svxlink/reflector/svxreflector.conf.in config/svxreflector.conf
 # then edit config/svxreflector.conf
 ```
 
-At minimum set `LISTEN_PORT`, add a `[USERS]`/`[PASSWORDS]` entry for your node,
-and (for trunking) `LOCAL_PREFIX` plus the `[TRUNK_x]` sections. See the
-[README quick start](../README.md#quick-start--one-standalone-reflector) for a
-minimal standalone config and [`docs/INSTALL.md`](INSTALL.md) for the trunking
-additions.
+At minimum set `LISTEN_PORT`, set `[SERVER_CERT] COMMON_NAME` (**required** — the
+reflector aborts at startup without it, and with `restart: unless-stopped` the
+container then crash-loops), add a `[USERS]`/`[PASSWORDS]` entry for your node,
+and (for trunking) `LOCAL_PREFIX` plus the `[TRUNK_x]` sections. The reflector
+auto-generates its CA and server certificate into the `pki` volume on first run.
+See the [README quick start](../README.md#quick-start--one-standalone-reflector)
+for a minimal standalone config and [`docs/INSTALL.md`](INSTALL.md) for the
+trunking additions.
 
 The file is mounted read-only; edit it on the host and restart the container to
 apply changes (or use the PTY interface for live user/password reloads — see
