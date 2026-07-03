@@ -588,6 +588,14 @@ Json::Value TrunkLink::statusJson(void) const
   for (const auto& p : m_remote_prefix) remote_arr.append(p);
   obj["remote_prefix"] = remote_arr;
 
+  // Extra prefixes reachable VIA this peer (gateway routing). These are not
+  // owned by the peer (that's remote_prefix) but are forwarded onward toward
+  // it; "*" is a default route, surfaced separately as routable_wildcard.
+  Json::Value routable_arr(Json::arrayValue);
+  for (const auto& p : m_routable_prefixes) routable_arr.append(p);
+  obj["routable_prefixes"] = routable_arr;
+  obj["routable_wildcard"] = m_routable_wildcard;
+
   // active_talkers: per-peer active TGs (already post-TG_MAP remap).
   // We use m_peer_active_tgs directly instead of filtering the global
   // trunk-talker map by isSharedTG, because a TG_MAP entry can remap a
