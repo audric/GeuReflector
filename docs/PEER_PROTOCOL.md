@@ -721,6 +721,8 @@ The `/status` JSON endpoint includes a `trunks` object alongside `nodes`:
       "connected": true,
       "local_prefix": "1",
       "remote_prefix": "2",
+      "routable_prefixes": ["24"],
+      "routable_wildcard": false,
       "active_talkers": {
         "25": "SM0ABC",
         "200": "LA8PV"
@@ -735,6 +737,10 @@ The `/status` JSON endpoint includes a `trunks` object alongside `nodes`:
 
 `active_talkers` contains only TGs with an active remote talker at the moment
 of the request.  It is empty when no trunk conversations are in progress.
+
+`routable_prefixes` lists extra TG prefixes reachable *via* this peer (gateway
+routing) but not owned by it; `routable_wildcard` is `true` when the link is
+configured as a default (`*`) route.
 
 `local_aliases` is keyed by the short local TG and lists every configured
 `LOCAL_ALIASES` entry: `alias` is the long, mesh-routable number it is
