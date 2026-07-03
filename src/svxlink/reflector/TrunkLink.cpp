@@ -596,7 +596,8 @@ Json::Value TrunkLink::statusJson(void) const
   Json::Value talkers(Json::objectValue);
   for (uint32_t tg : m_peer_active_tgs)
   {
-    const std::string cs = TGHandler::instance()->trunkTalkerForTG(tg);
+    const std::string cs =
+        TGHandler::instance()->trunkTalkerForTG(m_reflector->aliasToLocal(tg));
     if (!cs.empty())
     {
       talkers[std::to_string(tg)] = cs;
@@ -782,67 +783,71 @@ void TrunkLink::onInboundDisconnected(Async::FramedTcpConnection* con,
 
 void TrunkLink::onLocalTalkerStart(uint32_t tg, const std::string& callsign)
 {
-  if (!isActive() || isBlacklisted(tg) || !isAllowed(tg)) return;
-  bool mapped = m_tg_map_out.count(tg) > 0;
+  if (!isActive()) return;
+  uint32_t rtg = m_reflector->aliasToRoute(tg);   // short -> long for the mesh
+  if (isBlacklisted(rtg) || !isAllowed(rtg)) return;
+  bool mapped = m_tg_map_out.count(rtg) > 0;
   if (!mapped &&
-      !isSharedTG(tg) && !m_reflector->isClusterTG(tg) &&
-      !isPeerInterestedTG(tg))
+      !isSharedTG(rtg) && !m_reflector->isClusterTG(rtg) &&
+      !isPeerInterestedTG(rtg))
   {
     return;
   }
-  sendMsg(MsgPeerTalkerStart(mapTgOut(tg), callsign));
+  sendMsg(MsgPeerTalkerStart(mapTgOut(rtg), callsign));
 } /* TrunkLink::onLocalTalkerStart */
 
 
 void TrunkLink::onLocalTalkerStop(uint32_t tg)
 {
-  if (!isActive() || isBlacklisted(tg) || !isAllowed(tg)) return;
-  bool mapped = m_tg_map_out.count(tg) > 0;
+  if (!isActive()) return;
+  uint32_t rtg = m_reflector->aliasToRoute(tg);
+  if (isBlacklisted(rtg) || !isAllowed(rtg)) return;
+  bool mapped = m_tg_map_out.count(rtg) > 0;
   if (!mapped &&
-      !isSharedTG(tg) && !m_reflector->isClusterTG(tg) &&
-      !isPeerInterestedTG(tg))
+      !isSharedTG(rtg) && !m_reflector->isClusterTG(rtg) &&
+      !isPeerInterestedTG(rtg))
   {
     return;
   }
   // If we cleared our local talker because we were yielding to this peer,
   // don't send TrunkTalkerStop — the peer already owns the TG.
-  if (m_yielded_tgs.count(tg))
+  if (m_yielded_tgs.count(tg))   // yielded is keyed by the short/local number
   {
     return;
   }
-  sendMsg(MsgPeerTalkerStop(mapTgOut(tg)));
+  sendMsg(MsgPeerTalkerStop(mapTgOut(rtg)));
 } /* TrunkLink::onLocalTalkerStop */
 
 
 void TrunkLink::onLocalAudio(uint32_t tg, const std::vector<uint8_t>& audio)
 {
-  if (!isActive() || isBlacklisted(tg) || !isAllowed(tg)
-      || m_yielded_tgs.count(tg))
-  {
-    return;
-  }
-  bool mapped = m_tg_map_out.count(tg) > 0;
+  if (!isActive() || m_yielded_tgs.count(tg)) return;
+  uint32_t rtg = m_reflector->aliasToRoute(tg);
+  if (isBlacklisted(rtg) || !isAllowed(rtg)) return;
+  bool mapped = m_tg_map_out.count(rtg) > 0;
   if (!mapped &&
-      !isSharedTG(tg) && !m_reflector->isClusterTG(tg) &&
-      !isPeerInterestedTG(tg))
+      !isSharedTG(rtg) && !m_reflector->isClusterTG(rtg) &&
+      !isPeerInterestedTG(rtg))
   {
     return;
   }
-  sendMsg(MsgPeerAudio(mapTgOut(tg), audio));
+  sendMsg(MsgPeerAudio(mapTgOut(rtg), audio));
 } /* TrunkLink::onLocalAudio */
 
 
 void TrunkLink::onLocalFlush(uint32_t tg)
 {
-  if (!isActive() || isBlacklisted(tg) || !isAllowed(tg)) return;
-  bool mapped = m_tg_map_out.count(tg) > 0;
+  if (!isActive()) return;
+  uint32_t rtg = m_reflector->aliasToRoute(tg);
+  if (isBlacklisted(rtg) || !isAllowed(rtg)) return;
+  bool mapped = m_tg_map_out.count(rtg) > 0;
   if (!mapped &&
-      !isSharedTG(tg) && !m_reflector->isClusterTG(tg) &&
-      !isPeerInterestedTG(tg))
+      !isSharedTG(rtg) && !m_reflector->isClusterTG(rtg) &&
+      !isPeerInterestedTG(rtg))
   {
     return;
   }
-  sendMsg(MsgPeerFlush(mapTgOut(tg)));
+  sendMsg(MsgPeerFlush(mapTgOut(rtg)));
 } /* TrunkLink::onLocalFlush */
 
 
@@ -1086,34 +1091,36 @@ void TrunkLink::handleMsgPeerTalkerStart(std::istream& is)
     return;
   }
 
+  uint32_t deliver_tg = m_reflector->aliasToLocal(local_tg);
+
   // Tie-break: if we already have a local talker on this TG, decide who wins.
   // Lower priority value wins. If equal (shouldn't happen), local wins.
-  ReflectorClient* local_talker = TGHandler::instance()->talkerForTG(local_tg);
+  ReflectorClient* local_talker = TGHandler::instance()->talkerForTG(deliver_tg);
   if (local_talker != nullptr)
   {
     if (m_priority <= m_peer_priority)
     {
       // We win — ignore peer's claim
-      geulog::info("trunk", m_section, ": TG #", local_tg,
+      geulog::info("trunk", m_section, ": TG #", deliver_tg,
                    " conflict — local wins (our priority=", m_priority,
                    " <= peer=", m_peer_priority, ")");
       return;
     }
     // We defer — clear local talker and accept remote
-    geulog::info("trunk", m_section, ": TG #", local_tg,
+    geulog::info("trunk", m_section, ": TG #", deliver_tg,
                  " conflict — deferring to peer (our priority=", m_priority,
                  " > peer=", m_peer_priority, ")");
-    m_yielded_tgs.insert(local_tg);
-    TGHandler::instance()->setTalkerForTG(local_tg, nullptr);
+    m_yielded_tgs.insert(deliver_tg);
+    TGHandler::instance()->setTalkerForTG(deliver_tg, nullptr);
     // onTalkerUpdated will fire; Reflector must not re-send TrunkTalkerStart
     // for this TG since it's in m_yielded_tgs (checked in Reflector.cpp)
   }
 
   m_peer_active_tgs.insert(local_tg);
   m_peer_interested_tgs[local_tg] = std::time(nullptr);
-  TGHandler::instance()->setTrunkTalkerForTGViaPeer(local_tg, msg.callsign(),
+  TGHandler::instance()->setTrunkTalkerForTGViaPeer(deliver_tg, msg.callsign(),
                                                     peerId());
-  m_reflector->notifyExternalTrunkTalkerStart(local_tg, m_section, msg.callsign());
+  m_reflector->notifyExternalTrunkTalkerStart(deliver_tg, m_section, msg.callsign());
 
   // Prefix-routed fanout: forward to every other trunk peer if we have a
   // route for this TG in our prefix table. isSharedTG inside the per-trunk
@@ -1151,10 +1158,12 @@ void TrunkLink::handleMsgPeerTalkerStop(std::istream& is)
     return;
   }
 
-  m_yielded_tgs.erase(local_tg);
+  uint32_t deliver_tg = m_reflector->aliasToLocal(local_tg);
+
+  m_yielded_tgs.erase(deliver_tg);
   m_peer_active_tgs.erase(local_tg);
-  TGHandler::instance()->clearTrunkTalkerForTG(local_tg);
-  m_reflector->notifyExternalTrunkTalkerStop(local_tg, m_section);
+  TGHandler::instance()->clearTrunkTalkerForTG(deliver_tg);
+  m_reflector->notifyExternalTrunkTalkerStop(deliver_tg, m_section);
 
   // Prefix-routed fanout (mirrors talker-start): only fan out if we have
   // a route. Cluster TGs without a prefix match stay single-hop.
@@ -1188,6 +1197,8 @@ void TrunkLink::handleMsgPeerAudio(std::istream& is)
     return;
   }
 
+  uint32_t deliver_tg = m_reflector->aliasToLocal(local_tg);
+
   // Only forward audio if this peer has claimed the TG via TalkerStart
   if (m_peer_active_tgs.find(local_tg) == m_peer_active_tgs.end())
   {
@@ -1195,7 +1206,7 @@ void TrunkLink::handleMsgPeerAudio(std::istream& is)
   }
 
   // PTY-driven mute: drop audio if the current peer talker is muted
-  std::string cs = TGHandler::instance()->trunkTalkerForTG(local_tg);
+  std::string cs = TGHandler::instance()->trunkTalkerForTG(deliver_tg);
   if (!cs.empty() && isCallsignMuted(cs))
   {
     return;
@@ -1209,21 +1220,21 @@ void TrunkLink::handleMsgPeerAudio(std::istream& is)
   MsgUdpAudio udp_msg(msg.audio());
   m_reflector->broadcastUdpMsg(udp_msg,
       ReflectorClient::mkOrFilter(
-        ReflectorClient::TgFilter(local_tg),
+        ReflectorClient::TgFilter(deliver_tg),
         ReflectorClient::mkAndFilter(
-          ReflectorClient::TgMonitorFilter(local_tg),
+          ReflectorClient::TgMonitorFilter(deliver_tg),
           ReflectorClient::mkAndFilter(
             ReflectorClient::PassiveObserverFilter(),
-            ReflectorClient::EarliestMonitorTalkerFilter(local_tg)))));
+            ReflectorClient::EarliestMonitorTalkerFilter(deliver_tg)))));
 
   // Forward trunk audio to connected satellites
-  m_reflector->forwardAudioToSatellitesExcept(nullptr, local_tg, msg.audio());
+  m_reflector->forwardAudioToSatellitesExcept(nullptr, deliver_tg, msg.audio());
 
   // Mirror inbound trunk audio to the [TWIN] partner so PAIRED inbound
   // (sticky on one twin) still reaches the non-sticky twin's local clients
   // and its satellites. TwinLink::handleMsgPeerAudio does not re-forward to
   // trunks, so no echo back to the originating peer.
-  m_reflector->forwardTrunkAudioToTwin(local_tg, msg.audio());
+  m_reflector->forwardTrunkAudioToTwin(deliver_tg, msg.audio());
 
   // Prefix-routed fanout (mirrors talker-start): only fan out if we have
   // a route. Cluster TGs without a prefix match stay single-hop.
@@ -1256,20 +1267,22 @@ void TrunkLink::handleMsgPeerFlush(std::istream& is)
     return;
   }
 
+  uint32_t deliver_tg = m_reflector->aliasToLocal(local_tg);
+
   m_reflector->broadcastUdpMsg(MsgUdpFlushSamples(),
       ReflectorClient::mkOrFilter(
-        ReflectorClient::TgFilter(local_tg),
+        ReflectorClient::TgFilter(deliver_tg),
         ReflectorClient::mkAndFilter(
-          ReflectorClient::TgMonitorFilter(local_tg),
+          ReflectorClient::TgMonitorFilter(deliver_tg),
           ReflectorClient::mkAndFilter(
             ReflectorClient::PassiveObserverFilter(),
-            ReflectorClient::EarliestMonitorTalkerFilter(local_tg)))));
+            ReflectorClient::EarliestMonitorTalkerFilter(deliver_tg)))));
 
   // Forward trunk flush to connected satellites
-  m_reflector->forwardFlushToSatellitesExcept(nullptr, local_tg);
+  m_reflector->forwardFlushToSatellitesExcept(nullptr, deliver_tg);
 
   // Mirror flush to the [TWIN] partner — pairs with the audio mirror above.
-  m_reflector->forwardTrunkFlushToTwin(local_tg);
+  m_reflector->forwardTrunkFlushToTwin(deliver_tg);
 
   // Prefix-routed fanout (mirrors talker-start): only fan out if we have
   // a route. Cluster TGs without a prefix match stay single-hop.
@@ -1864,8 +1877,9 @@ void TrunkLink::clearPeerTalkerState(void)
 {
   for (uint32_t tg : m_peer_active_tgs)
   {
-    TGHandler::instance()->clearTrunkTalkerForTG(tg);
-    m_reflector->notifyExternalTrunkTalkerStop(tg, m_section);
+    uint32_t deliver_tg = m_reflector->aliasToLocal(tg);
+    TGHandler::instance()->clearTrunkTalkerForTG(deliver_tg);
+    m_reflector->notifyExternalTrunkTalkerStop(deliver_tg, m_section);
   }
   m_peer_active_tgs.clear();
   m_yielded_tgs.clear();

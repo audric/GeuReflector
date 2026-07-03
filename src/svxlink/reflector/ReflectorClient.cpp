@@ -934,7 +934,18 @@ void ReflectorClient::handleSelectTG(std::istream& is)
     sendError("Illegal MsgSelectTG protocol message received");
     return;
   }
-  if (msg.tg() != m_current_tg)
+  uint32_t sel_tg = msg.tg();
+  if (m_reflector != nullptr)
+  {
+    uint32_t folded = m_reflector->aliasSelect(sel_tg);
+    if (folded != sel_tg)
+    {
+      geulog::info("client", m_callsign, ": alias-fold select TG #", sel_tg,
+                   " -> #", folded);
+      sel_tg = folded;
+    }
+  }
+  if (sel_tg != m_current_tg)
   {
     auto talker = TGHandler::instance()->talkerForTG(m_current_tg);
     if (talker == this)
@@ -949,7 +960,7 @@ void ReflectorClient::handleSelectTG(std::istream& is)
       sendUdpMsg(MsgUdpFlushSamples());
     }
 
-    setTg(msg.tg());
+    setTg(sel_tg);
   }
 } /* ReflectorClient::handleSelectTG */
 
@@ -964,18 +975,26 @@ void ReflectorClient::handleTgMonitor(std::istream& is)
     sendError("Illegal MsgTgMonitor protocol message received");
     return;
   }
-  auto tgs = msg.tgs();
-  auto it = tgs.cbegin();
-  while (it != tgs.end())
+  std::set<uint32_t> tgs;
+  for (const auto& tg : msg.tgs())
   {
-    const auto& tg = *it;
-    if (!TGHandler::instance()->allowTgMonitoring(this, tg) || (tg == 0))
+    uint32_t mon_tg = tg;
+    if (m_reflector != nullptr)
     {
-      geulog::info("client", m_callsign, ": Not allowed to monitor TG #", tg);
-      tgs.erase(it++);
+      mon_tg = m_reflector->aliasSelect(mon_tg);
+      if (mon_tg != tg)
+      {
+        geulog::info("client", m_callsign, ": alias-fold monitor TG #", tg,
+                     " -> #", mon_tg);
+      }
+    }
+    if (!TGHandler::instance()->allowTgMonitoring(this, mon_tg) || (mon_tg == 0))
+    {
+      geulog::info("client", m_callsign, ": Not allowed to monitor TG #",
+                   mon_tg);
       continue;
     }
-    ++it;
+    tgs.insert(mon_tg);
   }
   {
     std::ostringstream tglist;

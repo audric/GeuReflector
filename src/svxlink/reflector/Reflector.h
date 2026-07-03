@@ -253,6 +253,29 @@ class Reflector : public sigc::trackable
     // Used to gate owner-relay fanout of trunk-received audio.
     bool isLocalTG(uint32_t tg) const;
 
+    // Local alias table (see docs/PEER_PROTOCOL.md "Local aliases"). A short
+    // local TG is re-homed under an owned prefix so it routes
+    // internationally. Populated from [GLOBAL] LOCAL_ALIASES.
+    //
+    // short -> long for the trunk wire (identity if not aliased)
+    uint32_t aliasToRoute(uint32_t tg) const
+    {
+      auto it = m_alias_route.find(tg);
+      return (it != m_alias_route.end()) ? it->second : tg;
+    }
+    // long -> short for local delivery (identity if not aliased or /out-only)
+    uint32_t aliasToLocal(uint32_t tg) const
+    {
+      auto it = m_alias_deliver.find(tg);
+      return (it != m_alias_deliver.end()) ? it->second : tg;
+    }
+    // long -> short for rewrite-on-select (identity if not aliased)
+    uint32_t aliasSelect(uint32_t tg) const
+    {
+      auto it = m_alias_select.find(tg);
+      return (it != m_alias_select.end()) ? it->second : tg;
+    }
+
     // True iff any prefix in m_all_prefixes (local + every configured
     // [TRUNK_x] REMOTE_PREFIX) prefix-matches this TG. Used to gate
     // trunk-to-trunk fanout: a non-owner gateway forwards onward only if
@@ -456,6 +479,12 @@ class Reflector : public sigc::trackable
     // initTrunkLinks() and refreshed by addTrunkLink/removeTrunkLink.
     std::vector<std::string>    m_local_prefixes;
     std::vector<std::string>    m_all_prefixes;
+    // Local alias table (see docs/PEER_PROTOCOL.md "Local aliases").
+    // A short local TG is re-homed under an owned prefix so it routes
+    // internationally.  Populated from [GLOBAL] LOCAL_ALIASES.
+    std::map<uint32_t, uint32_t> m_alias_route;   // short -> long (publish outbound)
+    std::map<uint32_t, uint32_t> m_alias_deliver; // long  -> short (deliver inbound)
+    std::map<uint32_t, uint32_t> m_alias_select;  // long  -> short (rewrite-on-select, all dirs)
     // Tracks last-seen callsign set per peer_id so we can DEL dropped
     // callsigns from Redis when a peer's node list shrinks.
     std::map<std::string, std::set<std::string>> m_peer_node_cache;
@@ -540,6 +569,7 @@ class Reflector : public sigc::trackable
     std::vector<std::string> collectAllTrunkPrefixes(void) const;
     void refreshStatus(void);
     void initTrunkLinks(void);
+    void parseLocalAliases(void);
     void initTrunkServer(void);
     void initTwinLink(void);
     void initTwinServer(void);

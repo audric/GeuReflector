@@ -185,6 +185,47 @@ A listener on each is monitoring TG `25` (owned by **B**).
 
 ---
 
+## 9. Local aliases: giving a short TG a global number
+
+Section 2 established the rule: a number is only reachable mesh-wide if its
+prefix is owned by a reflector. That leaves a common problem — a club or
+region wants a short, easy-to-remember local TG (e.g. `8`) that its own users
+already dial, but also wants it reachable from anywhere in the mesh by a
+proper globally-unique number under the reflector's own prefix (e.g.
+`2620008` under `LOCAL_PREFIX=262`). Renumbering the local TG isn't
+attractive, and neither is asking every peer to special-case it.
+
+`LOCAL_ALIASES` re-homes the short TG under the long, owned number: the
+reflector treats `8` and `2620008` as the same conversation, uses the long
+number for everything that crosses the mesh (routing, owner-relay), and the
+short number for everything local clients see (selection, talker
+arbitration). Local users keep dialing `8`; anyone elsewhere in the mesh
+reaches the same traffic by dialing `2620008`.
+
+This sits alongside two other tools that shape TG reachability, and it's easy
+to reach for the wrong one:
+
+- **`CLUSTER_TGS`** (section 5) is for TGs that **every** participating
+  reflector already agrees to broadcast everywhere, regardless of ownership —
+  a nationwide or mesh-wide talk group both sides opted into.
+- **`TG_MAP`** (per `[TRUNK_x]` section) is a **per-link** curated remap: it
+  translates one TG number to another on a single trunk, so it must be
+  repeated identically on every link that needs it, and it is invisible to
+  hops beyond that one link.
+- **Local alias** re-homes a curated subset of your own local TGs under a
+  number you already own, once, in `[GLOBAL]`. Because the long number is a
+  real, longest-prefix-matched, owned number, it routes across every hop in
+  the mesh exactly like any other owned TG — no per-link repetition, and no
+  cooperation required from peers or intermediate gateways.
+
+The underlying rule doesn't change: anything meant to be reachable
+internationally must have one unique number that falls under a country (MCC)
+prefix. A local alias doesn't create an exception to that — it's a way to let
+a short, locally-convenient number satisfy it without forcing local users to
+dial the long form.
+
+---
+
 ## Where to go next
 
 - [`PEER_PROTOCOL.md`](PEER_PROTOCOL.md) — the exact messages, handshake, and

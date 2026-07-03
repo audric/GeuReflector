@@ -11,7 +11,13 @@ to regenerate configs/ and docker-compose.test.yml.  The test harness
 
 REFLECTORS = {
     #  name       prefixes (list)          host-port-base       redis
-    "a": {"prefix": ["122"],  "trunk_port_base": 15000},
+    # `a` also carries LOCAL_ALIASES so tests/test_alias.py can verify the
+    # local-alias feature (short local TG re-homed under an owned prefix):
+    #   8            <-> 1220008  (two-way)
+    #   90 (/out)    <-> 1220090  (export only: local TG 90 -> mesh, no fold-in)
+    #   91 (/in)     <-> 1220091  (import only: mesh -> local TG 91, no publish)
+    "a": {"prefix": ["122"],  "trunk_port_base": 15000,
+          "local_aliases": "8:1220008,90:1220090/out,91:1220091/in"},
     "b": {"prefix": ["121"],  "trunk_port_base": 25000},
     "c": {"prefix": ["1"],    "trunk_port_base": 35000},
     # `d` is sparse-trunked: only connects to `b`. With prefix `1219`
