@@ -4,10 +4,11 @@
 
 The integration tests verify the trunk protocol, satellite links, twin (HA-pair) protocol, Redis-backed config store, and end-to-end audio routing by spinning up reflector meshes in Docker Compose and connecting fake peers and clients from a Python test harness.
 
-`run_tests.sh` runs in **three phases** (89 tests total):
+`run_tests.sh` runs in **three phases** (98 tests total):
 1. A 3-reflector trunk mesh + a satellite-mode reflector, exercising
-   `test_trunk.py` (52 tests), `test_mqtt_deltas.py` (7 tests),
-   `test_satellite_secrets.py` (5 tests), and `test_logging.py` (6 tests).
+   `test_trunk.py` (52 tests), `test_alias.py` (9 tests),
+   `test_mqtt_deltas.py` (7 tests), `test_satellite_secrets.py` (5 tests),
+   and `test_logging.py` (6 tests).
 2. A 4-reflector twin topology exercising `test_twin.py` (17 tests).
 3. A dedicated routable-prefix chain exercising `test_routable.py` (2 tests).
    See [Routable Prefixes](#routable-prefixes) below.
@@ -26,7 +27,7 @@ bash run_tests.sh
 This will:
 1. Generate the default configs and `docker-compose.test.yml` from `topology.py`
 2. Build and start the 3-reflector mesh (+ a satellite-mode reflector)
-3. Run `test_trunk.py` (52), then `test_mqtt_deltas.py` (7), `test_satellite_secrets.py` (5), and `test_logging.py` (6). When run in a terminal, `test_trunk.py` ends with an interactive TG prompt (see [Interactive Mode](#interactive-mode)) before the other suites run
+3. Run `test_trunk.py` (52), then `test_alias.py` (9), `test_mqtt_deltas.py` (7), `test_satellite_secrets.py` (5), and `test_logging.py` (6). When run in a terminal, `test_trunk.py` ends with an interactive TG prompt (see [Interactive Mode](#interactive-mode)) before the other suites run
 4. Tear down the default mesh and regenerate with `--topology twin` (4-reflector twin topology)
 5. Rebuild the mesh and run `test_twin.py` (17 twin-protocol tests)
 6. Tear down the twin mesh, regenerate with `--topology routable`, bring up
@@ -55,6 +56,8 @@ reflector-a (prefix 122) ◄──► reflector-b (prefix 121)
 **Prefix ownership** determines routing. TG `12200` belongs to reflector-a (prefix `122`), TG `12100` to reflector-b (`121`), and TG `1000` to reflector-c (`1`) — unless a longer prefix matches first. For example, `122xx` matches reflector-a even though reflector-c's prefix `1` is also a prefix of `122xx`, because longest-prefix-match wins.
 
 **Cluster TGs** (222, 999) are broadcast to all peers regardless of prefix ownership.
+
+**Local aliases** (reflector-a only): `LOCAL_ALIASES=8:1220008,90:1220090/out,91:1220091/in` re-homes three short local TGs under a's own prefix `122` — see [Local Aliases](#local-aliases) below and `test_alias.py`.
 
 Two fake trunk peers connect from the test harness:
 - **TRUNK_TEST** (prefix `9`) — primary sender for most tests
@@ -127,6 +130,7 @@ Internal port for `[TWIN]` is always 5304; satellite is 5303.
 | `topology.py` | Single source of truth — prefixes, ports, secrets, cluster TGs, test clients. Contains both the default mesh (`REFLECTORS`) and the `TWIN_REFLECTORS` / `TWIN_TRUNKS` definitions. |
 | `generate_configs.py` | Generates `configs/*.conf` and `docker-compose.test.yml` from topology. Supports `--topology default` (implicit) and `--topology twin`. |
 | `test_trunk.py` | Test harness: fake trunk peers, satellite peer, V2 client, 52 test cases, interactive loop. |
+| `test_alias.py` | Local-alias tests (9 cases): two-way/`out`/`in` direction semantics, rewrite-on-select, `/status.local_aliases`, unowned-alias rejection at load. Runs on the default mesh; reuses `ClientPeer`/`get_status`/`wait_until` from `test_trunk.py`. See [Local Aliases](#local-aliases) below. |
 | `test_mqtt_deltas.py` | Peer-client liveness MQTT delta tests (7 cases): per-client connect/disconnect/rx events published as `peer/<peer_id>/client/<call>/<event>`, across the satellite axis and trunk-peer non-propagation. Runs on the default mesh. |
 | `test_satellite_secrets.py` | Per-satellite secret resolver tests (5 cases): `SECRET_<id>` match accepts, mismatch rejects with no fallback, unknown id falls back to `[SATELLITE].SECRET`. Runs on the default mesh. |
 | `test_logging.py` | Logging-facade (`geulog::`) tests (6 cases): `LOG` PTY commands (SHOW/SET/RESET), level filtering, error rejection via the `/dev/shm/reflector_ctrl` PTY. Runs on the default mesh. |
@@ -269,6 +273,25 @@ each filter independently of the other trunk fixtures.
 |---|------|-----------------|
 | 46 | Inbound heartbeat timeout — no crash | A non-paired trunk link whose inbound socket is closed on heartbeat timeout must not abort the process on the next send (e.g. a `MsgPeerTgInterest`) |
 | 47 | Inbound recovers after timeout | After the reflector times out and drops a silent inbound peer, the same peer can reconnect its inbound leg |
+
+### Local Aliases
+
+Phase 1 of `run_tests.sh`: `test_alias.py` on the default mesh. Reflector-a
+carries `LOCAL_ALIASES=8:1220008,90:1220090/out,91:1220091/in`; reflector-b
+(direct trunk peer, prefix `121`) plays the "peer abroad" whose clients dial
+the long numbers directly (b has no alias table of its own).
+
+| # | Test | What it verifies |
+|---|------|-----------------|
+| 01 | Two-way — local delivery unaffected | Both nodes select the short TG `8`; plain same-reflector delivery still works, and `/status.nodes[*].tg == 8` for both |
+| 02 | Two-way — reaches peer | A-node keys short TG `8`; a B-node that selected the long TG `1220008` (expressing interest) receives the audio — outbound `aliasToRoute` publish |
+| 03 | Two-way — inbound folds to local | B-node keys the long TG `1220008` directly; an A-node monitoring short TG `8` receives it — inbound `aliasToLocal` delivery |
+| 04 | `/out` — publishes, no inbound | Alias `90:1220090/out`: A's short TG `90` still reaches B, but B keying the long TG `1220090` is NOT delivered to an A-node monitoring short TG `90` |
+| 05 | `/in` — folds inbound, no publish | Alias `91:1220091/in`: A's short TG `91` does NOT reach a B-node monitoring the long TG `1220091`, but B keying the long TG `1220091` IS delivered to an A-node on short TG `91` |
+| 06 | Rewrite-on-select | A client selecting the long TG `1220008` directly is folded onto the short TG — `/status.nodes[<call>].tg == 8` |
+| 07 | `/status` exposes aliases | `/status.local_aliases` matches the configured table exactly, keyed by short TG with `alias` (long number) and `direction` |
+| 08 | Reject unowned alias | A standalone reflector booted with `LOCAL_ALIASES=8:1220008,7:9990007` (`9990007` outside `LOCAL_PREFIX=122`) keeps the valid entry, rejects the invalid one (absent from `/status.local_aliases`, logged), and still starts |
+| 09 | Multi-hop by number | Skipped on the default topology: the only extra hop (`d`, prefix `1219`) nests under b's prefix (`121`), not under a's owned prefix (`122`) that hosts the alias table, so peer-interest can't propagate through b to d without extra `ROUTABLE_PREFIXES` plumbing out of scope for this topology change |
 
 ### Routable Prefixes
 

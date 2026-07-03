@@ -726,12 +726,23 @@ The `/status` JSON endpoint includes a `trunks` object alongside `nodes`:
         "200": "LA8PV"
       }
     }
+  },
+  "local_aliases": {
+    "8": { "alias": 2620008, "direction": "two-way" }
   }
 }
 ```
 
 `active_talkers` contains only TGs with an active remote talker at the moment
 of the request.  It is empty when no trunk conversations are in progress.
+
+`local_aliases` is keyed by the short local TG and lists every configured
+`LOCAL_ALIASES` entry: `alias` is the long, mesh-routable number it is
+re-homed under, and `direction` is `"two-way"`, `"in"`, or `"out"` (see
+"Local aliases" below). Note that this is the *local* view — `active_talkers`
+above (and MQTT/Redis mirrors of it) report the long mesh number for aliased
+traffic, since that is the identity used for routing, while local clients
+experience the short number.
 
 ---
 
@@ -806,6 +817,61 @@ HOST=reflector-b.example.com
 SECRET=secret_bc
 REMOTE_PREFIX=2
 ```
+
+### Local aliases
+
+`LOCAL_ALIASES` (in `[GLOBAL]`) re-homes a short local TG under one of this
+reflector's own `LOCAL_PREFIX` values, so it gets a globally-unique number
+reachable from anywhere in the mesh while local users keep dialing the short
+number:
+
+```ini
+[GLOBAL]
+LOCAL_PREFIX=262
+LOCAL_ALIASES=8:2620008,9:2620009/out,4001:2620400/in
+```
+
+**Syntax.** Comma-separated entries of the form `localTG:aliasTG[/dir]`.
+`dir` is `in` or `out`; when omitted the alias is two-way.
+
+**Ownership rule.** `aliasTG` must fall under one of this reflector's
+`LOCAL_PREFIX` values (checked with the same longest-prefix match used for
+TG ownership everywhere else). An entry whose `aliasTG` is not owned is
+rejected at config load — logged as an error and skipped — so a typo can
+never claim a number the reflector doesn't own; the reflector still starts
+and the remaining valid entries take effect.
+
+**Direction semantics.**
+- **two-way** (no suffix): talk on the short local TG is exported to the
+  mesh under the long number, and traffic arriving from the mesh on the
+  long number is delivered to local clients on the short number.
+- **`/out`**: local talk is exported to the mesh under the long number, but
+  inbound mesh traffic on the long number is *not* folded back to the short
+  number — the alias is publish-only.
+- **`/in`**: mesh traffic on the long number is delivered locally on the
+  short number, but the short number is *not* exported to the mesh — the
+  alias is listen-only.
+
+**Rewrite-on-select.** A client — local or remote — that dials the long
+alias number directly is folded onto the short number as soon as it
+selects or monitors that TG, so `8` and `2620008` are always the same
+conversation locally; there is no way to end up split across both numbers
+on this reflector.
+
+**Routing on long, delivery on short.** The alias is a translation applied
+at the local-client / trunk-mesh boundary, not a rename. All prefix
+routing, owner-relay fan-out, and peer-interest bookkeeping run on the
+*long* number, because that is the identity the rest of the mesh sees and
+uses for longest-prefix-match. All local delivery and talker arbitration
+(which client currently holds the TG, PTT interruption, monitor filters,
+mute) run on the *short* number, because that is what local clients
+select and expect to see. One documented consequence: `/status.local_aliases`
+(above) is the local, short-keyed view of the mapping, but
+`/status.active_talkers` in a trunk's status block — and the equivalent
+MQTT/Redis mirrors — report the *long* mesh number while local clients are
+simultaneously experiencing the *short* number for the same transmission.
+This is intentional: it reflects the two identities (mesh-routing vs.
+local-delivery) the alias deliberately keeps separate.
 
 ---
 

@@ -31,7 +31,10 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  ****************************************************************************/
 
 #include <cassert>
+#include <cerrno>
+#include <cstdlib>
 #include <list>
+#include <set>
 #include <sstream>
 #include <unistd.h>
 #include <algorithm>
@@ -529,6 +532,15 @@ bool Reflector::initialize(Async::Config &cfg)
           "(SATELLITE_OF is set). Satellites are leaf nodes and cannot "
           "accept child satellites; remove the [SATELLITE] block or "
           "unset SATELLITE_OF.");
+    }
+    std::string aliases_probe;
+    if (cfg.getValue("GLOBAL", "LOCAL_ALIASES", aliases_probe) &&
+        !aliases_probe.empty())
+    {
+      geulog::warn("core",
+          "LOCAL_ALIASES is ignored on a satellite node (SATELLITE_OF is "
+          "set). A local alias must be configured on the parent reflector "
+          "that owns the prefix and participates in the trunk mesh.");
     }
     m_satellite_client = new SatelliteClient(this, cfg);
     if (!m_satellite_client->initialize())
@@ -1749,6 +1761,21 @@ void Reflector::refreshStatus(void)
   m_status["cluster_tgs"] = cluster_arr;
 
   {
+    Json::Value aliases(Json::objectValue);
+    for (const auto& kv : m_alias_select)       // long -> short, one per alias
+    {
+      Json::Value a(Json::objectValue);
+      a["alias"] = kv.first;                     // routable long number
+      a["direction"] =
+          (m_alias_route.count(kv.second) && m_alias_deliver.count(kv.first))
+            ? "two-way"
+            : (m_alias_route.count(kv.second) ? "out" : "in");
+      aliases[std::to_string(kv.second)] = a;    // keyed by short local number
+    }
+    m_status["local_aliases"] = aliases;
+  }
+
+  {
     Json::Value sats(Json::objectValue);
     for (auto& kv : m_satellite_con_map)
     {
@@ -2440,6 +2467,10 @@ void Reflector::initTrunkLinks(void)
       }
     }
   }
+
+  // Parse local aliases now that m_local_prefixes and m_all_prefixes are
+  // both fully populated, since validation calls isLocalTG().
+  parseLocalAliases();
 } /* Reflector::initTrunkLinks */
 
 
@@ -3170,6 +3201,110 @@ bool Reflector::isLocalTG(uint32_t tg) const
   }
   return true;
 } /* Reflector::isLocalTG */
+
+
+void Reflector::parseLocalAliases(void)
+{
+  m_alias_route.clear();
+  m_alias_deliver.clear();
+  m_alias_select.clear();
+
+  std::string aliases_str;
+  if (!m_cfg->getValue("GLOBAL", "LOCAL_ALIASES", aliases_str) ||
+      aliases_str.empty())
+  {
+    return;
+  }
+
+  std::istringstream ss(aliases_str);
+  std::string entry;
+  std::set<uint32_t> seen_short;
+  while (std::getline(ss, entry, ','))
+  {
+    // trim surrounding whitespace
+    size_t b = entry.find_first_not_of(" \t");
+    size_t e = entry.find_last_not_of(" \t");
+    if (b == std::string::npos) continue;
+    entry = entry.substr(b, e - b + 1);
+
+    // split optional "/dir" suffix
+    std::string dir;
+    size_t slash = entry.find('/');
+    if (slash != std::string::npos)
+    {
+      dir = entry.substr(slash + 1);
+      entry = entry.substr(0, slash);
+    }
+    if (!dir.empty() && dir != "in" && dir != "out")
+    {
+      geulog::error("core", "LOCAL_ALIASES: bad direction '", dir,
+                    "' in entry (expected in|out); skipping");
+      continue;
+    }
+
+    size_t colon = entry.find(':');
+    if (colon == std::string::npos)
+    {
+      geulog::error("core", "LOCAL_ALIASES: entry '", entry,
+                    "' missing ':'; skipping");
+      continue;
+    }
+    char* endp = nullptr;
+    errno = 0;
+    unsigned long local_tg = std::strtoul(entry.substr(0, colon).c_str(),
+                                          &endp, 10);
+    bool local_ok = (endp != nullptr && *endp == '\0' && local_tg > 0 &&
+                      errno != ERANGE);
+    endp = nullptr;
+    errno = 0;
+    unsigned long alias_tg = std::strtoul(entry.substr(colon + 1).c_str(),
+                                          &endp, 10);
+    bool alias_ok = (endp != nullptr && *endp == '\0' && alias_tg > 0 &&
+                      errno != ERANGE);
+    if (!local_ok || !alias_ok)
+    {
+      geulog::error("core", "LOCAL_ALIASES: non-numeric TG in entry '",
+                    entry, "'; skipping");
+      continue;
+    }
+
+    if (!isLocalTG(static_cast<uint32_t>(alias_tg)))
+    {
+      geulog::error("core", "LOCAL_ALIASES: alias TG ", alias_tg,
+                    " is not under any LOCAL_PREFIX; rejecting alias ",
+                    local_tg, ":", alias_tg);
+      continue;
+    }
+
+    if (isLocalTG(static_cast<uint32_t>(local_tg)))
+    {
+      geulog::error("core", "LOCAL_ALIASES: local TG ", local_tg,
+                    " is itself owned by a LOCAL_PREFIX; the short side of an "
+                    "alias must be a non-owned number; rejecting alias ",
+                    local_tg, ":", alias_tg);
+      continue;
+    }
+
+    uint32_t s = static_cast<uint32_t>(local_tg);
+    uint32_t l = static_cast<uint32_t>(alias_tg);
+
+    if (seen_short.count(s))
+    {
+      geulog::error("core", "LOCAL_ALIASES: duplicate local TG ", s,
+                    "; keeping the first mapping, ignoring ", s, ":", l);
+      continue;
+    }
+    seen_short.insert(s);
+
+    if (dir != "in")  m_alias_route[s]   = l;  // two-way or /out publishes
+    if (dir != "out") m_alias_deliver[l] = s;  // two-way or /in delivers
+    m_alias_select[l] = s;                      // reserve number in all cases
+
+    geulog::info("core", "LOCAL_ALIAS ", s, " <-> ", l,
+                 (dir.empty() ? " (two-way)" :
+                  dir == "in" ? " (in)" : " (out)"));
+  }
+} /* Reflector::parseLocalAliases */
 
 
 bool Reflector::hasPrefixRoute(uint32_t tg) const

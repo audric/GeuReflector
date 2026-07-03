@@ -25,6 +25,12 @@ def generate_reflector_conf(name: str) -> str:
         "TG_FOR_V1_CLIENTS=999",
         f"LOCAL_PREFIX={T.prefix_str(r['prefix'])}",
         f"CLUSTER_TGS={cluster_str}",
+    ]
+    # Optional local-alias re-homing (tests/test_alias.py). Only reflectors
+    # that declare "local_aliases" in topology.py get the line.
+    if r.get("local_aliases"):
+        lines.append(f"LOCAL_ALIASES={r['local_aliases']}")
+    lines += [
         f"TRUNK_LISTEN_PORT={T.INTERNAL_TRUNK_PORT}",
         f"HTTP_SRV_PORT={T.INTERNAL_HTTP_PORT}",
         "COMMAND_PTY=/dev/shm/reflector_ctrl",
