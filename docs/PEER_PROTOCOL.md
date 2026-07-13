@@ -864,6 +864,17 @@ selects or monitors that TG, so `8` and `2620008` are always the same
 conversation locally; there is no way to end up split across both numbers
 on this reflector.
 
+The long number is thus *reserved* by redirection, not by refusal — and
+that is a constraint, not a preference. The reflector has no way to
+decline a TG selection: `handleSelectTG` always honors what the client
+asks for, and the protocol has no "selection denied" message. Adding one
+would not help either, because the client side is vanilla upstream
+svxlink and cannot be modified to react to a refusal — an operator would
+simply see a dead talk group with no explanation. Silently folding the
+selection onto the short number achieves the same goal (nobody can sit in
+a separate local room on the alias number) using only mechanisms the
+unmodified client already understands.
+
 **Routing on long, delivery on short.** The alias is a translation applied
 at the local-client / trunk-mesh boundary, not a rename. All prefix
 routing, owner-relay fan-out, and peer-interest bookkeeping run on the
