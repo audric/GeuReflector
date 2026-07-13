@@ -50,10 +50,15 @@ A client (an SvxLink node) selects a TG and presses PTT. Three cases:
 - **The TG is owned by a peer.** The reflector forwards the audio over the trunk
   to the owning peer (selected by longest-prefix-match). The owner then relays
   it — see below.
-- **The TG matches no prefix in the mesh.** It has no owner, so it is **never
-  sent over any trunk** (`isSharedTG` finds no link to forward on). It still
-  relays locally among that reflector's own clients, exactly like stock
-  SvxReflector — it is simply a **local-only** talk group.
+- **The TG matches no prefix in the mesh.** It has no owner, so no trunk
+  claims it (`isSharedTG` finds no link to forward on). It still relays
+  locally among that reflector's own clients, exactly like stock SvxReflector
+  — it is simply a **local-only** talk group. The one exception is a link
+  configured with `ROUTABLE_PREFIXES=*`: that wildcard is a default route, so
+  an unowned TG *is* forwarded up it. The peer then discards it (the TG
+  matches neither its `LOCAL_PREFIX` nor the link's `REMOTE_PREFIX`), so
+  nobody else hears it — but it does cross the wire. If a TG must never leave
+  the reflector, prefer an explicit `ROUTABLE_PREFIXES` list over `*`.
 
 The client never knows or cares which reflector owns the TG. That is the whole
 point: nodes stay unmodified.
@@ -74,9 +79,12 @@ longest-prefix-match on the number, regardless of its length**:
 
 So: **obey the convention to be reachable; use a non-matching number to stay
 local.** This lets a reflector keep private local TGs alongside its routable,
-mesh-facing ones — with one caveat: a number you *intended* as local but that
-happens to match a configured prefix **will** be sent to that owner. The number
-is the routing key; there is no separate "make this local" switch.
+mesh-facing ones — with two caveats. A number you *intended* as local but that
+happens to match a configured prefix **will** be sent to that owner: the number
+is the routing key, and there is no separate "make this local" switch. And on a
+link with `ROUTABLE_PREFIXES=*`, even a non-matching number is forwarded up
+that default route (the peer discards it, so nobody hears it — but it leaves
+the reflector).
 
 ---
 
