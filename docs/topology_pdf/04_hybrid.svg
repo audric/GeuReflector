@@ -123,7 +123,7 @@
 <path fill="#fff4d6" stroke="#a37300" stroke-width="2" stroke-dasharray="5,2" d="M536.55,-167.51C536.55,-167.51 459.55,-167.51 459.55,-167.51 453.55,-167.51 447.55,-161.51 447.55,-155.51 447.55,-155.51 447.55,-111.51 447.55,-111.51 447.55,-105.51 453.55,-99.51 459.55,-99.51 459.55,-99.51 536.55,-99.51 536.55,-99.51 542.55,-99.51 548.55,-105.51 548.55,-111.51 548.55,-111.51 548.55,-155.51 548.55,-155.51 548.55,-161.51 542.55,-167.51 536.55,-167.51"/>
 <text text-anchor="middle" x="498.05" y="-144.11" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="13.00">MI club</text>
 <text text-anchor="middle" x="498.05" y="-130.11" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="13.00">(satellite)</text>
-<text text-anchor="middle" x="498.05" y="-116.11" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="13.00">filter=2222</text>
+<text text-anchor="middle" x="498.05" y="-116.11" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="13.00">filter=2222*</text>
 </g>
 <!-- Z2&#45;&#45;MI -->
 <g id="edge14" class="edge">

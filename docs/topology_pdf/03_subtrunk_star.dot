@@ -1,0 +1,64 @@
+// Sub-trunk star — IT 222 delegates Zone sub-prefixes over ordinary trunks.
+// The Zones own their prefixes (unlike satellites) but hold a single uplink.
+digraph SubTrunkStar {
+  layout = dot;
+  rankdir = TB;
+  bgcolor = "transparent";
+  margin = 0.3;
+  splines = true;
+  ranksep = 1.35;
+  nodesep = 0.7;
+
+  node [shape=box, style="filled,rounded", fontname="Helvetica-Bold",
+        fontsize=13, penwidth=2, width=1.05, height=0.65, fixedsize=true];
+
+  // Foreign country gateways (top row)
+  subgraph cluster_intl {
+    label = "International trunk mesh (port :5302)";
+    fontname = "Helvetica-Bold"; fontsize = 12; color = "#1a4fa3";
+    style = "rounded,dashed"; bgcolor = "#f4f8ff";
+    SE [label="SE\n240", fillcolor="#dde8fb", color="#1a4fa3"];
+    DE [label="DE\n262", fillcolor="#dde8fb", color="#1a4fa3"];
+    IT [label="IT\n222", fillcolor="#fde2d4", color="#c0531c"];
+  }
+
+  // Zone reflectors, sub-trunked to IT 222. They own delegated sub-prefixes.
+  subgraph cluster_zones {
+    label = "Italian sub-trunks (port :5302)";
+    fontname = "Helvetica-Bold"; fontsize = 12; color = "#1e7d34";
+    style = "rounded,dashed"; bgcolor = "#f5fbf6"; margin = 14;
+    Z1  [label="IT-Z1\n2221", fillcolor="#dff3e0", color="#1e7d34",
+         fixedsize=false, width=1.3];
+    Z24 [label="IT-Z2/Z4\n2222, 2224", fillcolor="#dff3e0", color="#1e7d34",
+         fixedsize=false, width=1.6];
+  }
+
+  // Annotation: the Zone side of every uplink
+  UP [label="each Zone's uplink to IT 222:\lREMOTE_PREFIX=222\lROUTABLE_PREFIXES=*\l",
+      shape=note, fillcolor="#fff9e6", color="#a37300",
+      style="filled,dashed", fontname="Helvetica", fontsize=10,
+      fixedsize=false];
+
+  // Annotation: a Zone mixes local-only TGs with aliased ones
+  MIX [label="IT-Z2/Z4 talk groups:\lTG 40      no owner → effectively local\lTG 8       LOCAL_ALIASES=8:2222008 → mesh-reachable\lTG 22241   owned outright (under 2224)\l",
+       shape=note, fillcolor="#eceff1", color="#5f6368",
+       style="filled,dashed", fontname="Helvetica", fontsize=10,
+       fixedsize=false];
+
+  // Trunk edges — international full mesh
+  edge [color="#5f6368", penwidth=1.5, dir=none, constraint=false];
+  SE -> DE; SE -> IT; DE -> IT;
+
+  // Sub-trunk edges — IT 222 down to each Zone (bidirectional trunks)
+  edge [color="#5f6368", penwidth=1.6, style=solid, dir=none,
+        constraint=true, fontname="Helvetica", fontsize=10,
+        fontcolor="#3c4043"];
+  IT -> Z1  [label="  REMOTE_PREFIX=2221  "];
+  IT -> Z24 [label="  REMOTE_PREFIX=2222,2224  "];
+
+  // Attach annotations
+  edge [color="#a37300", penwidth=1.2, style=dotted, dir=none, label=""];
+  Z1 -> UP;
+  edge [color="#5f6368"];
+  Z24 -> MIX;
+}

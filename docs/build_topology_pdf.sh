@@ -16,9 +16,10 @@ cd "$(dirname "$0")/topology_pdf"
 echo "[1/3] Rendering SVG diagrams"
 circo -Tsvg 01_intl_mesh.dot      -o 01_intl_mesh.svg
 neato -Tsvg 02_flat_mesh.dot      -o 02_flat_mesh.svg
-dot   -Tsvg 03_satellite_tree.dot -o 03_satellite_tree.svg
+dot   -Tsvg 03_subtrunk_star.dot  -o 03_subtrunk_star.svg
 neato -Tsvg 04_hybrid.dot         -o 04_hybrid.svg
 neato -Tsvg 05_twin_pair.dot      -o 05_twin_pair.svg
+neato -Tsvg 06_local_alias.dot    -o 06_local_alias.svg
 
 echo "[2/3] Building PDF with WeasyPrint"
 BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M UTC")

@@ -1,0 +1,51 @@
+// Local aliases — a short local TG (8) re-homed under IT's owned prefix 222
+// as the globally-unique number 2220008. The mesh routes the long number;
+// local clients (and satellites) keep dialing the short one.
+graph LocalAlias {
+  layout = neato;
+  bgcolor = "transparent";
+  margin = 0.3;
+  overlap = false;
+  splines = true;
+
+  node [shape=box, style="filled,rounded", fontname="Helvetica-Bold",
+        fontsize=13, penwidth=2, width=1.0, height=0.65, fixedsize=true];
+
+  // International domain on the left
+  SE [label="SE\n240", fillcolor="#dde8fb", color="#1a4fa3", pos="-4.6, 1.0!"];
+  DE [label="DE\n262", fillcolor="#dde8fb", color="#1a4fa3", pos="-4.6,-1.0!"];
+
+  // The aliasing reflector — owns 222, re-homes local TG 8 as 2220008
+  IT [label="IT\n222", fillcolor="#fde2d4", color="#c0531c", pos="0,0!"];
+
+  // Local SvxLink nodes hanging off IT — they only ever see TG 8
+  NODES [label="local SvxLink nodes\nselect TG 8",
+         fillcolor="#eceff1", color="#5f6368", style="filled,rounded,dashed",
+         height=0.8, width=2.0, pos="0,-2.1!"];
+
+  // Annotation: the number the mesh routes on (sits between the two trunk legs)
+  MESH [label="trunk: the mesh\nroutes TG 2220008", shape=plaintext,
+        style="", fillcolor="none", fontname="Helvetica", fontsize=11,
+        fontcolor="#3c4043", width=1.6, height=0.5, pos="-2.35,0!"];
+
+  // Annotation: what the alias boundary does inside IT
+  ALIAS [label="alias boundary\nroute on 2220008\ndeliver on 8",
+         shape=note, fillcolor="#fff9e6", color="#a37300",
+         style="filled,dashed", fontname="Helvetica",
+         fontsize=11, height=0.95, width=1.75, pos="3.0, 0!"];
+
+  edge [color="#5f6368", penwidth=1.2, fontname="Helvetica", fontsize=11,
+        fontcolor="#3c4043"];
+
+  // International full mesh — the long number is what these peers route on
+  SE -- DE;
+  SE -- IT;
+  DE -- IT;
+
+  // Local delivery leg — the short number is what these clients see
+  IT -- NODES [label="  local: TG 8  "];
+
+  // Tie the annotation to the reflector that performs the translation
+  edge [color="#a37300", penwidth=1.6, style=dotted, len=0.8];
+  IT -- ALIAS;
+}
