@@ -36,8 +36,8 @@ the matching `*-dev` packages entirely.
 ## 1. Get the source
 
 ```bash
-git clone https://github.com/IW1GEU/geureflector.git
-cd geureflector
+git clone https://github.com/audric/GeuReflector.git
+cd GeuReflector
 ```
 
 ---

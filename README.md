@@ -254,7 +254,7 @@ Required by default (opt out with the CMake flags below): libmosquitto, libhired
 Optional codecs: libopus, libgsm, libspeex.
 
 ```bash
-cd geureflector
+cd GeuReflector
 cmake -S src -B build -DLOCAL_STATE_DIR=/var
 cmake --build build
 # binary at build/bin/svxreflector
